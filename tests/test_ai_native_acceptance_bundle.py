@@ -30,8 +30,11 @@ from fa.inner_loop.acceptance_bundle import (
     write_seal,
 )
 from fa.inner_loop.acceptance_closure import collect_acceptance_closure
+from fa.inner_loop.acceptance_collection import AcceptanceCollectionError, verify_sealed_acceptance
 from fa.inner_loop.plan_v2 import EvidenceMode, PlanV2Error, contract_evidence
+from fa.inner_loop.slice_verification import JUNIT_BLOCK_END, JUNIT_BLOCK_START, CommandOutcome, CommandResult
 from tests.test_ai_native_plan_v2 import GRANT_PROBE_FILES, granted_graph, plan_document, plan_graph
+from tests.test_slice_verification_runner import _inband_executor
 
 _SEALED_ROOT = "worklogs/demo/acceptance"
 _TEST_PATH = f"{_SEALED_ROOT}/tests/test_publish.py"
@@ -701,3 +704,168 @@ def test_an_out_of_band_attestation_never_reaches_the_bytes(tmp_path: Path, atte
     bundle = _mint(_sealed_tree(tmp_path))
 
     assert _rule(lambda: seal_bytes(replace(bundle, attested=attested))) == "seal-malformed"
+
+
+# ── CT-3.6: the verifier runs the sealed closure, not the plan's fence ────────
+
+
+def _collection_rule(callable_: Callable[[], object]) -> str:
+    with pytest.raises(AcceptanceCollectionError) as refused:
+        callable_()
+    return refused.value.rule
+
+
+def _candidate() -> str:
+    """A revision that is not the sealed one: the code moved, the oracle did not."""
+    return "rev-" + "1" * 32
+
+
+def test_v2_verifier_uses_sealed_closure_with_current_candidate_revision(tmp_path: Path) -> None:
+    """CT-3.6 — the oracle is the sealed argv, and both revisions are recorded.
+
+    The run is real: the in-band substrate executes the harness-built command in a
+    private ``$TMPDIR``, so the nodeids can only appear if pytest collected the
+    sealed bytes under the sealed ``pytest.ini`` and the report travelled back
+    inside the receipt. Nothing in the plan supplies a command here.
+    """
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+    candidate = _candidate()
+    prepared: dict[str, Any] = {}
+
+    verification = verify_sealed_acceptance(
+        bundle,
+        workspace=tmp_path,
+        candidate_revision_id=candidate,
+        plan_bytes=_PLAN_BYTES,
+        executor=_inband_executor(writes_visible=False, prepared=prepared),
+    )
+
+    # Two identities, two claims: the closure stayed at the sealed revision while
+    # the code came from the caller's explicit current candidate.
+    assert verification.sealed_revision_id == _REVISION
+    assert verification.candidate_revision_id == candidate
+    assert verification.sealed_root == _SEALED_ROOT
+    assert verification.run.closure_sha256 == bundle.closure.digest
+
+    command = prepared["command"]
+    assert f"-c {_SEALED_ROOT}/pytest.ini" in command
+    assert f"--rootdir {_SEALED_ROOT}" in command
+    assert "-p fa.inner_loop.junit_nodeid_plugin" in command
+    # The report went to the cell's scratch, never to a path this controller chose.
+    assert '--junitxml="$__fa_rep"' in command
+    assert "${TMPDIR:-/tmp}" in command
+    # ... and the controller never names that path: only the cell's own env does.
+    assert str(prepared["tmpdir"]) not in command
+
+    # The sealed selectors are what executed, re-keyed to workspace-relative form.
+    assert verification.run.outcomes == {_NODEID: True, _NODEID_SECOND: True}
+    assert verification.run.nodeids == {_TEST_PATH: (_NODEID, _NODEID_SECOND)}
+
+
+def test_the_sealed_verifier_refuses_before_it_runs_a_cell_command(tmp_path: Path) -> None:
+    """CT-3.6 — every refusal that needs no execution happens before the command."""
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+    prepared: dict[str, Any] = {}
+    managed = _inband_executor(writes_visible=False, prepared=prepared)
+    common: dict[str, Any] = {"workspace": tmp_path, "plan_bytes": _PLAN_BYTES, "candidate_revision_id": _candidate()}
+
+    # No substrate at all: there is no host fallback to fall back to.
+    assert _collection_rule(lambda: verify_sealed_acceptance(bundle, executor=None, **common)) == (
+        "verifier-substrate-required"
+    )
+    # A substrate whose writes this controller can see is the host, not the cell.
+    assert (
+        _collection_rule(
+            lambda: verify_sealed_acceptance(bundle, executor=_inband_executor(writes_visible=True), **common)
+        )
+        == "verifier-substrate-required"
+    )
+    # The candidate revision is recorded, so it must at least be an identity.
+    assert (
+        _collection_rule(
+            lambda: verify_sealed_acceptance(
+                bundle, executor=managed, workspace=tmp_path, plan_bytes=_PLAN_BYTES, candidate_revision_id=""
+            )
+        )
+        == "candidate-revision-invalid"
+    )
+    # The seal is only valid for the plan it was minted from, on this route too.
+    assert (
+        _rule(
+            lambda: verify_sealed_acceptance(
+                bundle, executor=managed, workspace=tmp_path, candidate_revision_id=_candidate(), plan_bytes=b"other"
+            )
+        )
+        == "plan-digest-mismatch"
+    )
+    # A closure that overlaps a code root would let an edit become part of the oracle.
+    overlapped = replace(bundle, sealed_root="tests/acceptance")
+    assert _collection_rule(lambda: verify_sealed_acceptance(overlapped, executor=managed, **common)) == (
+        "sealed-root-code-overlap"
+    )
+
+    assert prepared == {}, "a refused call must not have reached a cell"
+
+
+def test_the_sealed_verifier_still_refuses_a_drifted_closure(tmp_path: Path) -> None:
+    """CT-3.6 — the pinned route keeps the seal's own byte-drift rule."""
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+    (root / "tests" / "test_publish.py").write_text(_TEST + "\n\ndef test_late():\n    assert True\n", encoding="utf-8")
+
+    assert (
+        _rule(
+            lambda: verify_sealed_acceptance(
+                bundle,
+                workspace=tmp_path,
+                candidate_revision_id=_candidate(),
+                plan_bytes=_PLAN_BYTES,
+                executor=_inband_executor(writes_visible=False),
+            )
+        )
+        == "seal-byte-drift"
+    )
+
+
+def test_a_report_from_outside_the_closure_is_refused(tmp_path: Path) -> None:
+    """CT-3.6 EDGE — a nodeid the closure does not hold is not evidence about it."""
+
+    class _ForeignReport:
+        writes_are_visible = False
+
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            del cwd, timeout_s, env
+            body = (
+                '<testsuite name="pytest" tests="1" failures="0" errors="0" skipped="0">'
+                '<testcase classname="x" name="y"><properties>'
+                '<property name="fa_pytest_nodeid" value="tests/test_elsewhere.py::test_other"/>'
+                "</properties></testcase></testsuite>"
+            )
+            return CommandResult(
+                command=command,
+                outcome=CommandOutcome.PASS,
+                exit_code=0,
+                stdout_tail=f"{JUNIT_BLOCK_START}\n{body}\n{JUNIT_BLOCK_END}\n",
+                stderr_tail="",
+                duration_s=0.0,
+            )
+
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+
+    assert (
+        _collection_rule(
+            lambda: verify_sealed_acceptance(
+                bundle,
+                workspace=tmp_path,
+                candidate_revision_id=_candidate(),
+                plan_bytes=_PLAN_BYTES,
+                executor=_ForeignReport(),
+            )
+        )
+        == "collection-nodeid-outside-closure"
+    )

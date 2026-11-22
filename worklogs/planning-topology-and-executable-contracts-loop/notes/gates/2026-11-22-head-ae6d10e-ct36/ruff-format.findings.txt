@@ -1,0 +1,8 @@
+tests/mutation/mut_step9.py: would-reformat
+tests/test_admission_v2_provenance.py: would-reformat
+tests/test_ai_native_bootstrap.py: would-reformat
+tests/test_ai_native_plan_v2.py: would-reformat
+tests/test_invoke_workflow_tool.py: would-reformat
+tests/test_managed_acquisition.py: would-reformat
+tests/test_prompt_registry_coherence.py: would-reformat
+tests/test_s5p1_bootstrap.py: would-reformat

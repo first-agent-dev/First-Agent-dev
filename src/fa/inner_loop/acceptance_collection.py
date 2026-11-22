@@ -24,16 +24,27 @@ the plan's selectors, which are workspace-relative.
 
 from __future__ import annotations
 
+import shlex
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Final
 
-from .acceptance_bundle import AcceptanceBundle, verify_plan, verify_revision, verify_sealed_root
+from .acceptance_bundle import (
+    AcceptanceBundle,
+    AcceptanceBundleError,
+    require_revision_id,
+    verify_plan,
+    verify_revision,
+    verify_sealed_root,
+)
 from .acceptance_closure import pytest_argv, shell_command
 from .slice_verification import (
     CommandOutcome,
     VerifyCommandExecutor,
+    inband_junit_command,
+    parse_inband_nodeids,
     parse_nodeid_report,
     run_commands,
 )
@@ -42,10 +53,14 @@ __all__ = [
     "AcceptanceCollectionError",
     "SealedCollection",
     "SealedRun",
+    "SealedVerification",
     "collect_sealed_nodeids",
+    "collect_sealed_nodeids_inband",
     "run_sealed_acceptance",
     "sealed_collection_argv",
+    "sealed_collection_inband_command",
     "sealed_test_paths",
+    "verify_sealed_acceptance",
 ]
 
 
@@ -55,6 +70,22 @@ class AcceptanceCollectionError(ValueError):
     def __init__(self, rule: str) -> None:
         self.rule = rule
         super().__init__(f"invalid sealed collection: {rule}")
+
+
+#: The report basename inside the cell's own scratch. Only the name is chosen
+#: here: the directory is ``$TMPDIR`` as the authority sets it, and a controller
+#: path would be a guess (Q142 option A).
+_INBAND_REPORT_NAME: Final = "sealed-collection.xml"
+
+#: Paths a sealed closure may never live in or under. "Refuses a closure/code path
+#: overlap" (CT-3.6): the closure is the oracle, the code roots are what the coder
+#: edits, and if the two overlapped then "the sealed closure" and "the current
+#: candidate revision" would name the same bytes -- a coder's edit would silently
+#: become part of the oracle without a new seal.
+_CODE_ROOTS: Final = frozenset({"src", "scripts", "tests"})
+
+#: The one argv element whose value is the cell's scratch path, not ours.
+_REPORT_FLAG: Final = "--junitxml="
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +207,146 @@ def collect_sealed_nodeids(
         raise AcceptanceCollectionError("collection-unusable")
     keyed = _workspace_nodeids(bundle, outcomes)
     return SealedCollection(argv=argv, nodeids=_group_nodeids(keyed), outcomes=keyed)
+
+
+def sealed_collection_inband_command(bundle: AcceptanceBundle, *, report: str) -> str:
+    """The sealed invocation with its report travelling in the receipt (Q142 A).
+
+    Same harness argv as :func:`sealed_collection_argv` -- sealed targets, ``-c``,
+    ``--rootdir``, no cache provider -- with one substitution: the report
+    destination becomes the wrapper's ``$__fa_rep``, because a READ cell's only
+    writable path is its own tmpfs scratch and the controller cannot name it.
+    Exactly one argv element may carry the flag; anything else is refused rather
+    than rendered, so the command that runs is always the argv that was checked.
+    """
+    argv = sealed_collection_argv(bundle, report=report)
+    rendered: list[str] = []
+    replaced = 0
+    for part in argv:
+        if part.startswith(_REPORT_FLAG):
+            rendered.append(f'{_REPORT_FLAG}"$__fa_rep"')
+            replaced += 1
+        else:
+            rendered.append(shlex.quote(part))
+    if replaced != 1:
+        raise AcceptanceCollectionError("collection-argv-invalid")
+    return inband_junit_command(" ".join(rendered), report=report)
+
+
+def _require_managed_substrate(executor: VerifyCommandExecutor | None) -> None:
+    """No host fallback: a sealed verification runs on the authority or not at all.
+
+    ``writes_are_visible is False`` is the property that makes a substrate the
+    pinned cell (`ManagedVerifyCommandExecutor`). A host executor would run the
+    oracle next to the code it is judging, which is the configuration CT61 forbids;
+    reporting that as refused is honest where falling back is a silent downgrade.
+    """
+    if executor is None or getattr(executor, "writes_are_visible", True):
+        raise AcceptanceCollectionError("verifier-substrate-required")
+
+
+def _overlaps_code_root(sealed_root: str) -> bool:
+    """Whether the sealed root names a code tree (CT-3.6's overlap refusal)."""
+    parts = PurePosixPath(sealed_root).parts
+    return not parts or any(part in _CODE_ROOTS for part in parts)
+
+
+def collect_sealed_nodeids_inband(
+    bundle: AcceptanceBundle,
+    *,
+    workspace: Path,
+    deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
+) -> SealedCollection:
+    """Collect the sealed closure's nodeids from a cell's in-band receipt."""
+    if not isinstance(bundle, AcceptanceBundle):
+        raise AcceptanceCollectionError("seal-invalid")
+    _require_managed_substrate(executor)
+    verify_sealed_root(bundle, Path(workspace) / bundle.sealed_root)
+    argv = sealed_collection_argv(bundle, report=_INBAND_REPORT_NAME)
+    (result,) = run_commands(
+        (sealed_collection_inband_command(bundle, report=_INBAND_REPORT_NAME),),
+        workspace=Path(workspace),
+        deadline=deadline,
+        executor=executor,
+    )
+    if result.outcome is CommandOutcome.ERROR:
+        raise AcceptanceCollectionError("collection-error")
+    carried = result.inband_stdout if result.inband_stdout is not None else result.stdout_tail
+    outcomes, _detail = parse_inband_nodeids(carried)
+    if outcomes is None:
+        raise AcceptanceCollectionError("collection-report-invalid")
+    if not outcomes:
+        raise AcceptanceCollectionError("collection-empty")
+    if result.exit_code not in {0, 1}:
+        raise AcceptanceCollectionError("collection-unusable")
+    keyed = _workspace_nodeids(bundle, outcomes)
+    return SealedCollection(argv=argv, nodeids=_group_nodeids(keyed), outcomes=keyed)
+
+
+@dataclass(frozen=True, slots=True)
+class SealedVerification:
+    """One sealed verification: which seal, which closure, which code it ran against.
+
+    Both revision identities are recorded because they are different claims: the
+    closure ran at ``sealed_revision_id`` (the revision the seal names, re-proved
+    against the bytes), while the code under test came from
+    ``candidate_revision_id`` -- the caller's explicit *current* candidate. Keeping
+    them apart is what makes "the closure did not move while the code did" a
+    checkable statement instead of a habit.
+    """
+
+    run: SealedRun
+    sealed_root: str
+    sealed_revision_id: str
+    candidate_revision_id: str
+
+
+def verify_sealed_acceptance(
+    bundle: AcceptanceBundle,
+    *,
+    workspace: Path,
+    candidate_revision_id: str,
+    plan_bytes: bytes,
+    deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
+) -> SealedVerification:
+    """Run the seal's closure on the pinned cell against the current candidate (CT-3.6).
+
+    The order of the refusals is deliberate: every check that can be made without
+    executing anything is made first, so a bad call never becomes a command in a
+    cell. Nothing here reads a planner ``verify`` fence -- the command is the
+    harness-built argv over the sealed closure -- and nothing here falls back to a
+    host run.
+    """
+    if not isinstance(bundle, AcceptanceBundle):
+        raise AcceptanceCollectionError("seal-invalid")
+    _require_managed_substrate(executor)
+    try:
+        require_revision_id(candidate_revision_id)
+    except AcceptanceBundleError:
+        raise AcceptanceCollectionError("candidate-revision-invalid") from None
+    if _overlaps_code_root(bundle.sealed_root):
+        raise AcceptanceCollectionError("sealed-root-code-overlap")
+    verify_plan(bundle, plan_bytes)
+    verify_revision(bundle, bundle.revision_id)
+    collection = collect_sealed_nodeids_inband(bundle, workspace=Path(workspace), deadline=deadline, executor=executor)
+    missing = [selector.nodeid for selector in bundle.selectors if selector.nodeid not in collection.outcomes]
+    if missing:
+        raise AcceptanceCollectionError("sealed-test-missing")
+    return SealedVerification(
+        run=SealedRun(
+            seal_sha256=bundle.seal_sha256,
+            revision_id=bundle.revision_id,
+            closure_sha256=bundle.closure.digest,
+            argv=collection.argv,
+            nodeids=collection.nodeids,
+            outcomes=collection.outcomes,
+        ),
+        sealed_root=bundle.sealed_root,
+        sealed_revision_id=bundle.revision_id,
+        candidate_revision_id=candidate_revision_id,
+    )
 
 
 def run_sealed_acceptance(

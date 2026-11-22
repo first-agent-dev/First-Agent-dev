@@ -13065,3 +13065,53 @@ pairs the marker with the location, still accepts the legacy shape, and `record`
 for a non-zero exit (it writes `<gate>: unrecognised failure (exit N)` instead). Verified: the parser returns the
 right finding for both shapes and nothing for the summary-only text, and a real `record --gate ruff-format` run
 lists exactly the eight files that the independent base-vs-head comparison names.
+
+### E615 — CT-3.6, verifier half: the sealed closure runs on the pinned cell (2026-11-22)
+
+What landed, in `src/fa/inner_loop/acceptance_collection.py`:
+
+* ``sealed_collection_inband_command(bundle, report=...)`` — the harness argv over the sealed closure with exactly
+  one substitution: the ``--junitxml=`` destination becomes the wrapper's ``$__fa_rep``, because a READ cell's only
+  writable path is its own tmpfs scratch and a controller-chosen path would be a guess. The argv is otherwise
+  rendered with ``shlex.quote`` and the substitution is counted: anything other than exactly one report flag is
+  refused (``collection-argv-invalid``) rather than rendered.
+* ``collect_sealed_nodeids_inband`` — runs that command and takes the nodeids out of the **receipt**, through the
+  same ``parse_inband_nodeids``/``parse_nodeid_report`` the rest of the gate uses (no second parser, no weaker one).
+* ``verify_sealed_acceptance(bundle, workspace=…, candidate_revision_id=…, plan_bytes=…, executor=…)`` — the pinned
+  verifier. Refusals happen **before any cell command**, in this order: not a seal; no managed substrate
+  (``verifier-substrate-required`` — ``writes_are_visible`` must be ``False``, so a host executor is refused rather
+  than silently substituted); a malformed candidate (``candidate-revision-invalid``); a closure overlapping a code
+  root (``sealed-root-code-overlap``); plan-digest mismatch; stale seal. It then records **both** identities —
+  ``sealed_revision_id`` (the revision the seal names, re-proved against the bytes) and ``candidate_revision_id``
+  (the caller's explicit current candidate) — because they are different claims.
+
+Supporting refactors, both to avoid a second copy of something: ``slice_verification.inband_junit_command`` is now
+the single source of the in-band wrapper (``NODEID_CAPTURE_INBAND_COMMAND`` is derived from it and stays
+byte-compatible, so the live in-band capture path is unchanged), and ``acceptance_bundle.require_revision_id``
+makes the seal's own revision rule public so a recorded-but-unsealed identity is validated the same way.
+
+Oracles (in ``tests/test_ai_native_acceptance_bundle.py``, the path §7 names): the run is **real** — an in-band
+substrate executes the harness command in a private ``$TMPDIR`` and the sealed nodeids can only appear if pytest
+collected the sealed bytes under the sealed ``pytest.ini``; the command is asserted to carry ``-c``/``--rootdir``
+into the sealed root, the plugin, ``--junitxml="$__fa_rep"`` and ``${TMPDIR:-/tmp}``, and *not* to name the
+controller's scratch path; the evidence is asserted to carry both revisions and the closure digest. Negative
+controls: no substrate, a host-shaped substrate, an empty candidate, an overlapping sealed root, a mismatched
+plan, a drifted closure, and a report whose nodeid is outside the closure (``collection-nodeid-outside-closure``);
+the refusal test also asserts ``prepared == {}`` — a refused call never reached a cell.
+
+Kill-checks (mutation, each reverted): overlap rule → ``False`` **killed** by the refusal test; substrate
+requirement removed **killed**; report not routed through the scratch **killed** by the real-run test; ``verify_plan``
+skipped **killed** by the plan-digest control.
+
+Gate (partial, as chosen): `notes/gates/2026-11-22-head-ae6d10e-ct36/` — mypy **62 raw / 29 unique, 0 new, 1 gone**;
+ruff 0; ruff-format 8 (all pre-existing, no baseline for this gate); authoring-check 0. ``pytest`` was **not**
+recorded — the targeted bucket (10 modules) gave **497 passed, 1 xfailed in 34.33 s** — and `compare` names pytest
+as one-sided instead of inventing a total. Two mypy findings of my own were caught by that loop and fixed before
+the recording (an untyped ``run_verify_command`` in a test double, and ``pin_reader`` handed a ``str | None`` in
+the S0 probe; the probe now uses ``managed.current_revision_id``).
+
+**Not done, and it is the point of the slice:** nothing *calls* ``verify_sealed_acceptance`` yet, so the planner
+``verify`` fence is still what the controller executes on the V2 route. Wiring it retires that fence, and it needs
+a decision the plan does not contain — what artifact a sealed verification writes, since ``write_verification``
+consumes ``PlanVerification`` built from planner commands. Filed as **Q-V2-SLICE3-1** (A recommended: a sibling
+``verification-v2.json``). Writing that wiring before the answer would decide the artifact by accident.

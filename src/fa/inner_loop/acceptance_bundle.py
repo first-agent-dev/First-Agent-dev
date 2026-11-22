@@ -67,6 +67,7 @@ __all__ = [
     "SealedSelector",
     "load_seal",
     "mint_seal",
+    "require_revision_id",
     "seal_bytes",
     "seal_payload",
     "verify_plan",
@@ -717,6 +718,16 @@ def verify_plan(bundle: AcceptanceBundle, plan_bytes: bytes) -> None:
         raise AcceptanceBundleError("seal-invalid")
     if _plan_digest(plan_bytes) != bundle.plan_sha256:
         raise AcceptanceBundleError("plan-digest-mismatch")
+
+
+def require_revision_id(value: object) -> str:
+    """A well-formed revision identity, or the closed ``revision-invalid`` refusal.
+
+    Public so a caller that has to *record* a revision it did not seal (the current
+    candidate revision in CT-3.6) validates it with the same rule the seal uses,
+    instead of copying the pattern and letting the two drift.
+    """
+    return _require_revision(value)
 
 
 def verify_revision(bundle: AcceptanceBundle, revision_id: str) -> None:

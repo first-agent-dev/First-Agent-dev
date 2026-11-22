@@ -126,7 +126,7 @@ def _substrate(site: Site, tmp_path: Path) -> Iterator[tuple[ManagedExecution, M
             managed = managed_execution_for_run(_run(site.source), config_path=yaml_path)
             assert managed is not None, "the run was not bound to managed execution"
             assert managed.binding.workspace_id == workspace_id
-            read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
+            read_grant = managed.client.pin_reader(managed.binding, managed.current_revision_id)
             assert read_grant.view_ref is not None and read_grant.view_ref.access is Access.READ
             assert managed.read_only_profile is not None
             executor = ReadOnlyManagedBashExecutor(
