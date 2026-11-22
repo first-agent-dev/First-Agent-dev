@@ -12034,3 +12034,51 @@ and CT-2.4/CT-2.5 say `absent — SLICE2 work` instead of the `NOT WRITTEN, BLOC
 wrote, which implied a defect where there is a schedule.
 
 No code changed in this entry. 28 contract rows, doc-links 369 OK.
+
+### E592 — repair is a second authoring stage, not the candidate buffer (D-V2-9.8)
+
+The source said this before I wrote it: `seed_plan_candidate` refuses any kind but
+`ADMISSION_REPAIR`/`EVAL_REPLAN`, writes **one** draft under `.fa/admission/<run>/`, and
+`publish_candidate_plan` commits **one** file at a pinned ref. A create-new project is a
+tree. Repairing only the increment would publish a revision whose roadmap still holds the
+bytes admission refused, and the other documents would be unrestorable because they never
+had a draft. So the create-new repair is a second `CREATE_NEW_PROJECT` stage over the
+published revision, with the allowlist narrowed to the pair admission read.
+
+**The narrowing travels on the dispatch, not as a parameter.** My first attempt threaded
+a sixth argument through `_run_cli_stage` -> `_build_run_tool_registry` ->
+`_build_role_registry` -> `build_planner_registry` -> `_build_tool_builders` ->
+`_build_limited_write`. That is five chances to drop it and five signatures to keep in
+step for one narrower tuple, and I abandoned it mid-way (reverted with
+`git checkout`). `PlannerDispatch` already reaches every layer, so the scope rides there
+as `repair_allowlist`, validated in `__post_init__`: every entry inside `authoring_root`,
+non-empty, and only on the authoring kind. A dispatch that cannot describe its own scope
+is refused before a stage exists, which is the same shape the rest of that class uses.
+
+**What is repairable is a decision, not a default.** `bootstrap-collision` is a fact
+about the workspace, not about the bytes -- repairing it would ask the planner to author
+into a directory it does not own, which is how a repair becomes an overwrite. `unavailable`
+is about the authority, so a second stage fails identically. `bootstrap-refused` is the
+repair stage's own failure, and a failed repair is not repaired by another. Only content
+refusals (`invalid-metadata`, `invalid-body`, and the disposition rules) are eligible.
+
+**Budget had nowhere to live.** The shared `_WorkflowAdmission.planner_calls` counter
+cannot bound this: on the create-new route admission authority is created *by* the
+refusal being repaired, so at the first repair there is no counter object at all. One
+integer (`authored_repairs`) on the frozen context, bounded by `replans_allowed`, which is
+the existing operator-facing knob -- no new budget concept.
+
+Tests: `test_a_create_new_repair_may_write_only_the_documents_admission_read` (the roadmap
+and ledger are refused with `path_denied`, the writer is the one the model actually sees),
+`test_a_repair_allowlist_outside_the_authoring_root_is_refused_at_construction` (outside
+root, empty, and wrong-kind), `test_a_create_new_repair_is_budgeted_and_never_overwrites_on_collision`
+(four non-repairable rules, two repairable, and exhaustion). Two mutants killed: disabling
+the narrowing (`if False and ...`) and making the budget unconditional.
+
+**Not yet proved end-to-end.** No test drives a live planner through a refusal and a
+successful second stage; that needs a provider double honest at the tool level, and I would
+rather say so than write a test that asserts the wiring I just built. TEST-2.8's full claim
+stays absent for that reason.
+
+355 tests across nine banks, 221 across the controller/CLI/e2e six; ruff clean, mypy 224
+clean, doc-links 370 OK.

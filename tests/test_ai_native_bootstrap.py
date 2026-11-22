@@ -832,6 +832,116 @@ def _rejected_ctx(case_site: Site, child_ctx: Any, yaml_path: Path, managed: Any
     )
 
 
+def test_a_create_new_repair_may_write_only_the_documents_admission_read() -> None:
+    """D-V2-9.8: the repair stage is narrower than the stage it repairs.
+
+    The control is not "repair works" -- that needs a live planner. It is the part
+    that must hold whatever the planner does: a repair stage's writer admits the
+    increment and the question record, and refuses the roadmap. That split is what
+    keeps a repair from publishing a project admission never read, and it is enforced
+    by the allowlist rather than by asking the model nicely.
+    """
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.profiles import build_registry_for_role
+
+    root = "worklogs/widget-project"
+    dispatch = PlannerDispatch(
+        PlannerDispatchKind.CREATE_NEW_PROJECT,
+        "repair-run",
+        authoring_root=root,
+        repair_allowlist=(f"{root}/increments/increment-01-initial-plan.md", f"{root}/open-questions.md"),
+    )
+    registry = build_registry_for_role("planner", Path.cwd(), planner_dispatch=dispatch)
+    # The planner profile names the tool ``fs_write_file``; the limited builder is what
+    # that name resolves to for a planner, so the allowlist is on the tool the model sees.
+    writer = registry.lookup("fs_write_file")
+
+    denied = writer.handler({"path": f"{root}/roadmap.md", "content": "# rewritten"})
+    assert denied.error is not None and denied.error.code == "path_denied"
+
+    # And the scope is the *repair* one, not the whole authoring root: a second
+    # document the planner authored in the first stage is out of reach too.
+    ledger = writer.handler({"path": f"{root}/ledger.md", "content": "# rewritten"})
+    assert ledger.error is not None and ledger.error.code == "path_denied"
+
+
+def test_a_repair_allowlist_outside_the_authoring_root_is_refused_at_construction() -> None:
+    """The narrowing is checked where the dispatch is built, not where it is used.
+
+    A dispatch is the one object that describes a stage; allowing it to carry a scope
+    that points outside its own root would make the allowlist a suggestion. Each of
+    these is a real mistake a future call site could make, and each is refused before
+    a stage exists, so the failure names the dispatch rather than a path at tool level.
+    """
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
+
+    root = "worklogs/widget-project"
+    with pytest.raises(PlannerDispatchError):
+        PlannerDispatch(
+            PlannerDispatchKind.CREATE_NEW_PROJECT,
+            "repair-run",
+            authoring_root=root,
+            repair_allowlist=("worklogs/other-project/increments/increment-01-initial-plan.md",),
+        )
+    with pytest.raises(PlannerDispatchError):
+        # An empty scope is a writer that can write nothing.
+        PlannerDispatch(
+            PlannerDispatchKind.CREATE_NEW_PROJECT, "repair-run", authoring_root=root, repair_allowlist=()
+        )
+    with pytest.raises(PlannerDispatchError):
+        # ...and the narrowing does not belong on any other kind.
+        PlannerDispatch(
+            PlannerDispatchKind.ORDINARY_PLANNING,
+            "repair-run",
+            repair_allowlist=(f"{root}/open-questions.md",),
+        )
+
+
+def test_a_create_new_repair_is_budgeted_and_never_overwrites_on_collision() -> None:
+    """D-V2-9.8: two refusals are *not* repairable, however much budget is left.
+
+    A repair is a second authoring stage, so its cost is a planner call -- which means
+    the decision to start one has to answer two questions, not one: is there budget,
+    and is this refusal about content at all. A collision is a fact about the
+    workspace: repairing it would ask the planner to author into a directory it does
+    not own, which is how a repair becomes an overwrite. Unavailability is about the
+    authority, so a second stage would fail identically. Both must refuse to repair
+    even with budget to spare.
+    """
+    from dataclasses import replace
+
+    from fa.inner_loop.workflow_controller import WorkflowContext, _may_repair_authored_project
+
+    ctx = WorkflowContext(
+        run_id="repair-budget",
+        base_task="ct-2.8",
+        per_role_task={},
+        artifact_paths=cast("Any", object()),
+        config=Path("fa.yaml"),
+        workspace=Path.cwd(),
+        max_turns=1,
+        output_mode="quiet",
+        replans_allowed=3,
+        authored_repairs=0,
+    )
+
+    def refusal(rule: str) -> object:
+        return PlanRefError(rule)
+
+    # Budget remains, but these are not content refusals.
+    assert _may_repair_authored_project(ctx, refusal("bootstrap-collision")) is False
+    assert _may_repair_authored_project(ctx, refusal("bootstrap-unavailable")) is False
+    assert _may_repair_authored_project(ctx, refusal("project-route-mismatch")) is False
+    # A failed repair is not repaired by another repair.
+    assert _may_repair_authored_project(ctx, refusal("bootstrap-refused")) is False
+    # A content refusal with budget is repairable...
+    assert _may_repair_authored_project(ctx, refusal("bootstrap-invalid-metadata")) is True
+    assert _may_repair_authored_project(ctx, refusal("bootstrap-invalid-body")) is True
+    # ...and stops being repairable when the budget is spent.
+    spent = replace(ctx, authored_repairs=3)
+    assert _may_repair_authored_project(spent, refusal("bootstrap-invalid-metadata")) is False
+
+
 def _admit_in(
     case_site: Site, child_ctx: Any, managed: Any, yaml_path: Path, slug: str
 ) -> tuple[Any, Any]:

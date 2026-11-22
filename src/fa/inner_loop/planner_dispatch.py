@@ -49,6 +49,33 @@ class PlannerDispatch:
     #: on exactly one kind -- a stray root on any other kind is a mistake to
     #: refuse rather than a value to ignore.
     authoring_root: str | None = None
+    #: D-V2-9.8: the exact prefixes a create-new *repair* stage may write. ``None``
+    #: means "the ordinary authoring scope" (all of ``authoring_root``); a tuple means
+    #: a second stage that may touch only the files admission already read. It travels
+    #: on the dispatch because that is the value every layer between the controller and
+    #: the limited writer already receives -- threading a sixth parameter through
+    #: ``_run_cli_stage``/``_build_run_tool_registry``/``_build_role_registry``/
+    #: ``build_planner_registry`` just to narrow one tuple is five chances to drop it.
+    repair_allowlist: tuple[str, ...] | None = None
+
+    def _check_repair_allowlist(self) -> None:
+        """A repair is *narrower* than the stage it repairs, never wider.
+
+        Every entry must be a file inside ``authoring_root``, and there must be at
+        least one: an empty tuple would be a writer that can write nothing, which
+        would surface as a confusing ``path_denied`` at tool level instead of a
+        dispatch built wrong.
+        """
+        if self.repair_allowlist is None:
+            return
+        if self.authoring_root is None or not self.repair_allowlist:
+            raise PlannerDispatchError
+        prefix = f"{self.authoring_root}/"
+        for entry in self.repair_allowlist:
+            if not isinstance(entry, str) or not entry.startswith(prefix):
+                raise PlannerDispatchError
+            if len(_relative_target(entry)) < 3:
+                raise PlannerDispatchError
 
     @property
     def owns_candidate(self) -> bool:
@@ -92,8 +119,9 @@ class PlannerDispatch:
             parts = _relative_target(self.authoring_root)
             if len(parts) != 2 or parts[0] != "worklogs":
                 raise PlannerDispatchError
+            self._check_repair_allowlist()
             if self.active_plan is not None:
                 # D-V2-9.5: the stage authors the plan it would have to freeze.
                 raise PlannerDispatchError
-        elif self.authoring_root is not None:
+        elif self.authoring_root is not None or self.repair_allowlist is not None:
             raise PlannerDispatchError

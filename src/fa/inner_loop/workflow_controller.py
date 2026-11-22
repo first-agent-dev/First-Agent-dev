@@ -292,6 +292,12 @@ class WorkflowContext:
     # evidence block) degrade silently rather than warning about a plan the
     # operator never supplied.
     plan_path: Path | None = None
+    #: D-V2-9.8: how many create-new *repair* stages this run has already dispatched.
+    #: The shared ``_WorkflowAdmission.planner_calls`` counter cannot carry this: on the
+    #: create-new route admission authority is created *by* the refusal being repaired,
+    #: so before the first repair there is no counter object at all. One integer on the
+    #: frozen context, threaded the same way the stage dispatch already is.
+    authored_repairs: int = 0
     # CT77c: resolved once at workflow start so one run cannot switch between
     # observe/enforce if the operator edits config while a stage is in flight.
     verify_gate_mode: str = "observe"
@@ -2280,7 +2286,9 @@ def _run_role_loop(
             _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
             return _StageLoopResult(ctx, result.exit_code, n_stages, last_role, eval_report, verification)
         if result.authored_project:
-            ctx, blocked = _bind_authored_project(ctx)
+            ctx, blocked = _bind_authored_project(
+                ctx, progress=progress, run_stage_fn=run_stage_fn
+            )
             if blocked is not None:
                 return _StageLoopResult(ctx, blocked, n_stages, last_role, eval_report, verification)
         if result.acquisition is not None:
@@ -2918,17 +2926,74 @@ def _authored_refusal_detail(rule: str) -> _BootstrapFailure:
     return _BootstrapFailure("selection", "needs-clarification", "ERROR", "INDETERMINATE", None)
 
 
-def _bind_authored_project(ctx: WorkflowContext) -> tuple[WorkflowContext, int | None]:
+def _may_repair_authored_project(ctx: WorkflowContext, refusal: PlanRefError) -> bool:
+    """Whether this refusal is repairable, and whether the run has budget for it (D-V2-9.8).
+
+    Three of the four refusal families are worth a second authoring stage, and one is
+    emphatically not. A collision is a fact about the workspace, not about the bytes:
+    asking the planner to author a project into a directory it does not own is how a
+    repair turns into an overwrite. Unavailability means the authority, not the plan,
+    is the problem, and re-running the stage would fail the same way. Only a refusal
+    about the *content* of the pair admission read is repairable, and only while the
+    run still has attempts.
+
+    The budget is one integer on the context rather than the shared planner counter
+    because on this route admission authority is created by the very refusal being
+    repaired: at the first repair there is no ``_WorkflowAdmission`` to count on.
+    """
+    if refusal.rule in {"bootstrap-collision", "bootstrap-unavailable", "project-route-mismatch"}:
+        return False
+    # "bootstrap-refused" is the repair stage's own failure; repairing a failed repair
+    # with another repair is a loop, and the operator needs the failure instead.
+    if refusal.rule == "bootstrap-refused":
+        return False
+    return ctx.authored_repairs < ctx.replans_allowed
+
+
+def _authored_diagnostics(refusal: PlanRefError) -> tuple[_AdmissionDiagnostic, ...]:
+    """The refusal as the repair stage is told it: one closed rule, nothing free-form.
+
+    Sanitized on purpose -- the stage gets a rule name and the files it may write, not
+    a rendered traceback. The repair stage's job is to fix content; anything else it is
+    told is either redundant (it can read the files) or a leak into the prompt.
+    """
+    return (_AdmissionDiagnostic("bootstrap", refusal.rule, "FAIL"),)
+
+
+def _bind_authored_project(
+    ctx: WorkflowContext,
+    *,
+    progress: WorkflowProgress | None = None,
+    run_stage_fn: Callable[..., int] | None = None,
+) -> tuple[WorkflowContext, int | None]:
     """Admit the revision an authoring stage published, or stop the run (D-V2-9).
 
     The shape mirrors ``_bind_acquisition_admission`` -- return a new context on
     success, an exit code on refusal -- so the loop has one way to spell "this
     stage produced the plan". What differs is the source: there is no choice to
     interpret, because the planner wrote the documents instead of describing them.
+
+    A refusal is not the end of the run while the planner still has an attempt left
+    (D-V2-9.8): the repair is a *second authoring stage*, not the candidate buffer,
+    because a project is a tree and the candidate path publishes one file. When no
+    stage driver is available -- tests that assert the refusal itself -- the refusal
+    is reported directly rather than silently repaired by nothing.
     """
     bound, refusal = _admit_published_project(ctx)
     if refusal is None:
         return bound, None
+    if run_stage_fn is not None and progress is not None and _may_repair_authored_project(ctx, refusal):
+        repairing = replace(ctx, authored_repairs=ctx.authored_repairs + 1)
+        repaired, repair_refusal = _run_create_new_repair(
+            repairing,
+            progress,
+            run_stage_fn,
+            diagnostics=_authored_diagnostics(refusal),
+            reason=refusal.rule,
+        )
+        if repair_refusal is None:
+            return repaired, None
+        bound, refusal = repaired, repair_refusal
     # The rule must reach the durable record, not just stderr: an operator reading a
     # blocked run has no stage output to fall back on, and a BLOCKED attempt with an
     # empty ``diagnostics`` is indistinguishable from one that failed to normalise.
@@ -2969,6 +3034,108 @@ def _granted_dispositions(
         if read.sha256 != evidence.digest:
             raise PlanRefError("disposition-evidence-mismatch")
     return declarations
+
+
+#: The allowlist a create-new *repair* stage writes through (D-V2-9.8). Narrower than
+#: the authoring stage's ``worklogs/<slug>/`` because a repair may only fix the
+#: documents admission read: the increment, and the question record when the refusal
+#: was a Q-record one. "Narrowed" is the whole point -- a repair that could rewrite
+#: the roadmap could publish a project admission never saw.
+_REPAIR_WRITABLE_SUFFIXES = ("increments/increment-01-initial-plan.md", "open-questions.md")
+
+
+def _repair_allowlist(root: str) -> tuple[str, ...]:
+    """The exact files a create-new repair may write, spelled as prefixes.
+
+    Prefixes rather than paths because that is the shape the limited writer consumes
+    (``is_path_within_allowlist``); the two entries are full file names, so the
+    prefix admits exactly one file each and no sibling.
+    """
+    return tuple(f"{root}/{suffix}" for suffix in _REPAIR_WRITABLE_SUFFIXES)
+
+
+def _repair_stage_task(base_task: str | None, *, slug: str, diagnostics: tuple[_AdmissionDiagnostic, ...]) -> str:
+    """The task for a create-new repair: fix these two files, change nothing else.
+
+    A repair is not a re-authoring. The project already published one revision with
+    a scaffold and the planner's documents; the refusal was about the *content of the
+    pair admission reads*. Telling the model that plainly is what keeps a repair from
+    wandering -- and the allowlist enforces it anyway, which is why the task can be
+    generous in prose (D-V2-9.8: the allowlist, not the prompt, is the protection).
+    """
+    root = f"worklogs/{slug}"
+    payload = json.dumps([asdict(item) for item in diagnostics], sort_keys=True)
+    return (
+        f"{base_task or ''}\n"
+        f"This project's documents were refused by admission. The revision is already "
+        f"published; fix it in place -- do not start over and do not re-plan.\n\n"
+        f"You may write exactly two files:\n"
+        f"- `{root}/increments/increment-01-initial-plan.md`\n"
+        f"- `{root}/open-questions.md`\n\n"
+        f"Anything else -- the roadmap, the ledger, the acceptance tests -- is fixed and "
+        f"a write to it is refused.\n\n"
+        f"The refusal, sanitized: {payload}"
+    )
+
+
+def _run_create_new_repair(
+    ctx: WorkflowContext,
+    progress: WorkflowProgress,
+    run_stage_fn: Callable[..., int],
+    *,
+    diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
+    reason: str = "",
+) -> tuple[WorkflowContext, PlanRefError | None]:
+    """Repair a refused create-new project with a second authoring stage (D-V2-9.8).
+
+    The candidate buffer is the wrong tool here and the source says so: `seed_plan_candidate`
+    refuses anything but `ADMISSION_REPAIR`/`EVAL_REPLAN`, writes one draft under
+    `.fa/admission/<run>/`, and `publish_candidate_plan` commits **one** file at a pinned
+    ref. A create-new project is a tree, not one file: repairing only the increment would
+    publish a revision whose roadmap still holds whatever admission refused, and the
+    other documents would be unrestorable because they never had a draft.
+
+    So the repair is a second stage of the *same* kind over the published revision, with
+    the allowlist narrowed to the pair admission read. ``plan_ref`` stays ``None``: the
+    stage's business is to change the very bytes a plan-ref would freeze (D-V2-9.5), and
+    the allowlist -- not `_validate_plan_boundary`, which protects coders and verifiers --
+    is what bounds it.
+
+    Returns the bound context on success; on refusal, the context unchanged and the rule,
+    so the caller reports exactly one refusal per attempt.
+    """
+    managed = ctx.managed_execution
+    if managed is None:  # pragma: no cover - the route proved this before the stage
+        return ctx, PlanRefError("bootstrap-unavailable")
+    slug = ctx.project_hint
+    if slug is None:  # pragma: no cover - the authoring kind cannot exist without one
+        return ctx, PlanRefError("project-route-mismatch")
+    root = f"worklogs/{slug}"
+    role_tasks = dict(ctx.per_role_task)
+    role_tasks["planner"] = _repair_stage_task(ctx.base_task, slug=slug, diagnostics=diagnostics)
+    repair_ctx = replace(ctx, per_role_task=role_tasks)
+    dispatch = PlannerDispatch(
+        PlannerDispatchKind.CREATE_NEW_PROJECT,
+        ctx.run_id,
+        authoring_root=root,
+        repair_allowlist=_repair_allowlist(root),
+    )
+    result = _run_stage(
+        repair_ctx,
+        "planner",
+        fresh=False,
+        progress=progress,
+        transition_reason=f"create-new repair revision ({reason or 'admission'})",
+        run_stage_fn=run_stage_fn,
+        planner_dispatch=dispatch,
+    )
+    if result.exit_code != 0:
+        # The repair stage itself failed. Not a content refusal, so it does not get a
+        # content rule: the run stops with the code the stage chose.
+        return ctx, PlanRefError("bootstrap-refused")
+    # The stage published a second revision; admission reads it exactly as it read the
+    # first, which is what makes "the repair is re-validated" a fact rather than a plan.
+    return _admit_published_project(repair_ctx)
 
 
 def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, PlanRefError | None]:
