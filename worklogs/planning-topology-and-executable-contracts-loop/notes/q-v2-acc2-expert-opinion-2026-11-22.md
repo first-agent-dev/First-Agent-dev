@@ -1,5 +1,14 @@
 # Expert opinion — invoke_workflow / evidence model (2026-11-22)
 
+> **SUPERSEDED 2026-11-22 (E603).** This draft contained two errors found in the
+> adversarial review: (1) it called `HARD + NON_EXECUTABLE` a bug fix — the plan's
+> own INV-05/line-233 wording permits it, so it is a ratification decision, not a
+> code fix; (2) it sequenced SLICE3 as CT-3.2 first — the real dependency is CT-2.4
+> (seal mint wiring). The decision package that replaces this draft is
+> [evidence-model-decision-package-2026-11-22.md](evidence-model-decision-package-2026-11-22.md).
+> Both errors are explained there, together with the full measurement appendix.
+
+
 **Scope:** the V2 evidence/admission model (`plan_v2.py`, `acceptance_bundle.py`, `plan_admission.py`, `workflow_controller.py`, canonical schema, skills, CLI dispositions ingress).
 **Status:** read-only analysis + independent re-measurement. No production change.
 **Question this answers:** the system is supposed to make one thing true — an AI-produced artifact is checked by something other than the AI that produced it, and that check cannot be talked around. What is the current state of that promise, what is actually missing, and in what order should SLICE3 proceed?

@@ -12506,3 +12506,21 @@ and state the invariant in a vocabulary the code enforces; (E) fix the repair al
 transitive half as a named residual.
 
 No production change in this commit.
+
+### E603 — adversarial review of the expert opinion; decision package replaces the draft (2026-11-22)
+
+Full package: [evidence-model-decision-package-2026-11-22.md](notes/evidence-model-decision-package-2026-11-22.md).
+The E602 opinion was re-reviewed adversarially and two errors found:
+
+1. **It called `HARD + NON_EXECUTABLE` a bug fix.** Wrong. The plan contradicts itself on exactly this point — line 60 (grammar delta) prohibits it for HARD/ready contracts, while line 233 (production grammar) and line 284 (INV-05) explicitly permit "a test **or** a typed explicit evidence disposition". The plan is internally inconsistent and leaves the decision to ratification. Correct classification: a policy choice, not a bug fix. My judgment is ALLOW (the disposition pipeline is typed/one-shot/time-boxed/grant-bound, and HOST_READINESS-style claims are genuinely untestable), with line 60 deleted or aligned. This is the first thing the operator must decide.
+
+2. **It sequenced SLICE3 as CT-3.2 first.** Wrong. CT-2.4 (publish→seal wiring in the controller, D-V2-5 on the D-V2-9 revision) is the real dependency — it is SLICE2 work and the seal is currently unwired (zero `AcceptanceBundle` references in `workflow_controller.py`, grep-verified). CT-3.x cannot proceed before CT-2.4 lands, regardless of the evidence fix.
+
+**Also corrected in this review:**
+- **Repair geometry is a real change, not one line** (D3): parse refusals surface to the repair stage as `bootstrap-invalid-metadata` (the `snapshot.format_error` branch), and the repair allowlist covers only increment + open-questions — a coverage gap cannot be repaired by the repair stage as designed. Widening requires a family-scoped allowlist, a repaired diagnostic mapping, and updated tests.
+- **Seal self-description costs nothing today** — zero production seals exist in this repository (the STEP9A seal stack is a library with no callers), so bumping `SCHEMA_VERSION` to 2 has no migration burden. `load_seal` refuses unknown versions, so the bump is safe by construction.
+- **§8 step 4 ("Q-V2-ACC-1/2 are closed") is false** — Q-V2-ACC-2 is BLOCKING with no resolution; the §8 line must be corrected in the plan, not papered over.
+
+**Decision requests** (judgment, not ratified — see the package §5 for each): 1. TIGHT admission rule for uncovered TEST_REQUIRED (any KIND) — my recommendation; 2. HARD+NON_EXECUTABLE allowed via ratified pipeline — my recommendation; 3. Seal records contract_total + coverage map — recommended, zero cost; 4. Repair widened by refusal family — recommended; 5. CLI `--dispositions` — bounded, recommended; 6. Schema rewrite as the first work item, one coherent change set — recommended; 7. The plan's internal contradictions fixed — documentation, first.
+
+No production change in this commit.
