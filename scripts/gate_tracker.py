@@ -37,6 +37,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+# scripts/ is not a pip-installed package; shim sys.path when invoked as a file,
+# matching check_dead_flags.py. The compare table draws box characters, so the
+# stdio must be UTF-8 even on a cp1251 console (tests/test_console_encoding.py).
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts._console import force_utf8_stdio
+
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -215,6 +222,7 @@ def compare(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    force_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
