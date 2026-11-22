@@ -1,18 +1,12 @@
-# S0 draft — the managed-substrate probe (unlanded, awaiting Q-V2-S0-1)
+# S0 — the managed-substrate probe (landed 2026-11-22)
 
-**Status 2026-11-22:** draft only. Not in `tests/`, not run anywhere, not evidence.
-Two things are missing and neither can be invented:
+**Status:** landed as `tests/test_ai_native_managed_substrate_probe.py` in `aaf0dea`; Q-V2-S0-1 resolved = A.
+This file keeps the *reasoning* that decided the probe's shape (why host-only, and why the failure is the
+intended one), which is the part a reader of the test cannot recover from the code. The source below is the
+draft as it was parked while the session had no interpreter; the landed file is the authority and it differs
+from the draft in two small ways found at landing (a missing `Operation` import, and an unnecessary `noqa`).
 
-1. **Ratification.** Q-V2-S0-1 asks where the probe lives and what counts as proof. Option A is
-   recommended there; the draft below *is* option A. Landing it before the decision would be writing
-   the artefact whose home is in question.
-2. **An interpreter.** This session's sandbox came back without Python 3.13 (system python is 3.11.2, no
-   `.venv`), and `src/fa` needs 3.12+ (`fa.inner_loop.loop` imports `typing.override`; `pyproject`
-   requires `>=3.13`). No 3.13 can be obtained here: `uv python install` needs a GitHub release asset,
-   the sandbox proxy refuses `release-assets.githubusercontent.com`, `apt` has no `python3.13`, and there
-   is no vendored interpreter on PyPI. So this session can read code and write documents; it cannot run
-   a single test, `mypy`, or `fa authoring-check`. That is a **toolchain loss, not a pass** — see ledger
-   E612. Nothing below has been executed.
+The host obligation stands: on W4 the strict xfail must XPASS and the marker comes off in the same change.
 
 ## What the draft encodes, and why each assertion is the load-bearing one
 
