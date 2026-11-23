@@ -14890,3 +14890,14 @@ producer/EDGE, custody, publication, full threat-model or W4 proof; E657 still b
 TEST-EDITS: `tests/test_acceptance_mount_topology.py` extended, prior assertions retained.
 Local five-module bank 282 passed; Ruff/format and source-path mypy passed; three
 local diagnostic mutants killed/restored (parent RO, journal bind, rooted replace).
+
+### E694 — bounded next step toward STEP9A (2026-11-23)
+
+Operator accepts ledger relocation in principle and directs focus back to STEP9A and I03.
+Simplest candidate is canonical `notes/ledger.md`, using the already authorized notes
+subtree instead of E693's new journal directory: likely fewer mounts and no extra
+writable subtree, but not yet tested and subject to normal notes lifecycle and migration
+review. E693 journal remains a tested local alternative, not selected. User acceptance in
+principle is not an authorization to silently broaden scope, choose migration semantics,
+or change authoritative evidence. Detailed bounded proof/implementation sequence and
+remaining independent blockers are in V2 plan E694. No runtime, host or STEP9A PASS claimed.

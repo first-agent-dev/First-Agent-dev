@@ -25,13 +25,15 @@ example and finds fresh-path continuity but a successful old-FD write invisible 
 backing path after atomic replacement; no security boundary or Docker proof. E693 tests a
 relocated ledger in a writable directory bind under read-only worklogs: the local sequence
 works and selected out-of-scope writes fail, but broad directory writes, compatibility,
-full nested scope and Docker/publication remain open. See [ledger E683–E693](planning-topology-and-executable-contracts-loop/ledger.md) and the
+full nested scope and Docker/publication remain open. E694 prioritizes a focused probe of
+`notes/ledger.md`, reusing the authorized notes mount, before a migration decision. Keep
+research bounded to STEP9A/I03. See [ledger E683–E694](planning-topology-and-executable-contracts-loop/ledger.md) and the
 [V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next
 
-1. Evaluate E691 AppArmor candidate and alternatives without introducing an unapproved host
-   prerequisite; continue E687 selective projection beyond E688–E690: preserve ledger edits
+1. First compare E694 notes-ledger candidate against E693 journal, without new host
+   prerequisites or broad scope; continue E687 selective projection: preserve ledger edits
    and source continuity without granting nested coder the whole project; Q-V2-WRITE-SCOPE-1=A
    authorizes only current-project working surfaces for nested coder, not mutation-oracle widening.
    E686 records early-denial, safe work-recovery and W4 E2E tasks.

@@ -1911,3 +1911,43 @@ alter real rooted ledger replacement) killed and restored; no production produce
 claim. The diagnostic uses `unshare -Urnm`, `mount`, `setpriv`, non-root uid/gid, pytest and
 project environment; a skip is not PASS. E657, mandatory immutable-payload fallback, E674,
 STEP9A/9B and W4 remain open.
+
+### E694 — prioritize simplest layout to unblock STEP9A, not a separate research project
+
+Operator accepts relocating the ledger in principle and emphasizes closing STEP9A, then
+I03, before live-host deployment. Do not take this as approval of a particular migration,
+a broader nested-coder scope, or changing trusted evidence. The next comparison is bounded:
+
+1. **Leading simpler candidate:** put the canonical ledger at
+   `worklogs/<slug>/notes/ledger.md`, reusing the already approved writable notes subtree
+   instead of introducing E693's additional `journal/` writable subtree. The name is a
+   proposal, not an implemented/approved canonical path. In principle this avoids a new
+   directory-wide scope exception and a third writable bind, and temp files can live beside
+   ledger. E693's separate-directory result makes it plausible, but **no test has run with
+   ledger inside notes**, and notes cleanup/editing could overwrite or remove it. Document
+   its canonical location in prompts and distinguish narrative from authoritative evidence.
+2. E693's separate `journal/ledger.md` keeps ledger semantically distinct and passed a local
+   diagnostic, but permits all files inside a new writable directory and needs an explicit
+   scoped-contract decision. It is a fallback if the single notes location is undesirable.
+3. Keep the current root ledger only if an adequately proven mechanism beats this simpler
+   layout; E688 file bind, E689 project bind, and E690 naive Landlock each fail a required
+   local property. AppArmor needs an AppArmor-capable host and secure profile lifecycle;
+   FUSE adds a trusted daemon and lifecycle; neither is selected. Do not build either
+   merely because it is available.
+
+**Only remaining discriminators before choosing implementation direction:** run the focused
+notes-ledger topology probe, including normal file-tool/shell replacement and sibling denial;
+then inventory compatibility and devise a single canonical location for new/existing projects
+with explicit conflict, crash/retry and historical-reference handling. No silent duplicate
+ledger, symlink alias or rewriting old evidence. Check bootstrap paths, prompts, scaffolding,
+publication, metadata and fixtures. Prove nested scope beyond `worklogs`, including allowed
+`src/scripts`, and protect the *complete* pinned closure even if support/config lies outside
+acceptance. A top-level worklogs mount alone cannot prove those properties. Design shell and
+file-tool consistency, late-failure work preservation, and stale-FD concurrency semantics;
+run real authority stop/snapshot/publish/repin and producer/EDGE tests. Then verify on an
+appropriate Linux/container host before claiming deployment readiness. Do not block unrelated
+STEP9A slices on speculative attack research, but keep E657 until the actual boundary is
+proven. Legacy fresh-project BOOTSTRAP origin issue E679, E683 lineage/reset, immutable
+fallback, exact attribution, full E674 gates, STEP9B and W4 remain separate open obligations.
+A user-run standalone host harness is optional if an environment-dependent question cannot
+be answered locally; Docker-free syscall results alone are not Docker integration evidence.
