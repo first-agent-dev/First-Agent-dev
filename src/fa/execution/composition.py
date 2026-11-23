@@ -97,6 +97,10 @@ class _PendingAcceptanceSeal:
     uncertain: bool = False
 
 
+class ManagedReaderBlockedError(ExecutionUncertainError):
+    """A reader was not sent because another managed operation is unresolved."""
+
+
 @dataclass
 class ManagedExecution:
     """One run's client, binding and the single writer grant it holds.
@@ -394,6 +398,7 @@ class ManagedExecution:
         wire payload itself and a second view-opening path cannot appear.
         """
         self._require_handoff_resolved()
+        self._require_publication_resolved()
         return self.client.open_view(
             self.binding,
             access=access,
@@ -412,6 +417,7 @@ class ManagedExecution:
         composition so the controller never spells a wire payload itself.
         """
         self._require_handoff_resolved()
+        self._require_publication_resolved()
         if not isinstance(plan_ref, PlanRef):
             raise ExecutionContractError
         return self.client.open_candidate_view(self.binding, plan_ref=plan_ref, grant=self.grant, deadline=deadline)
@@ -419,6 +425,7 @@ class ManagedExecution:
     def read_candidate(self, plan_ref: PlanRef, *, deadline: float | None = None) -> CandidateRead:
         """Read the run's staged candidate buffer without publishing it."""
         self._require_handoff_resolved()
+        self._require_publication_resolved()
         if not isinstance(plan_ref, PlanRef):
             raise ExecutionContractError
         return self.client.read_candidate_buffer(self.binding, plan_ref, grant=self.grant, deadline=deadline)
@@ -432,6 +439,7 @@ class ManagedExecution:
     ) -> dict[str, Any]:
         """Compare this run's sealed base and current revision through a read pin."""
         self._require_handoff_resolved()
+        self._require_publication_resolved()
         _hex_id(base_revision_id, "rev-")
         _hex_id(target_revision_id, "rev-")
         if target_revision_id != self.current_revision_id:
@@ -466,6 +474,7 @@ class ManagedExecution:
         next stage opens its own view over the revision this call produced.
         """
         self._require_handoff_resolved()
+        self._require_publication_resolved()
         if not isinstance(grant, GrantReply) or grant.view_ref is None:
             raise ExecutionContractError
         publication = self.client.publish_stage(
@@ -483,7 +492,15 @@ class ManagedExecution:
         deadline: float | None = None,
     ) -> GrantReply:
         """Pin a READ/PROJECT view for this run or its direct child."""
-        self._require_handoff_resolved()
+        try:
+            self._require_handoff_resolved()
+            self._require_publication_resolved()
+        except ExecutionUncertainError as error:
+            # Nothing was sent for this reader. Do not confuse the pending
+            # writer operation with an ambiguous PIN that may have opened a view.
+            raise ManagedReaderBlockedError(
+                error.operation_id, code=error.code, pending_publication=error.pending_publication
+            ) from error
         binding = self.binding if child_binding is None else child_binding
         if child_binding is not None and (
             not isinstance(child_binding, ExecutionBinding)

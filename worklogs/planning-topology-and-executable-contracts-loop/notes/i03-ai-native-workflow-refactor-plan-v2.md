@@ -1377,15 +1377,24 @@ Full coherent rollback detection is a separate stronger boundary. See [ledger](.
 for source audit; this assessment preceded the resolution below.
 
 
-**Q-V2-CUSTODY-RECOVERY-1 resolution (operator, 2026-11-23):** use the minimal
-authority-owned fresh-provisioning-versus-existing distinction and fail closed when
-seal history is unprovable; no silent remint. Back up and restore project, session and
-supervisor state consistently, and prove the chosen recovery on W4. Fully coherent
-rollback of all state is outside the MVP guarantee; no independent anti-rollback service
-is mandated. This supersedes the historical audit E9 remint allowance and the former
-recommendation to require an external registry. This is a decision, not implementation
-or host evidence: fresh-install provenance, crash recovery, backup protocol and guard
-E657 remain open until implemented and tested. Q-V2-LEDGER-1 remains separate.
+**Q-V2-CUSTODY-RECOVERY-1 resolution, amended E683 (operator, 2026-11-23):** a
+missing or unprovable prior seal blocks ordinary agent mint, but does not permanently
+block a project. A trusted, explicit owner/workflow recovery may revalidate the current
+plan, full closure, collection and pre-code gates and establish a new seal/evidence
+lineage; previous verification and mutation results must never be credited to it. It does
+not claim the lost prior bytes were restored. Coordinated project/session/supervisor backup
+is appropriate when the exact old history must be restored; W4 must verify the chosen
+recovery and backup/restore boundary. A deliberately deleted project ends its incarnation
+and releases its slug for a new incarnation, whose evidence cannot be confused with the
+old one; authorized cleanup may remove stale private artifacts. A manual out-of-band
+deletion requires explicit authority reconciliation, not a filesystem watcher or silent
+adoption. The authority must distinguish these trusted lifecycle decisions from coder
+edits or arbitrary missing files, and recover durable operations idempotently. No separate
+external anti-rollback registry is mandated; detecting a coherent rollback of all state
+remains outside MVP. This amends E669's blanket no-remint/fresh-versus-existing policy:
+no **silent** remint remains mandatory, but explicitly authorized reset is allowed.
+It is a decision, not implemented or host proof; E657 remains active. Q-V2-LEDGER-1 is
+separate.
 
 **E671 partial custody hardening:** the authority's BOOTSTRAP origin now records a durable
 first-mint transition; losing both the separate marker and project seal directory cannot
@@ -1465,23 +1474,46 @@ retains uncertain private-seal request identity for same-ID reconciliation and w
 close/handoff; current direct `managed.client` paths bypass this composition fence and
 must be audited before wiring the controller. See ledger for exact tests and limits.
 
-**Next engineering increment:** establish an authority-owned proof of project first
-provisioning for the staged REVISION route, including projects present at registration,
-project additions and deletions, missing/invalid history, concurrent/stale publication,
-crash recovery on both sides of the revision pointer, and loss of a per-project origin or
-started marker. One possible direction is a workspace-bound, monotonic project history
-initialized atomically with the registered revision and updated/recovered by every relevant
-forward publication/install intent; it must distinguish historical/unknown projects from
-fresh ones and fail closed if its own provenance is absent or inconsistent. This is a
-candidate engineering design, not proof or a ratified new product policy. Reuse existing
-private durable primitives; prove real CREATE_NEW_PROJECT→publication→origin→private seal,
-loss/restart/no-remint and producer/EDGE tests before replacing E679's diagnostic or wiring
-controller store/read. Existing deployments and origin formats need an explicit safe
-recovery story; no automatic adoption based only on an absent current path. Preserve E657,
-trusted-collection work, mode A/fallback and the E674 full gate.
+**Next engineering increment (amended by E683):** implement explicit authority-trusted
+project-incarnation lifecycle, including staged REVISION creation, owner-requested deletion
+and re-creation, out-of-band deletion reconciliation, and recovery of an existing project
+whose seal was lost. A monotonic permanent slug history is **not** a selected requirement.
+Specify the actual privileged caller/authorization boundary before exposing reset: current
+OWNER is a run capability and must not automatically become coder authority to reset its
+own acceptance. Bind operation identity, project incarnation and fresh seal lineage to
+workspace and revision; wire durable intent/recovery, replay, stale/concurrent fencing and
+cleanup. Revalidating current documents is not proof of old bytes. Even unchanged bundle
+inputs produce the same deterministic seal digest today (`test_the_same_inputs_always_mint_the_same_bytes`):
+evidence must additionally bind an authority-issued new lineage, or the new seal must
+incorporate that lineage, so pre-reset evidence cannot regain credit after reset. Decide
+format/migration and public command after the source and threat-boundary audit; no
+caller-supplied lineage may self-authorize reset. Prove real staged CREATE_NEW→publication→
+private seal, explicit reset and delete/recreate, lost-reply/restart, old-evidence refusal,
+coder denial and producer/EDGE before replacing E679's diagnostic or wiring controller.
+Preserve E657, independent collection, mode A/fallback and the E674 full gate.
 
 **E681:** known verify/acquisition/child READ pin edges now route through the managed seal
 fence, with child binding constrained to the same workspace/session and direct parent.
 See ledger for real-service producer test, three caller-edge tests and five killed mutants.
 This is not a universal or concurrency-safe custody proof: audit remaining direct client
 calls, candidate-publication interactions and controller-loss recovery before integration.
+
+### E683 lifecycle implementation matrix (open; supersedes E682 permanent-history proposal)
+
+| Case | Required effect / evidence | Negative and recovery controls |
+|---|---|---|
+| CREATE_NEW authoring | Real managed authoring REVISION becomes an authority-identified new project incarnation; validated current plan and closure can enter private seal flow. | No caller-selected reset proof, no legacy `SealStore` authority; reject collision and stale revision, preserve authoring repair. |
+| Trusted project deletion | Close incarnation and remove/archive its associated authority data according to the selected cleanup; same slug can be created again as a different incarnation. | No coder-supplied file deletion silently authorizes reset. Preserve other projects/plans, symlink-safe cleanup, crash/replay with no half-authorized new incarnation. |
+| Manual deletion | Detect drift or explicit operator reconciliation and let trusted lifecycle close the incarnation; no watcher dependency. | Never interpret a transient absence or unchecked host path as an authorized delete; no stale writer/view or unproved reconciliation. |
+| Existing project, lost seal | Explicit trusted recovery revalidates current plan and complete closure, independent collection and applicable pre-code gates, then establishes new lineage. | Missing/corrupt origin/pointer/record alone cannot authorize reset; unchanged bytes and unchanged revision must still invalidate old results; coder cannot grant itself reset. |
+| Lost reply/crash | Reconcile exact operation and durable state; preserve uncertainty and prevent concurrent work until settled. | No duplicate incarnation, phantom success, partial cleanup or id reuse with different inputs; test before and after each irreversible point and across restart/quarantine. |
+| Restore | Coordinated restore when exact history is required; W4 validates deployed boundary. | Do not claim coherent total rollback detection, old-byte recovery from a reset, or host proof from Arena-local tests. |
+
+The run OWNER proof (`WorkspaceAuthority._owner_only`) binds a capability, active namespace
+and UID/GID principal, but has no planner/coder/owner role field; it is insufficient by
+itself as proof that an LLM coder may authorize reset. The trusted management entry point,
+its authorization/provenance, safe durable lifecycle and evidence epoch are **not yet
+implemented**. Fixed SHA-only `AcceptanceBundle` and `VerificationIdentity` currently have
+no incarnation identity: identical plan/revision/closure inputs mint identical seal bytes,
+so a new seal must have an authority-controlled distinct lineage or all evidence consumers
+must bind a separate authority-proved lineage. Component mocks cannot prove this lifecycle.

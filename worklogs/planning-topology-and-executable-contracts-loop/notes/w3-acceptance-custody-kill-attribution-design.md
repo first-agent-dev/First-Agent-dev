@@ -93,6 +93,21 @@ This division places semantic authorship with the planner, byte custody with the
 7. On `TEST-DEFECT`, keep the sealed revision immutable. A planner correction produces a new revision and report, preserves old evidence, and reruns affected checks; no correction produces a disposition report and returns to coder. A semantic change routes to owner/replan.
 8. A missing/stale seal, changed acceptance bytes or ambiguous mapping blocks even in `observe`. For determinate test/kill failures, existing `observe` remains advisory and `enforce` continues to route to repair.
 
+## Recovery and project incarnation (operator amendment E683)
+
+A trusted explicit deletion ends the project incarnation and frees its slug; a new
+project at that slug must never inherit the former incarnation's acceptance evidence.
+When a live project's seal is lost, ordinary agent work stops, but a trusted explicit
+recovery can revalidate current plan and closure, repeat collection/pre-code gates, and
+start a new seal/evidence lineage. This is not proof that lost bytes match current bytes.
+Prior verification/mutation evidence cannot be credited to the new lineage. A coder cannot
+trigger reset merely by removing a file, and manual out-of-band deletion requires explicit
+authority reconciliation. Coordinated backup/restore remains available when preserving
+the exact prior history is required; coherent rollback of all state is outside MVP.
+This amends the blanket no-remint portion of E669, not the no-silent-remint boundary.
+The design is ratified, not yet implemented. See the E683 lifecycle and test matrix in the
+[V2 plan](i03-ai-native-workflow-refactor-plan-v2.md) and [ledger](../ledger.md).
+
 ## 7. Remaining implementation gates
 
 The storage decision is complete: workspace-revision strategy C is selected, with isolated immutable payload as the fail-closed storage fallback; this is distinct from visibility mode B. Before STEP9A can close, implementation must prove the complete closure and controller-minted seal, the coder-visible mode-A read-only projection against both shell and file tools, unchanged-closure enforcement at seal/publication, verifier execution of the same pin/digest, pre-code outcome classification, and claim-appropriate authoritative-effect checks. STEP9 remains the predecessor; no W3 candidate `fa update` is authorized until STEP9, STEP9A and the other local/review gates close.

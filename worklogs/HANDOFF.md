@@ -3,19 +3,28 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — Q137 gate and coder-loop decomposition, 2026-11-09
+## Current state — I03 STEP9A custody, 2026-11-23
 
-Active session branch `arena/786f6d8a-first-agent-dev`. Full gate remains BLOCKING: last immutable `just test` before later changes returned 37 failed / 7252 passed / 18 skipped / 4 xfailed / 11 errors (coverage 86.52%); no current-snapshot full-gate signoff. The most recent earlier full Pyrefly reported 0 errors; full mypy had 3 errors in 3 files. Managed-provisioner/readiness failures, Q135 F2–F4, Q136 Pylint and I03 live-host acceptance remain open. Do not bypass managed isolation or treat local mocks as live-host proof.
-
-The current [architecture map](planning-topology-and-executable-contracts-loop/notes/coder-loop-architecture-map-2026-11-09.md) §§17.6–18.4 records history/protocol, tool handoff, scope-turn and prompt-composer ownership; the [Q137 working inventory](planning-topology-and-executable-contracts-loop/notes/q137-working-entry-inventory-2026-11-09.md) retains exact targeted banks, mutations and historical gate IDs. Recent P1 payload/compaction tests: 98 and 159 passed; both contract checkers and targeted static checks passed. The file review register remains partial (109 D / 31 P / 32 unchecked; D is not signoff). Agent-legibility means cohesive task working sets and explicit ownership, **not any LOC target**.
+Active branch `arena/35e7d961-first-agent-dev`. STEP9 is closed locally; STEP9A remains
+open and E657 blocks V2 coder stages until real custody is proved. The operator amended
+recovery policy in E683: explicit trusted deletion closes an incarnation and frees the
+slug; explicit trusted recovery after seal loss revalidates current inputs and establishes
+a new evidence lineage. No silent coder-triggered reset; old verification/mutation
+results cannot carry over. Coordinated backup/restore remains for exact history and W4.
+See [ledger E683/E684](planning-topology-and-executable-contracts-loop/ledger.md) and the
+[V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next
 
-1. Continue AL1–AL6 in the architecture map; trace context-pressure/compaction state, effect ordering and failure matrix before selecting the next substantial safe slice. Preserve existing semantics and use producer/EDGE kill-checks; do not declare victory from file size or C901.
-2. Resolve remaining gate findings with source-grounded scoped changes and re-run full gates when ready; existing legacy CLI cases encounter `managed_execution_unavailable` and must not be made green by disabling isolation.
-3. Keep I03 live ledger append L-RCPT-2/L-RCPT-6 and L-ENTRY-4 planned and unexecuted until actual live-host evidence exists. Continue the incomplete adversarial file review; consult its register.
-
-The following E258/E259 narrative is retained as historical I02/I03 context, not the current branch or current gate status.
+1. Implement and prove the trusted lifecycle/authorization and distinct evidence lineage;
+   an OWNER run grant alone has no role distinction, and deterministic seal hashes alone
+   do not distinguish identical inputs after reset. Cover real staged creation, deletion,
+   reset, old evidence denial, crashes/replay and manual drift. Do not lift E657.
+2. Finish independent collection, complete closure and true mode-A shell/file read-only
+   projection or mandatory immutable-payload fallback, exact mutation attribution,
+   pre-code and TEST-DEFECT production routes.
+3. Complete the mandatory E674 full `just check` and per-module mutation gate before
+   STEP9A close; STEP9B and W4 remain subsequent gates. No live-host PASS is claimed.
 
 ## Historical state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E258
 

@@ -639,6 +639,21 @@ def test_subagent_uses_managed_pin_fence_before_client(tmp_path: Path) -> None:
         patch.object(writer, "_require_handoff_resolved", side_effect=ExecutionUncertainError("op-pending")),
     ):
         result = tool.handler({"task": "read"})
+    assert result.error is not None and result.error.code == "subagent_unavailable"
+    assert writer.fake_client.pin_calls == [] and writer.fake_client.stop_calls == []
+    assert parent.active_count == 0  # the guarded PIN was never sent
+
+
+def test_a_lost_child_pin_reply_still_retains_the_slot(tmp_path: Path) -> None:
+    from fa.execution.client import ExecutionUncertainError
+
+    parent, writer = _parent(tmp_path)
+    tool = _build_tool(tmp_path, parent, writer)
+    with (
+        patch.object(managed_subagent, "get_current_session", return_value=parent),
+        patch.object(writer.fake_client, "pin_reader", side_effect=ExecutionUncertainError("op-pin")) as pin,
+    ):
+        result = tool.handler({"task": "read"})
     assert result.error is not None and result.error.code == "subagent_terminality_unconfirmed"
-    assert writer.fake_client.pin_calls == []
-    assert parent.active_count == 1  # conservative: an ambiguous pin is not presumed terminal
+    assert pin.call_count == 1 and writer.fake_client.stop_calls == []
+    assert parent.active_count == 1

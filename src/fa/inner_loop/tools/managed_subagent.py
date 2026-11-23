@@ -27,7 +27,7 @@ from fa.execution.client import (
     ExecutionUncertainError,
     ReadOnlyManagedBashExecutor,
 )
-from fa.execution.composition import ExecutionBinding, ManagedExecution
+from fa.execution.composition import ExecutionBinding, ManagedExecution, ManagedReaderBlockedError
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, NamespaceRef, Operation, ViewPurpose
@@ -424,6 +424,13 @@ def build_managed_subagent_tool(  # noqa: C901
                 else "managed child returned a bounded failure report"
             )
             outcome_result = ToolResult.ok(summary, result=json.loads(report_json))
+        except ManagedReaderBlockedError:
+            # The managed guard refused before PIN was sent. The separate
+            # unresolved operation still fences its writer, but no child view
+            # exists to keep the active-child slot reserved.
+            outcome_result = _failure(
+                "subagent_unavailable", "managed child pin was blocked by an unresolved parent operation"
+            )
         except ExecutionUncertainError:
             # An ambiguous PIN with no grant may have created an unaddressable
             # reader, so retain the active slot. If a grant exists, STOP_VIEW in

@@ -3636,6 +3636,27 @@ def test_an_unresolved_candidate_publication_keeps_the_writer_and_reconciles(
             assert pending is not None
             assert managed.publication_pending is True
 
+            # A lost PUBLISH reply may have advanced the authority while the
+            # managed object's current revision is still stale. No new work may
+            # consume that revision until the exact publication is reconciled.
+            from fa.execution.composition import ManagedReaderBlockedError
+
+            with pytest.raises(ManagedReaderBlockedError) as blocked:
+                managed.pin_reader()
+            assert blocked.value.pending_publication is pending
+            with pytest.raises(ExecutionUncertainError):
+                managed.open_view(
+                    access=Access.WRITE, purpose=ViewPurpose.PROJECT, base_revision=managed.current_revision_id
+                )
+            with pytest.raises(ExecutionUncertainError):
+                managed.open_candidate_view(source.ref)
+            with pytest.raises(ExecutionUncertainError):
+                managed.read_candidate(source.ref)
+            with pytest.raises(ExecutionUncertainError):
+                managed.revision_changes(managed.current_revision_id, managed.current_revision_id)
+            with pytest.raises(ExecutionUncertainError):
+                managed.publish_stage(managed.grant)
+
             # The writer is fenced: no release while the outcome is unknown.
             assert managed.close() is False
             assert _status(site, workspace_id)["status"] == "OWNED"
@@ -3659,6 +3680,9 @@ def test_an_unresolved_candidate_publication_keeps_the_writer_and_reconciles(
                 assert handler_calls == ["op-" + publish_request_id]
                 assert managed.publication_pending is False
                 assert plan_path.read_bytes() == candidate.utf8_bytes
+                reader = managed.pin_reader()
+                assert reader.view_ref is not None and reader.view_ref.base_revision == proof.revision_id
+                assert managed.stop_view(reader)
                 # Only now may the writer go back.
                 assert managed.close() is True
                 assert _status(site, workspace_id)["status"] == "AVAILABLE"
@@ -4210,9 +4234,12 @@ def test_managed_seal_lost_reply_fences_writer_until_exact_replay(site: Site, mo
             assert managed.acceptance_seal_pending
             with pytest.raises(ExecutionUncertainError):
                 managed.handoff_to(NamespaceRef(ACTOR.session_id, "child-run", ACTOR.run_id))
+            from fa.execution.composition import ManagedReaderBlockedError
+
             child = ExecutionBinding(NamespaceRef(ACTOR.session_id, "child-run", ACTOR.run_id), ids["workspace_id"])
-            with pytest.raises(ExecutionUncertainError):
+            with pytest.raises(ManagedReaderBlockedError) as blocked:
                 managed.pin_reader(child_binding=child)
+            assert blocked.value.operation_id == lost.value.operation_id
             with pytest.raises(ExecutionUncertainError):
                 managed.pin_reader()
             with pytest.raises(ExecutionUncertainError):

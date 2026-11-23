@@ -14633,3 +14633,52 @@ proved; (4) pre-code exact-assertion sensitivity and baseline/error classificati
 refusal; (8) E674 full `just check` and complete per-module mutation sweep/review. Some
 component tests and transport already exist but none alone establishes end-to-end custody.
 STEP9B, new slices and W4 are subsequent distinct gates, not extra STEP9A closure claims.
+
+### E683 — operator amendment: explicit lifecycle recovery (2026-11-23)
+
+The operator selected the prior discussion's practical deletion/reset policy. Trusted
+project deletion closes an incarnation and releases its slug; re-creation uses a distinct
+incarnation/evidence lineage. For a live project with lost seal state, trusted explicit
+recovery may revalidate current plan, complete closure, collection and pre-code gates,
+then establish a new seal/evidence lineage. Old verification/mutation results are not
+credited; current bytes are not claimed to restore lost bytes. Manual out-of-band deletion
+must be reconciled through authority. Coder removal of files cannot silently self-authorize
+reset. Exact old history can instead be recovered via coordinated backup/restore; W4
+witness remains required, coherent complete rollback outside MVP. This supersedes E669's
+blanket fail-closed/no-remint and E682's proposed permanent slug-history requirement,
+while preserving no silent remint, TEST-DEFECT lineage, custody and E657. Plan, parent
+increment and custody design are amended; policy is decided, implementation is open.
+
+Source implications: `_owner_only` checks run capability/active namespace/UID:GID, not
+planner versus coder or explicit human authorization. A trusted management edge must be
+defined and tested before offering reset; don't add an OWNER-only reset and assume it is a
+separate capability. The current bundle's deterministic canonical hash and
+`VerificationIdentity` lack an incarnation ID (`test_the_same_inputs_always_mint_the_same_bytes`);
+unchanged bytes and unchanged revision can recreate the old digest. New lineage must be
+authority-issued and actually checked by evidence consumers, not just logged. This does not
+require an external history service; choose the representation after threat/recovery review.
+The V2 plan records the creation/deletion/manual-drift/loss/replay/restore matrix. No
+recovery, fresh origin, independent collection, mode A or host PASS is claimed.
+
+### E684 — distinguish blocked PIN from uncertain PIN; publication fence (2026-11-23)
+
+E681 conservatively retained a child slot when the parent seal fence rejected the PIN before
+transport, confusing a pending *other* operation with an uncertain PIN. `pin_reader` now
+raises an `ExecutionUncertainError` subtype specifically for its local pre-send guard,
+preserving operation ID and any pending candidate handle; the child tool reports unavailable
+and releases its active slot only for that type. An actual lost PIN response still retains the
+slot. Managed reader, project/candidate view, candidate read, revision diff and stage publish
+also now refuse locally while candidate publication is unresolved; a lost reply may already
+have advanced the authority while `current_revision_id` is stale. Cleanup and exact
+reconciliation remain available. Real UDS/service publication tests cover both refused and
+lost-reply shapes and verify a fresh pin targets the reconciled revision. Child tool tests
+use a fake client; this is not concurrency or durable controller-process recovery proof.
+
+TEST-EDITS: retained existing composition and child assertions and added negative/local
+fence, slot and post-reconciliation checks. Targeted bank 125 passed. Three manual mutants
+for pre-send type, caller handling, and actual ambiguous PIN slot retention killed; six
+additional mutants deleting the candidate-publication guard on each guarded operation
+killed. All restored. No code here implements the E683 lifecycle; E657 stays active.
+Final combined execution/client/service/bootstrap/seal/publication/verify/acquisition/child
+bank after E684: 714 passed. Ruff/format and scoped mypy (two modules), environment check,
+394 doc links and planned E2E coverage pass; full E674 gate remains unrun.
