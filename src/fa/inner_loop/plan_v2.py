@@ -246,7 +246,9 @@ class PlanGraph:
         """Every declared ``KILL-TARGETS`` row, in document order (N2/Q-V2-SLICE3-4).
 
         The V2 grammar's target is *attribution*: which contract and which test a mutation
-        belongs to. It carries no operator, path or symbol, so nothing here is executable --
+        belongs to. It carries no *operator*, and no agreed shape for the id either (the
+        authoring prompt teaches ``path::symbol``, the fixtures use dotted ids -- Q-V2-SLICE3-5),
+        so nothing here is executable --
         but a plan that declares one and a report that says nothing about it are different
         facts, and only this accessor lets a report tell them apart.
         """
