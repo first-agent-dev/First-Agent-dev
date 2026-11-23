@@ -14918,3 +14918,17 @@ Not Docker, production publication, full scope/closure or Q authority proof. TES
 `tests/test_acceptance_mount_topology.py`, 283 passed in five-module bank; scoped
 Ruff/format/mypy passed; three diagnostic mutants killed/restored (parent RO, notes mount,
 question write). V2 plan E695 records limits and next steps; E657 and STEP9A remain open.
+
+### E696 — desired-behavior and progress audit (2026-11-23)
+
+Audited V2 plan, STEP9A/B parent, custody design, host sheet, E683–E695 and current
+source seams. Corrected stale claim that mode A already held, overstated collision proof,
+root working paths, repair allowlist, and the overbroad implication that any semantic Q
+resolution needs re-admission/reseal. Ordinary working edits and planner best-effort Q
+resolution do not automatically demand reseal, interactive or coder approval. A gate
+needs decision validation/binding; changing admitted plan/oracle requires its appropriate
+new-version workflow. Decision-binding design is open, not a required separate journal.
+Recorded a proposed, unregistered and NOT RUN W4 witness without changing frozen IDs.
+E657, E679 fresh-project origin, E683 recovery, E674 full gates, STEP9A/9B and W4 remain
+open; E695 is local topology evidence only. See V2 plan E696. Documentation-only audit;
+no runtime, new proof, host PASS or closure claimed.

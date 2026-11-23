@@ -24,10 +24,14 @@ This supersedes earlier *target* mentions of a root ledger or root open-question
 plan (including CT-2.3, CT-2.8, CT-4.3 and D-V2-9), but does not rewrite historical evidence,
 change the current implementation, or migrate the I03 parent. The writable notes Q file is
 working material: a post-admission edit must not itself unblock scope, alter an admitted
-Q decision or rewrite a ratified invariant. A trusted pinned/re-admitted decision is required
-before semantic effects; design and prove its exact authorization, replay and history in the
-implementation slice. These requirements do not make the notes file read-only or require
-reseal merely to edit it. Maintain the independent plan/oracle custody and old evidence.
+Q decision or rewrite a ratified invariant. Planner may resolve ordinary product questions
+best-effort with a recorded rationale, without a mandatory human/coder approval or automatic reseal for each Q edit. The implementation
+must bind any decision that is used for a gate to its relevant run/revision and validate
+authority; changing an already admitted plan/oracle or other sealed basis requires the
+appropriate new revision/admission/seal. The exact decision-binding mechanism is open, not
+a selected extra journal or blanket reseal requirement. These requirements do not make the
+notes file read-only or require reseal merely to edit it. Maintain independent plan/oracle
+custody and old evidence.
 
 ## 1. Intent, scope, and authority
 
@@ -74,7 +78,7 @@ The current `artifact-schema-and-grammar.md` is the V1 artifact contract; it is 
 |---|---|---|
 | `roadmap.md` | Harness writes fixed metadata/version; planner writes semantic body | Exactly one roadmap, explicit `Plan-Format: AI-NATIVE-PLAN-V2`, project slug and creation date. Any status/active-increment display is a deterministic authority projection under Q-V2-STATUS-1, not a post-seal planner edit. |
 | `notes/ledger.md` | Harness initializes; agents maintain working content | Writable without re-admission/reseal; a working journal, not an authoritative PASS or admission input. Runtime evidence remains independently bound to its run, plan, seal and candidate. Nested MUTATION scope is amended by Q-V2-WRITE-SCOPE-1=A, implementation open. |
-| `notes/open-questions.md` | Planner writes/resolves working records; harness validates semantic decisions | Required working artifact with bounded Q records; no interactive ask dependency. File edits do not themselves modify the admitted decision or unblock scope: semantic effects require trusted validation and re-admission/re-seal. |
+| `notes/open-questions.md` | Planner writes/resolves working records; harness validates semantic decisions | Required working artifact with bounded Q records; no interactive ask dependency. Ordinary edits and planner best-effort resolution need no automatic reseal or mandatory human approval; a gate must validate and bind the decision it relies on. Changes to an admitted plan/oracle require the appropriate new revision/admission/seal. |
 | `increments/increment-01-initial-plan.md` | Harness writes fixed metadata; planner writes semantic plan; tick mutation is gated by Q-V2-STATUS-1 | `initial-plan` is harness-fixed, not a planner field. Explicit same `Plan-Format` marker; one active new-format increment. Contains invariants, optional scenarios, SLICE/CT/STEP declarations, acceptance selectors and kill-target mappings. Semantic bytes stay immutable after seal; any update requires new revision/re-admission/seal. |
 | `acceptance/tests/` plus all referenced `acceptance/` support/fixture/driver files | **Planner writes them directly** (D-V2-9), confined to `worklogs/<slug>/acceptance/` by the stage allowlist; immutable after seal | New, project-scoped acceptance root; selected to avoid mixing these sources with repository harness tests. V2 selectors are workspace-relative `worklogs/<project_slug>/acceptance/tests/<path>.py::nodeid`, formed by the planner under the scaffold's front matter (no renderer expands anything). The only paths written are beneath `worklogs/<slug>/acceptance/`; the closure's own `pytest.ini` is written by the scaffold **inside** that root and is bound by the seal's digest like every other closure file (Q-V2-ACC-1: keys are allowlisted, `acceptance_closure.py:266`), while the runner itself is a trusted existing workspace input, never planner-overwritten. The authority refuses absolute paths, `..`, dot components and symlinks at the write boundary (`view_io.py:226–234`, `_BLOCKED_COMPONENTS` `:28`); admission additionally refuses selectors resolving outside the closure. `TEST-ID` selectors are the sole source of nodeid membership; legacy slice-wide `TESTS:` lists are not accepted on this route. |
 
@@ -127,29 +131,30 @@ byte) is **withdrawn**: it imposed an orthogonal serialization on a model that a
 cost ~3 600 lines of renderer/parser/payload code that existed only to move bytes between two representations of the
 same grammar.
 
-Why this is now safe — and was not when D-V2-7 was ratified:
+Original D-V2-9 rationale (source observations and proposed behavior, not proof of safe
+custody or create-new admission; E657/E679 and E696 below govern current status):
 
 * **A WRITE `PROJECT` view can write `worklogs/`.** Only a `MUTATION` view is confined to `_MUTATION_ROOTS = {"src",
   "scripts"}` (`workspace.py:222–226`, `_purpose_write_policy` `:2843–2855`). The earlier barrier was the planner's
   *tool list* (`ACQUISITION_TOOLS`, `profiles.py:443`) and its *stage read-only flag* (`cli.py:2091`) — configuration,
   not an authority invariant.
-* **Every write is already published atomically.** `STOP_VIEW → SEAL → PUBLISH` commits one whole view tree as one
-  revision (`client.py:963–1030`), which is the same mechanism every coder stage already uses.
-* **Mode A still holds.** `RootedViewIO.protected_paths` refuses writes to sealed semantic paths and their ancestors
-  (`view_io.py:232`), and the acceptance closure becomes protected at exactly the same point the plan does.
-* **Collision needs no new mechanism.** `roadmap.md` is created with `expected_sha256=None`, which the authority
-  defines as *expected absence* (`view_io.py:410–417`); an existing `worklogs/<slug>/` therefore fails the first
-  write with `STALE_REVISION` and nothing is published.
+* **Publication is a separate lifecycle.** `STOP_VIEW → SEAL → PUBLISH` commits a view revision, with explicit
+  uncertain/failure states; it does not prove individual writes or recovery cannot be lost.
+* **Mode A is not yet established.** Rooted file-IO protection does not constrain shell writes; complete
+  acceptance closure and private seal wiring remain unproved, so E657 blocks coder dispatch.
+* **Collision needs more than a single file check.** `expected_sha256=None` checks absence of the roadmap file;
+  it does not by itself prove that an existing empty/incomplete project directory is rejected or handle races.
+  The actual inventory/admission and effect-boundary no-overwrite path need their own proof (CT-2.2/2.7).
 
 Authoring split (the whole design):
 
 | Path | Written by | Enforcement |
 |---|---|---|
-| `roadmap.md`, `open-questions.md` | planner | path allowlist `worklogs/<slug>/`; metadata cross-check (§D-V2-9.3) |
+| `roadmap.md`, `notes/open-questions.md` | planner; agents may edit working notes | path allowlist `worklogs/<slug>/`; trusted validation/binding for any decision used to gate scope (§D-V2-9.3, E695–E696) |
 | `increments/increment-01-initial-plan.md` | planner (repair rewrites only this file) | same |
-| `ledger.md` | planner and agents | Working journal; ordinary edits/appends do not require reseal (E686). Harness-created scaffold is not an authority for later verdicts. |
+| `notes/ledger.md` | planner and agents | Working journal; ordinary edits/appends do not require reseal (E686). Harness-created scaffold is not an authority for later verdicts. |
 | `acceptance/tests/**` (+ support it imports) | planner | confined under `worklogs/<slug>/acceptance/` |
-| `notes/**`, `reviews/**` | planner | free-form; nothing reads them in admission |
+| `notes/**`, `reviews/**` | planner and scope-authorized agents | working material; `notes/open-questions.md` is a planned Q source and must not be assumed unread by admission or gates |
 
 **D-V2-9.1 — one commit, no intermediate state.** The scaffold is written by the harness *inside* the planner's
 stage, through the same port the model uses:
@@ -162,9 +167,11 @@ planner stage opens WRITE PROJECT view @ rev_N
   → admission reads that revision
 ```
 
-A failed or refused stage calls `reject_view` (`composition.py:413`) and **no project exists** — not an empty one.
-This is why F5 (the "scaffold is selectable but has no plan" classifier question) does not arise as a design problem:
-there is no observable intermediate tree. `prepare_bundle` / `install_project` / `_BootstrapReceipt` do **not**
+A definitively rejected pre-publication stage calls `reject_view` (`composition.py:413`); its
+private scaffold must not become a new canonical project. An already existing project remains
+untouched. Publication uncertainty is different and requires reconciliation; do not claim
+no project exists before resolving it. F5 concerns intermediate project visibility, not a
+reason to bypass failure/uncertainty checks. `prepare_bundle` / `install_project` / `_BootstrapReceipt` do **not**
 participate in V2 create-new. They stay in the codebase for their other callers; the create-new path stops calling
 them and the bundle renderer is deleted with the payload layer.
 
@@ -172,8 +179,8 @@ them and the bundle renderer is deleted with the payload layer.
 the authority, but the model must not see the generic text `"workspace refused the write: stale"`. The planned-file
 writer maps *expected-absence refusal on `roadmap.md`* to `project_exists` with actionable text ("`worklogs/<slug>/`
 already exists; select the existing project"), which is the same stable code `invoke_workflow` already returns
-(CT-2.2, CT-2.5). Distinguishing "this project exists" from "someone else moved the file" is one path comparison,
-not a new authority feature.
+(CT-2.2, CT-2.5). An existing incomplete directory is not established by a file-absence check alone; the
+inventory and effect-boundary no-overwrite behavior and their race handling require proof.
 
 **D-V2-9.3 — metadata is cross-checked, not authored by the harness.** Admission verifies a closed table; it does not
 rewrite the file. `parse_plan` currently strips frontmatter and never validates it (`plan_v2.py:252–264`, `:688`),
@@ -236,17 +243,17 @@ writing a file into it.
 except `ADMISSION_REPAIR`/`EVAL_REPLAN` (`plan_promotion.py:85–86`), writes the draft to
 `.fa/admission/<run>/candidate-*.md` (`:87`), and `publish_candidate_plan` commits **one** file at that pinned
 `PlanRef` (`workspace.py:4059+`). A create-new authoring stage owns no candidate, and a repair that rewrote only the
-increment would leave `roadmap.md`/`open-questions.md` unrestorable and would publish a revision whose other files
+increment would leave `roadmap.md`/`notes/open-questions.md` unrestorable and would publish a revision whose other files
 still hold the refused content. Therefore the repair for a create-new project is **not** the candidate path: it is a
 second authoring stage over a WRITE `PROJECT` view opened at the revision the first stage published, whose allowlist
-is narrowed to `worklogs/<slug>/increments/increment-01-initial-plan.md` (plus `open-questions.md` when the refusal
-is a Q-record refusal). Two consequences the implementation must honour:
+is narrowed to the current repair families: roadmap, initial increment, `notes/open-questions.md`
+and acceptance subtree, as needed for repairable refusals (E607; notes path is the E695 target,
+not yet implemented). Two consequences the implementation must honour:
 
-* the second stage runs with `plan_ref=<the published increment>` so `_validate_plan_boundary`
-  (`publication.py:336–353`) refuses any byte change to the plan that authorised nothing yet — the repair's whole
-  purpose is to change those bytes, so the repair stage instead runs with `plan_ref=None` and narrows the allowlist
-  to the two files. `_validate_plan_boundary` is a *coder/verifier* protection, not an authoring one; the authoring
-  stage's equivalent protection is the allowlist.
+* if the second stage carried `plan_ref=<the published increment>`, `_validate_plan_boundary`
+  (`publication.py:336–353`) would refuse the intended repair. Instead the repair stage uses
+  `plan_ref=None` and the narrowed repair families; the E695 notes path must be wired and
+  verified. Do not use an unscoped authoring stage as a substitute for that boundary.
 * `admission.planner_calls`/`planner_limit` continue to bound retries exactly as today
   (`workflow_controller.py:4082–4090`); no new budget concept is introduced.
 
@@ -443,9 +450,9 @@ second rule. **Landed 2026-11-22 (E607):** `fa invoke-workflow --dispositions PA
 |---|---|---|---|
 | CT-2.1 | FUNCTIONAL / INV-02 | Closed tool fields: `project_action: AUTO_SELECT_EXISTING (default) \| CREATE_NEW`; optional `project_slug`. Omitted action preserves the existing-project selection flow only; `AUTO_SELECT_EXISTING` can never create a project, and a planner `BOOTSTRAP_NEW_PROJECT` reply on that route is refused rather than installed. `project_slug` is accepted only with `CREATE_NEW` and required then; slug alone, slug with AUTO_SELECT_EXISTING, unknown action or invalid slug refuses before child/provider. CREATE_NEW requires managed execution and planner before coder. Planner bootstrap JSON omits `project_slug`; only chat context supplies it. Authority independently rechecks lowercase kebab-case/max-48/path confinement. | TEST-2.1 → `tests/test_ai_native_bootstrap.py::test_chat_slug_and_explicit_route_are_required_for_new_project` |
 | CT-2.2 | CONSTRAINT / INV-02 | Invalid slug, traversal and malformed route refuse before provider. Collision returns stable safe code with no auto-slug, overwrite or existing-project fallback; collision discovered at install is still authoritatively refused after no-replace recheck. Existing tree and revision remain unchanged. Do not promise collision-before-provider unless a source-proven exact-path preflight closes the empty-directory/race gap. | TEST-2.2 → `tests/test_invoke_workflow_tool.py::test_an_invalid_slug_is_refused_before_any_child_exists` (ten shapes, including traversal) + `::test_a_slug_without_a_create_route_is_refused_before_any_child_exists` + `::test_an_unknown_project_action_is_refused_before_any_child_exists` (**present, E597**); the collision half of the old title is `::test_create_over_existing_directory_is_project_exists_and_unchanged` in `test_ai_native_bootstrap.py` (E596). Each asserts `workflow.calls == []`, so the control is the ordering, not the message. |
-| CT-2.3 | FUNCTIONAL / INV-03 | **D-V2-9.** On `CREATE_NEW`, the planner stage opens a WRITE `PROJECT` view and the harness writes the fixed scaffold through that same port before the planner's first tool call: `roadmap.md`, `ledger.md`, `open-questions.md`, `increments/increment-01-initial-plan.md`, `notes/README.md`, `reviews/README.md`, `acceptance/tests/test_acceptance_placeholder.py`. The three roots exist **as parents of those files** (D-V2-9.7: the writer has no mkdir, dot-only names are refused, so no `.gitkeep`). Each admitted document carries its frontmatter and section headings with **empty bodies** — no placeholder invariant, slice or test, because `parse_plan` must refuse an unfilled scaffold (`missing-invariants`/`missing-slice`) rather than admit a fake plan; the placeholder test module defines no test function and collects to zero. The planner's write allowlist for that stage is exactly `worklogs/<slug>/`; the project slug comes from the caller and the increment slug is harness-fixed `initial-plan`. Nothing is written outside that root; the harness never writes a planner-authored byte into the project. | TEST-2.3 → `tests/test_ai_native_bootstrap.py::test_create_new_stage_scaffolds_then_planner_writes_only_inside_slug` (**present, E598**) |
-| CT-2.7 | CONSTRAINT / INV-02 | **D-V2-9.2.** A create-only scaffold write against an existing `worklogs/<slug>/` is refused with `STALE_REVISION` by the authority and surfaced as `project_exists` (not `stale`), non-retryable and actionable, with the existing tree and revision byte-unchanged. No auto-slug, overwrite or fallback. Covers complete and incomplete existing directories, and a hostile or traversal-shaped slug is still refused before the child exists. | TEST-2.7 → `tests/test_ai_native_bootstrap.py::test_create_over_existing_directory_is_project_exists_and_unchanged` (**present, E596:** both halves of the guard -- the inventory decision, including the *incomplete* directory case, and create-only scaffold writes that leave the published tree byte-identical -- plus the ordering guarantee that the planner is never dispatched onto a refused create.) |
-| CT-2.8 | FUNCTIONAL / INV-04 | **D-V2-9.3/9.4/9.8.** Admission validates the planner-authored documents against the closed metadata table (marker, `Roadmap-ID`/`Increment-ID`, `slug`, `active-increment`, `status` vocabulary, consistent `created`) and then `parse_plan`. A refusal blocks coder; the repair is a **second authoring stage** over a WRITE `PROJECT` view at the published revision whose allowlist admits only `increments/increment-01-initial-plan.md` (and `open-questions.md` for a Q refusal), with `plan_ref=None` and sanitized diagnostics; its publication is a second revision that admission re-validates. No candidate buffer, no `.fa/admission` draft, no single-file publish. A legal but unexpected `status` value is accepted; a wrong identity field is refused. Unfilled scaffold, missing `open-questions.md`, an increment outside `increments/`, and a repair attempt to touch any other file are refused. | TEST-2.8 → `tests/test_ai_native_bootstrap.py::test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file` (**present, E594:** two real stages -- a published pair whose `Roadmap-ID` disagrees is refused by `check_project_metadata`, then a second WRITE stage at that revision repairs the increment and admission binds it. Mechanism tests from E592 still stand: narrowed allowlist, dispatch-level scope validation, repairability/budget decision.) |
+| CT-2.3 | FUNCTIONAL / INV-03 | **D-V2-9.** On `CREATE_NEW`, the planner stage opens a WRITE `PROJECT` view and the harness writes the fixed scaffold through that same port before the planner's first tool call: `roadmap.md`, `notes/ledger.md`, `notes/open-questions.md`, `increments/increment-01-initial-plan.md`, `notes/README.md`, `reviews/README.md`, `acceptance/pytest.ini`, `acceptance/tests/test_acceptance_placeholder.py`. The two notes paths are E695 targets, not yet implemented. The three roots exist **as parents of those files** (D-V2-9.7: the writer has no mkdir, dot-only names are refused, so no `.gitkeep`). Each admitted document carries its frontmatter and section headings with **empty bodies** — no placeholder invariant, slice or test, because `parse_plan` must refuse an unfilled scaffold (`missing-invariants`/`missing-slice`) rather than admit a fake plan; the placeholder test module defines no test function and collects to zero. The planner's write allowlist for that stage is exactly `worklogs/<slug>/`; the project slug comes from the caller and the increment slug is harness-fixed `initial-plan`. Nothing is written outside that root; the harness never writes a planner-authored byte into the project. | TEST-2.3 → `tests/test_ai_native_bootstrap.py::test_create_new_stage_scaffolds_then_planner_writes_only_inside_slug` (**present, E598**) |
+| CT-2.7 | CONSTRAINT / INV-02 | **D-V2-9.2.** Existing complete and incomplete `worklogs/<slug>/` trees must be refused through the combined inventory and effect-boundary checks, with file create-only `STALE_REVISION` where applicable surfaced as `project_exists` (not `stale`), non-retryable and actionable, with the existing tree and revision byte-unchanged. No auto-slug, overwrite or fallback. Covers complete and incomplete existing directories, and a hostile or traversal-shaped slug is still refused before the child exists. | TEST-2.7 → `tests/test_ai_native_bootstrap.py::test_create_over_existing_directory_is_project_exists_and_unchanged` (**present, E596:** both halves of the guard -- the inventory decision, including the *incomplete* directory case, and create-only scaffold writes that leave the published tree byte-identical -- plus the ordering guarantee that the planner is never dispatched onto a refused create.) |
+| CT-2.8 | FUNCTIONAL / INV-04 | **D-V2-9.3/9.4/9.8.** Admission validates the planner-authored documents against the closed metadata table (marker, `Roadmap-ID`/`Increment-ID`, `slug`, `active-increment`, `status` vocabulary, consistent `created`) and then `parse_plan`. A refusal blocks coder; the repair is a **second authoring stage** over a WRITE `PROJECT` view at the published revision whose allowlist admits roadmap, initial increment, `notes/open-questions.md` and acceptance subtree for repairable refusals (E607; E695 notes path still to wire), with `plan_ref=None` and sanitized diagnostics; its publication is a second revision that admission re-validates. No candidate buffer, no `.fa/admission` draft, no single-file publish. A legal but unexpected `status` value is accepted; a wrong identity field is refused. Unfilled scaffold, missing `notes/open-questions.md`, an increment outside `increments/`, and a repair attempt to touch any other file are refused. | TEST-2.8 → `tests/test_ai_native_bootstrap.py::test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file` (**present, E594:** two real stages -- a published pair whose `Roadmap-ID` disagrees is refused by `check_project_metadata`, then a second WRITE stage at that revision repairs the increment and admission binds it. Mechanism tests from E592 still stand: narrowed allowlist, dispatch-level scope validation, repairability/budget decision.) |
 | CT-2.9 | CONSTRAINT / INV-04 | **D-V2-8.** Publication is not admission. A revision containing an unadmitted plan is never a coder input; if the stage is refused or rejected, no `worklogs/<slug>/` exists in the canonical tree, and a rejected view's bytes are unreachable through any reader pin. | TEST-2.9 → `tests/test_ai_native_bootstrap.py::test_rejected_create_leaves_no_project_and_no_reader_sees_bytes` |
 | CT-2.6 | FUNCTIONAL / INV-03 | The planner is told the grammar the parser enforces, **in the terms it now writes**: the acquisition/authoring prompt names the fixed document set, the frontmatter fields the harness cross-checks and the refusal rules, and carries one worked example document pair that `parse_plan` admits. Prose about a typed JSON payload the planner no longer produces is removed rather than left beside the new contract — two descriptions of the grammar is how the router and the parser drifted apart (`plan-format-marker-roadmap`, `slice-1-unknown-field`, measured 2026-11-20). | TEST-2.6 → `tests/test_prompt_registry_coherence.py::test_the_authoring_prompt_example_is_a_document_pair_the_parser_admits` (**written 2026-11-21, E590**) **Measured 2026-11-21 (E590):** the prompt carried no worked example at all, so the test could not have passed; the example was written for it and the first two drafts were refused by `parse_plan` (`slice-1-exit-check-entry`, `acceptance-selector-invalid`), which is the control doing its job. |
 | CT-2.4 | FUNCTIONAL / INV-04 | Complete project is parsed, validated and acceptance-sealed before coder starts. Under D-V2-9 the ordering is: the planner stage publishes one revision (scaffold + authored content), admission validates that revision and mints the revision-bound seal, and only then is coder dispatchable. An unadmitted or unsealed revision never reaches coder even though it exists in history (D-V2-8). | TEST-2.4 → `tests/test_ai_native_bootstrap.py::test_validation_and_seal_precede_coder_and_hide_provisional_content` (**absent — SLICE2 work, E590:** the controller has no `AcceptanceBundle` reference, so there is no seal for the gate to precede the coder with; `_validate_plan_admission` for V2 is a projection of an already-parsed graph. Writing this test before SLICE2 would assert an ordering the code does not implement.) |
@@ -951,7 +958,7 @@ separate and cannot be inferred from fake executors, a documentation change or a
 |---|---|---|---|
 | CT-4.1 | FUNCTIONAL / INV-04 | Planner can author semantic plan/SCN/questions/acceptance payload; controller alone validates/mints seal/admission; coder gets scoped task and mode-A read-only closure only after seal; eval receives pinned evidence. No generic planner project writer. | TEST-4.1 → `tests/test_ai_native_roles_and_ticks.py::test_real_role_composition_enforces_planner_controller_coder_capabilities` |
 | CT-4.2 | FUNCTIONAL / INV-10 | After the status-producer design gate is resolved without mutating/bypassing sealed semantic bytes, production harness alone emits revision-bound V2 ticks on actual lifecycle transitions; STEP `[x]` requires its named EXIT-CHECK (TEST-ID) evidence and sequential-prefix rules; CT `IMPLEMENTED` requires implementation evidence, and CT `VERIFIED` is forbidden unless canonical passing verification, non-vacuity and L2 judgment all exist. This MVP must leave CT `IMPLEMENTED` when it lacks L2 judgment; pytest green or host PASS alone never promotes it to VERIFIED. Refusal/uncertainty stays truthful, recoverable and not-DONE. | TEST-4.2 → `tests/test_ai_native_roles_and_ticks.py::test_production_harness_owns_v2_ticks_without_false_verified_state` |
-| CT-4.3 | CONSTRAINT / INV-11 | Root `open-questions.md` is lightweight, project-scoped and versioned; planner may resolve ordinary product questions with option/rationale/evidence. Unresolved Q blocks only dependent scope; changing ratified INV triggers replan. No mandatory interactive ask or coder approval. | TEST-4.3 → `tests/test_ai_native_roles_and_ticks.py::test_question_resolution_blocks_only_dependent_scope_and_replans_invariant_change` |
+| CT-4.3 | CONSTRAINT / INV-11 | `notes/open-questions.md` is lightweight, project-scoped working material; planner may resolve ordinary product questions with option/rationale/evidence. Unresolved Q blocks only dependent scope; changing ratified INV triggers replan. No mandatory interactive ask or coder approval. | TEST-4.3 → `tests/test_ai_native_roles_and_ticks.py::test_question_resolution_blocks_only_dependent_scope_and_replans_invariant_change` |
 | CT-4.4 | PRESERVATION / INV-04 | Existing modes, bounded repair/replan budgets, parent/child handoff and return reconciliation remain correct; no bypass via linear/adaptive role loop or outer success summary. | TEST-4.4 → `tests/test_ai_native_roles_and_ticks.py::test_all_workflow_dispatch_modes_preserve_seal_barrier_and_child_result` |
 
 ```verify
@@ -1928,6 +1935,9 @@ STEP9A/9B and W4 remain open.
 
 ### E694 — prioritize simplest layout to unblock STEP9A, not a separate research project
 
+Historical candidate/status below is superseded by E695: notes-ledger was selected and its
+local kernel diagnostic has run; no production implementation or host proof follows.
+
 Operator accepts relocating the ledger in principle and emphasizes closing STEP9A, then
 I03, before live-host deployment. Do not take this as approval of a particular migration,
 a broader nested-coder scope, or changing trusted evidence. The next comparison is bounded:
@@ -1985,7 +1995,7 @@ expected usability, but proves the Q file alone cannot be trusted as an immutabl
 decision. Parent and child use the same backing; the child has a host alias outside this
 namespace and this is not a Docker isolation or publish witness. Notes symlink creation
 is allowed even though the tested follow-write into acceptance fails; current publication
-may reject new links late. Full nested scope, Q decision pin/re-admission, lifecycle,
+may reject new links late. Full nested scope, Q decision binding, lifecycle,
 migration, recovery, open-FD concurrency, full closure and real composition remain open.
 
 TEST-EDITS: parameterized the existing diagnostic, preserving previous cases. Five-module
@@ -1995,3 +2005,44 @@ write. This is C3 local observation and no production producer/EDGE, W4 or E657 
 Follow E694's bounded next steps: update canonical schema and actual production seams in
 properly grounded vertical slices; test existing/new projects, conflict/crash recovery,
 independent mutation confinement and real authority stop/seal/publish/repin.
+
+### E696 — desired behavior and progress reconciliation (audit, 2026-11-23)
+
+**Current truth:** E695 is a local mount diagnostic, not a production projection, actual
+Docker isolation, full closure, authority publication or host witness. E657's dispatch
+fence remains. The V2 controller still has a workspace-local seal-store path; E679 shows
+real staged create-new does not establish the BOOTSTRAP origin needed for the authority
+private seal. E683 deletion/reset with fresh lineage remains a policy and implementation
+task, not an operational recovery guarantee. Historical green scoped checks do not satisfy
+E674: complete repository `just check`, full mypy/pyrefly and the complete STEP9A module
+mutation sweep remain required and unrun at the final candidate SHA. STEP9A/9B, subsequent
+new slices, STEP10, W3/W4 and I03 remain open in their prescribed order.
+
+**Behavior contract:** ordinary file-tool and shell edits to current-project notes/e2e and
+notes/ledger are working edits, without separate ledger authority, mandatory re-admission,
+reseal, interactive approval or manual evidence ritual per edit. The harness captures
+verification at the relevant execution boundary. A host PASS still requires a recorded
+run and assigned reviewer, not agent-authored Markdown. Acceptance, admitted semantic plan
+and authority-controlled admission/evidence must not silently change, whether via shell,
+file tools, ancestor replacement, transient ABA or alternate aliases. Where a semantic
+decision is used to unblock a Q-dependent gate, preserve the planner's best-effort decision
+rights and bind/validate the decision to the relevant run/revision, so later working-note
+edits cannot retroactively alter it. The exact binding/authorization and when an affected
+semantic change requires a new admission or seal are implementation design/proof tasks;
+do not require a reseal for every ordinary Q resolution, add a separate journal by default,
+or change user-approved policy without an explicit Q#. A changed admitted plan or oracle
+uses the existing new-version/replan or TEST-DEFECT flow, retaining old evidence.
+
+**Bounded implementation obligations:** follow E686/E687 plus E695 in a grounded vertical
+slice: use one authority-derived policy across file IO, shell projection, seal and replay;
+preserve Q141's independent single-target mutation executor; protect source-based oracle
+closure even when dependencies lie outside `worklogs`; avoid hidden writable backing aliases;
+validate required mounts/paths before dispatch; give actionable denials and preserve safe
+non-protected work on late refusal/uncertainty subject to reconciliation, never publish
+unvalidated or uncertain changes. Test existing/new projects, notes layout migration
+(including conflicting copies and historical references), early failure, stale open FDs,
+concurrent views, actual stop/seal/publish/repin, TEST-DEFECT, lost seal/deletion and
+recovery, producer/EDGE kills, observe/enforce and W4 host evidence. No unsupported
+AppArmor/FUSE dependency, Docker-free experiment or local PASS may be substituted for
+production C1 and the eventual reviewed host witness. Continue independent STEP9A work in
+parallel where possible; do not block unrelated work on optional exploratory depth.

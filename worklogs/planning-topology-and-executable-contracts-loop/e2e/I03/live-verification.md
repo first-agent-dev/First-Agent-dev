@@ -34,6 +34,20 @@ that maps these cases to slices, contracts and run sheets is `../README.md`.
   UTF-8 byte limit) and checks this sheet's IDs, current NOT RUN status and attempt
   columns. It does not parse or evaluate host evidence and never assigns a live result.
 
+## Proposed STEP9A working-artifact host witness — NOT REGISTERED / NOT RUN
+
+This is a planning obligation, not an additional frozen case or an assigned live result.
+Before W4 suite freeze, use the existing explicit new-producer mapping/review protocol to
+assign a case or reviewed shared coverage. On the deployed candidate, exercise real
+file-tool and shell edits/appends to `worklogs/<slug>/notes/ledger.md`, notes and e2e;
+stop, publish and fresh-pin the revision, and check the intended bytes and unchanged
+accepted basis. Probe protected plan/oracle and ancestor changes through both interfaces;
+check clear refusals and safe recovery of unrelated work, including uncertainty. Verify
+that an editable Markdown PASS claim alone cannot satisfy the gate, and that working Q
+edits do not retroactively change a bound decision. Record execution identity, deployed
+SHA/image/profile, evidence and assigned reviewer. This does not replace STEP9A local
+producer/EDGE tests or imply the exact implementation, test registration or host PASS.
+
 ## Cases
 
 ### I03-LIVE-01

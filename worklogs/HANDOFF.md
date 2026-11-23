@@ -26,9 +26,10 @@ backing path after atomic replacement; no security boundary or Docker proof. E69
 relocated ledger in a writable directory bind under read-only worklogs: the local sequence
 works and selected out-of-scope writes fail, but broad directory writes, compatibility,
 full nested scope and Docker/publication remain open. E695 accepts `notes/ledger.md` and
-`notes/open-questions.md`, retains root roadmap and locally probes notes mount. Writable Q
-text must not change admitted decisions without trusted validation/pin/re-admission; this
-is not implemented. Keep research bounded to STEP9A/I03. See [ledger E683–E695](planning-topology-and-executable-contracts-loop/ledger.md) and the
+`notes/open-questions.md`, retains root roadmap and locally probes notes mount. E696 clarifies:
+working Q edits and ordinary planner resolutions need no automatic reseal or human approval;
+gate decisions need trusted validation/binding and cannot silently alter admitted bases.
+The binding is not implemented. Keep research bounded to STEP9A/I03. See [ledger E683–E696](planning-topology-and-executable-contracts-loop/ledger.md) and the
 [V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next
