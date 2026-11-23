@@ -1672,3 +1672,29 @@ Next local slices: prototype topology with the E672 test harness first (includin
 file-tool atomic-replace semantics and snapshot continuity), then implement the production
 composition with C1/C3 and producer/EDGE kills, followed by E674 and the separate W4 host
 witness. Neither source review nor a kernel-only diagnostic can close STEP9A.
+
+### E688 — selective file-bind prototype rejects itself (local diagnostic)
+
+Extended `tests/test_acceptance_mount_topology.py` using the existing kernel namespace seam:
+read-only `worklogs` ancestor; writable binds for `notes/`, `e2e/`, and the existing
+`ledger.md` file. A capability-free child successfully appends ledger and performs an
+atomic rename inside notes; accepted file write and project ancestor rename are denied.
+While the child holds its mount, a parent **outside** the child namespace reads and replaces
+ledger through the real `RootedViewIO`, with its expected digest and authority staging.
+That writer returns the new content; the child subsequently reads that content but its
+next ledger append returns `EROFS`. A temporary file in the project root is also refused;
+replacing ledger using a file from the notes mount returns `EXDEV`. Parent reads confirm
+notes/e2e content and ledger replacement. This exact candidate therefore fails working-write
+parity/usability after an ordinary file-tool edit and MUST NOT be promoted to production.
+No explanation beyond the observed behavior is required or asserted; filesystem/kernel and
+mount topology matter. An earlier attempt performed replacement inside the same namespace
+and hit `EBUSY`, which did not model authority's separate namespace; the test was corrected.
+
+This is a C3 kernel+actual rooted-writer diagnostic, **not** full authority/UDS, Docker,
+production projection, atomic publication, ABA, hostile-alias or W4 proof. Three diagnostic
+mutants (omit RO remount, omit ledger bind, change rooted write) killed; no production
+producer/EDGE claim. Combined topology/view-IO/purposes/views/publication bank 278 passed;
+scoped Ruff/format and `MYPYPATH=src` mypy pass, environment and diff check pass.
+TEST-EDITS: `tests/test_acceptance_mount_topology.py` — extend the existing diagnostic without
+removing the two original assertions. Continue investigating a topology/merge that supports
+atomic shell edits and durable authority snapshots; E657 remains active, E674 and W4 open.

@@ -14769,3 +14769,25 @@ agent use or its applicability to a future Docker design. No incident rate is kn
 Normal append need not rename an ancestor; scripts, cleanup, refactoring or intentional
 workarounds can. Avoid probabilistic assumptions in a custody boundary. No new mount
 experiment, C1, mutation or host result is claimed; E657 and STEP9A remain open.
+
+### E688 — selective mount candidate fails ledger write continuity (2026-11-23)
+
+E687 prototype reused the E672 user/mount namespace harness. RO worklogs with RW notes,
+e2e and *file* bind ledger initially allows append, notes atomic rename and e2e writes while
+acceptance write/project rename fail. The parent outside the namespace performs a real
+`RootedViewIO` read and atomic expected-digest replacement on `view/source`-shaped storage.
+The child sees replacement bytes, but its next append fails EROFS. A shell temp file beside
+ledger fails EROFS and replace from a notes mount fails EXDEV. Parent source reads establish
+the resulting ledger/notes/e2e bytes. Thus this particular candidate fails agreed working
+write continuity and is not a production solution. The first experiment attempted replacement
+inside the same namespace and got EBUSY; corrected to use a parent outside the namespace.
+The result is limited to this filesystem/kernel/test topology; no Docker, actual authority
+snapshot/publish, alias/ABA, production C1 or host proof is claimed.
+
+TEST-EDITS: `tests/test_acceptance_mount_topology.py` extends existing test seam, retains the
+two prior tests. Three manual diagnostic mutants (remove RO remount, ledger bind, or change
+the rooted writer's output) killed/restored. Producer/EDGE are not claimed for unimplemented
+projection. Final bank: 278 passed (topology, rooted IO, purposes, views, publication);
+Ruff/format, mypy with `MYPYPATH=src`, environment and diff pass. The initial plain scoped
+mypy could not resolve package typing; the source path setting resolved it. E657, E674 and W4
+remain open; host ledger E2E remains planned, not run.

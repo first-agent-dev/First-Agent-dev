@@ -14,12 +14,14 @@ results cannot carry over. Coordinated backup/restore remains for exact history 
 E686 selects writable ledger/notes/e2e and narrow custody; E687 resolves
 Q-V2-WRITE-SCOPE-1=A for nested coder, implementation/proof still open. E685 hardens canonical seal identity
 and stale-digest rejection; it does not implement
-incarnation issuance or reset. See [ledger E683–E687](planning-topology-and-executable-contracts-loop/ledger.md) and the
+incarnation issuance or reset. E688 rejects the tested selective ledger file-bind candidate:
+a real rooted atomic edit leaves later shell append read-only. See [ledger E683–E688](planning-topology-and-executable-contracts-loop/ledger.md) and the
 [V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next
 
-1. Prototype E687 selective projection and source/snapshot continuity; Q-V2-WRITE-SCOPE-1=A
+1. Continue E687 selective projection and source/snapshot continuity beyond E688’s failed
+   ledger file-bind candidate; Q-V2-WRITE-SCOPE-1=A
    authorizes only current-project working surfaces for nested coder, not mutation-oracle widening.
    E686 records early-denial, safe work-recovery and W4 E2E tasks.
 2. Implement and prove the trusted lifecycle/authorization and distinct evidence lineage;
