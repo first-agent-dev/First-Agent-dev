@@ -17,13 +17,19 @@ nothing to ordinary test runs.
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
 from typing import Protocol
+
+import pytest
 
 __all__ = ["JUNIT_NODEID_PROPERTY", "JUNIT_RUN_ID_ENV", "JUNIT_RUN_ID_PROPERTY", "pytest_itemcollected"]
 
-JUNIT_NODEID_PROPERTY = "fa_pytest_nodeid"
-JUNIT_RUN_ID_PROPERTY = "fa_pytest_run_id"
-JUNIT_RUN_ID_ENV = "FA_VERIFY_JUNIT_RUN_ID"
+from .junit_properties import (
+    JUNIT_CALL_OUTCOME_PROPERTY,
+    JUNIT_NODEID_PROPERTY,
+    JUNIT_RUN_ID_ENV,
+    JUNIT_RUN_ID_PROPERTY,
+)
 
 
 class _PytestItem(Protocol):
@@ -39,3 +45,24 @@ def pytest_itemcollected(item: _PytestItem) -> None:
     # Computed by the harness, never inherited through the environment scrubber.
     if run_id := os.environ.get(JUNIT_RUN_ID_ENV):
         item.user_properties.append((JUNIT_RUN_ID_PROPERTY, run_id))
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[object]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Attach the actual call-phase exception class, not JUnit's generic failure label."""
+    report = yield
+    if call.when == "call":
+        if report.failed and call.excinfo is not None and isinstance(call.excinfo.value, AssertionError):
+            kind = "assertion"
+        elif report.passed:
+            kind = "passed"
+        elif report.skipped:
+            kind = "skipped"
+        else:
+            kind = "other"
+        item.user_properties.append((JUNIT_CALL_OUTCOME_PROPERTY, kind))
+        # Report objects need not share the item list across pytest releases.
+        report.user_properties = list(item.user_properties)
+    return report

@@ -28,7 +28,7 @@ import json
 import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -47,6 +47,8 @@ from .plan_v2 import (
     Attestation,
     EvidenceMode,
     PlanGraph,
+    PlanV2Error,
+    _parse_increment,
     attested_contracts,
     contract_attestations,
     contract_evidence,
@@ -394,27 +396,24 @@ def _attestations(
 
 
 def _bind_graph_to_bytes(graph: PlanGraph, plan_bytes: bytes) -> None:
-    """Refuse a graph that does not describe the plan bytes it is sealed with.
+    """Bind every plan-authored graph field to the increment being sealed.
 
-    ``mint_seal`` is handed both a graph and the increment bytes, and until now it
-    only digested the bytes: a caller could seal a graph for one plan beside the
-    bytes of another, and ``plan_sha256`` would name a plan the graph never
-    described. The roadmap is not part of ``plan_bytes``, so the check is what the
-    bytes can prove on their own -- every authored sentence of every invariant and
-    contract appears in them, and the heading count matches.
+    Grant metadata belongs to the caller's admission authority, not the document.
+    Admission binds it before mint; the existing attestation checks validate its
+    shape. Do not manufacture or infer a grant while comparing authored fields.
     """
     try:
-        text = plan_bytes.decode("utf-8")
-    except UnicodeError:
+        parsed = _parse_increment(plan_bytes.decode("utf-8"))
+    except (UnicodeError, PlanV2Error):
         raise AcceptanceBundleError("seal-plan-graph-mismatch") from None
-    if text.count("\n### INV-") + text.startswith("### INV-") != len(graph.invariants):
+    authored = replace(
+        graph,
+        invariants=tuple(
+            replace(invariant, owner=None, evidence_ref=None, reviewed_at=None) for invariant in graph.invariants
+        ),
+    )
+    if authored != parsed:
         raise AcceptanceBundleError("seal-plan-graph-mismatch")
-    for invariant in graph.invariants:
-        if invariant.text not in text:
-            raise AcceptanceBundleError("seal-plan-graph-mismatch")
-    for contract in graph.contracts().values():
-        if contract.text not in text or contract.id not in text:
-            raise AcceptanceBundleError("seal-plan-graph-mismatch")
 
 
 def mint_seal(

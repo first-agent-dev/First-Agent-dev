@@ -596,13 +596,26 @@ class SupervisorService:
                 "ready": self._authority.ready,
                 "protocol_version": PROTOCOL_V2,
                 "profile_set_sha256": self._profile_set_sha256,
-                "features": ["diff_revisions", "list_project_artifacts", "list_projects"],
+                "features": ["diff_revisions", "inventory_acceptance", "list_project_artifacts", "list_projects"],
             }
         return {
             "ready": self._authority.ready,
             "protocol_version": 1,
             "profile_set_sha256": self._profile_set_sha256,
         }
+
+    def _inventory_acceptance(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        view = self._view(request)
+        if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
+            raise SupervisorError("INPUT_POLICY")
+        return self._authority.inventory_acceptance(
+            peer,
+            self._namespace(request),
+            view_ref=view,
+            capability=self._capability(request),
+            project_slug=request["payload"]["project_slug"],
+            deadline=deadline,
+        )
 
     def _list_project_artifacts(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         view = self._view(request)
@@ -967,6 +980,7 @@ _ROUTE_NAMES: dict[Operation, str] = {
     Operation.SEAL: "_seal",
     Operation.PUBLISH: "_publish",
     Operation.PREPARE_BUNDLE: "_prepare_bundle",
+    Operation.INVENTORY_ACCEPTANCE: "_inventory_acceptance",
     Operation.LIST_PROJECT_ARTIFACTS: "_list_project_artifacts",
     Operation.DIFF_REVISIONS: "_diff_revisions",
     Operation.LIST_PROJECTS: "_list_projects",

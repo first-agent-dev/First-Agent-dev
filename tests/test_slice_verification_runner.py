@@ -950,10 +950,10 @@ def test_managed_markers_travel_as_a_command_prefix_never_as_environment() -> No
     """C1 — the recursion guard reaches the managed command, and only the markers do."""
     prefixed = _with_markers("true", {"FA_VERIFY_GATE_TEST_DEPTH": "2", "PATH": "/host/bin", "HOME": "/home/x"})
 
-    assert prefixed.startswith("FA_VERIFY_GATE_TEST_DEPTH=2 ")
+    assert prefixed.startswith(":; export FA_VERIFY_GATE_TEST_DEPTH=2; ")
     assert "PATH=" not in prefixed
     assert "HOME=" not in prefixed
-    assert prefixed.endswith(" true")
+    assert prefixed.endswith("; true")
 
     # The same property through the executor, which is where a wholesale forward would
     # actually go wrong: the cell would inherit a controller HOME and PATH.
@@ -964,8 +964,21 @@ def test_managed_markers_travel_as_a_command_prefix_never_as_environment() -> No
     )
     sent = executor.calls[0]["command"]
     assert isinstance(sent, str)
-    assert sent.startswith("FA_VERIFY_GATE_TEST_DEPTH=2 ")
+    assert sent.startswith(":; export FA_VERIFY_GATE_TEST_DEPTH=2; ")
     assert "PATH=" not in sent
+
+
+def test_managed_markers_reach_subcommands_after_shell_assignments(tmp_path: Path) -> None:
+    """A prefix assignment to a shell builtin does not export to the next command."""
+    value = "$(id); touch " + str(tmp_path / "injected")
+    command = _with_markers(
+        "__fa_rep=x; python -c 'import os; print(os.environ[\"FA_VERIFY_JUNIT_RUN_ID\"])'",
+        {"FA_VERIFY_JUNIT_RUN_ID": value, "PATH": "/should-not-pass"},
+    )
+    result = subprocess.run(command, shell=True, cwd=tmp_path, capture_output=True, text=True, check=False)
+    assert result.returncode == 0 and result.stdout.strip() == value
+    assert not (tmp_path / "injected").exists()
+    assert "/should-not-pass" not in command
 
 
 def test_a_marker_value_cannot_become_shell_syntax() -> None:

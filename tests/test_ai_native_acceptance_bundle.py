@@ -285,9 +285,14 @@ def test_a_selector_outside_the_sealed_bytes_is_refused(tmp_path: Path) -> None:
     other = "worklogs/other/acceptance/tests/test_publish.py"
     graph = plan_graph(slice_body=_SLICE_WITH_FOREIGN_SELECTOR)
 
-    assert _rule(lambda: _mint(root, graph=graph, collected={other: [f"{other}::test_publish"]})) == (
-        "selector-outside-closure"
-    )
+    assert _rule(
+        lambda: _mint(
+            root,
+            graph=graph,
+            plan_bytes=plan_document(slice_body=_SLICE_WITH_FOREIGN_SELECTOR).encode(),
+            collected={other: [f"{other}::test_publish"]},
+        )
+    ) == ("selector-outside-closure")
 
 
 def test_an_unadmitted_plan_never_reaches_the_seal() -> None:
@@ -442,6 +447,52 @@ def test_a_graph_that_does_not_describe_the_plan_bytes_is_refused(tmp_path: Path
     assert _rule(lambda: _mint(_sealed_tree(tmp_path), plan_bytes=other.encode("utf-8"))) == (
         "seal-plan-graph-mismatch"
     )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "invariant",
+        "scenario",
+        "slice",
+        "contract_class",
+        "contract_inv",
+        "selector",
+        "test_owner",
+        "kill_target",
+        "kill_test",
+        "exit_check",
+        "step",
+    ],
+)
+def test_mint_rejects_changed_graph_semantics_with_original_plan_bytes(tmp_path: Path, field: str) -> None:
+    graph = granted_graph()
+    part = graph.slices[0]
+    if field == "invariant":
+        graph = replace(graph, invariants=(replace(graph.invariants[0], text="different"), *graph.invariants[1:]))
+    elif field == "scenario":
+        graph = replace(graph, scenarios=(replace(graph.scenarios[0], trigger="different"),))
+    else:
+        if field == "slice":
+            part = replace(part, name="different")
+        elif field == "contract_class":
+            part = replace(part, contracts=(replace(part.contracts[0], cls="CONSTRAINT"), *part.contracts[1:]))
+        elif field == "contract_inv":
+            part = replace(part, contracts=(replace(part.contracts[0], inv="INV-2"), *part.contracts[1:]))
+        elif field == "selector":
+            part = replace(part, acceptance=(replace(part.acceptance[0], selector=_NODEID_SECOND),))
+        elif field == "test_owner":
+            part = replace(part, acceptance=(replace(part.acceptance[0], ct="CT-1.2"),))
+        elif field == "kill_target":
+            part = replace(part, kill_targets=(replace(part.kill_targets[0], target_id="other.target"),))
+        elif field == "kill_test":
+            part = replace(part, kill_targets=(replace(part.kill_targets[0], test_id="TEST-1.2"),))
+        elif field == "exit_check":
+            part = replace(part, exit_checks=(replace(part.exit_checks[0], step="STEP2"),))
+        elif field == "step":
+            part = replace(part, steps=(replace(part.steps[0], text="different"),))
+        graph = replace(graph, slices=(part,))
+    assert _rule(lambda: _mint(_sealed_tree(tmp_path), graph=graph)) == "seal-plan-graph-mismatch"
 
 
 def test_a_block_that_does_not_describe_the_attested_set_is_refused(tmp_path: Path) -> None:
@@ -867,11 +918,13 @@ def test_a_report_from_outside_the_closure_is_refused(tmp_path: Path) -> None:
         def run_verify_command(
             self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
         ) -> CommandResult:
-            del cwd, timeout_s, env
+            del cwd, timeout_s
             body = (
                 '<testsuite name="pytest" tests="1" failures="0" errors="0" skipped="0">'
                 '<testcase classname="x" name="y"><properties>'
                 '<property name="fa_pytest_nodeid" value="tests/test_elsewhere.py::test_other"/>'
+                f'<property name="fa_pytest_run_id" value="{env["FA_VERIFY_JUNIT_RUN_ID"]}"/>'
+                '<property name="fa_pytest_call_outcome" value="passed"/>'
                 "</properties></testcase></testsuite>"
             )
             return CommandResult(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,7 @@ from tests.test_ai_native_acceptance_collection import (
     sealed_tree,
 )
 from tests.test_ai_native_plan_v2 import granted_graph as admitted_graph
-from tests.test_ai_native_plan_v2 import plan_graph
+from tests.test_ai_native_plan_v2 import plan_document, plan_graph
 
 _REVISION = "rev-" + "0" * 32
 _NEXT_REVISION = "rev-" + "1" * 32
@@ -152,7 +153,13 @@ def test_reporting_needs_a_bundle_and_a_graph(tmp_path: Path, bundle: Any) -> No
 def test_upholding_keeps_the_bytes_and_re_opens_nothing(tmp_path: Path) -> None:
     bundle, _ = _seal(tmp_path)
 
-    decision = uphold(_report(bundle), rationale="the assertion is the required behaviour")
+    decision = uphold(
+        _report(bundle),
+        rationale="the assertion is the required behaviour",
+        bundle=bundle,
+        graph=admitted_graph(),
+        plan_bytes=_PLAN_BYTES,
+    )
 
     assert isinstance(decision, DefectDecision)
     assert decision.kind == "UPHELD"
@@ -166,7 +173,14 @@ def test_upholding_keeps_the_bytes_and_re_opens_nothing(tmp_path: Path) -> None:
 def test_an_upheld_decision_still_needs_a_reason(tmp_path: Path, rationale: Any) -> None:
     bundle, _ = _seal(tmp_path)
 
-    assert _rule(lambda: uphold(_report(bundle), rationale=rationale)) == "decision-rationale-invalid"
+    assert (
+        _rule(
+            lambda: uphold(
+                _report(bundle), rationale=rationale, bundle=bundle, graph=admitted_graph(), plan_bytes=_PLAN_BYTES
+            )
+        )
+        == "decision-rationale-invalid"
+    )
 
 
 @pytest.mark.parametrize("call", ["uphold", "correct"])
@@ -176,7 +190,14 @@ def test_a_decision_needs_a_real_report(tmp_path: Path, call: str) -> None:
     not_a_report: Any = {"seal": 1}
 
     if call == "uphold":
-        assert _rule(lambda: uphold(not_a_report, rationale="r")) == "decision-report-invalid"
+        assert (
+            _rule(
+                lambda: uphold(
+                    not_a_report, rationale="r", bundle=bundle, graph=admitted_graph(), plan_bytes=_PLAN_BYTES
+                )
+            )
+            == "decision-report-invalid"
+        )
         return
     assert (
         _rule(
@@ -337,6 +358,32 @@ def test_a_written_revision_seal_is_canonical_json(tmp_path: Path) -> None:
     assert payload["supersedes_sha256"] is None
 
 
+def test_correct_rejects_changed_graph_semantics_with_original_plan_bytes(tmp_path: Path) -> None:
+    bundle, _ = _seal(tmp_path)
+    report = _report(bundle)
+    root = _corrected_tree(tmp_path)
+    graph = admitted_graph()
+    part = graph.slices[0]
+    changed = replace(part, contracts=(replace(part.contracts[0], cls="CONSTRAINT"), *part.contracts[1:]))
+    graph = replace(graph, slices=(changed,))
+
+    assert (
+        _rule(
+            lambda: correct(
+                report,
+                rationale="correct the test",
+                bundle_before=bundle,
+                graph=graph,
+                plan_bytes=_PLAN_BYTES,
+                revision_id=_NEXT_REVISION,
+                acceptance_root=root,
+                collected={_PUBLISH: [_NODEID]},
+            )
+        )
+        == "defect-seal-plan-graph-mismatch"
+    )
+
+
 # -- what a correction obliges ---------------------------------------------
 
 
@@ -346,6 +393,7 @@ def test_every_test_of_the_contract_is_affected(tmp_path: Path) -> None:
     bundle = mint_sealed(
         root,
         graph=wider,
+        plan_bytes=plan_document(slice_body=_SLICE_TWO_TESTS).encode(),
         collected={
             _PUBLISH: [_NODEID],
             f"{_SEALED_ROOT}/tests/test_extra.py": [f"{_SEALED_ROOT}/tests/test_extra.py::test_extra"],
@@ -386,3 +434,95 @@ def test_a_revision_seal_keeps_the_plan_the_gates_were_written_against(tmp_path:
 
     assert written["plan_sha256"] == bundle.plan_sha256
     assert written["sealed_root"] == _SEALED_ROOT
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("revision_id", "rev-" + "f" * 32),
+        ("nodeid", "worklogs/demo/acceptance/tests/test_publish.py::foreign"),
+        ("invariant_id", "INV-9"),
+        ("assertion", ""),
+    ],
+)
+def test_correct_refuses_forged_report_fields(tmp_path: Path, field: str, value: str) -> None:
+    bundle, workspace = _seal(tmp_path)
+    forged = replace(_report(bundle), **{field: value})
+    with pytest.raises(DefectError):
+        _correct(workspace, bundle, forged)
+
+
+def test_shared_helper_correction_reproves_other_contract(tmp_path: Path) -> None:
+    body = (
+        _SLICE_TWO_TESTS.replace(
+            "CT-1.1 [FUNCTIONAL] INV: INV-1: publication requires a sealed selection",
+            "CT-1.1 [FUNCTIONAL] INV: INV-1: publication requires a sealed selection\n"
+            "  CT-1.2 [FUNCTIONAL] INV: INV-1: shared helper behavior",
+        )
+        .replace("TEST-ID: TEST-1.2 | CT: CT-1.1", "TEST-ID: TEST-1.2 | CT: CT-1.2")
+        .replace("TARGET-ID: publication.publish_plan | CT: CT-1.1", "TARGET-ID: publication.publish_plan | CT: CT-1.2")
+    )
+    graph = plan_graph(slice_body=body)
+    root = sealed_tree(tmp_path)
+    collected = {
+        _PUBLISH: [_NODEID],
+        f"{_SEALED_ROOT}/tests/test_extra.py": [f"{_SEALED_ROOT}/tests/test_extra.py::test_extra"],
+    }
+    plan = plan_document(slice_body=body).encode()
+    bundle = mint_sealed(root, graph=graph, plan_bytes=plan, collected=collected)
+    report = _report(bundle, graph=graph)
+    (root / "support" / "helper.py").write_text("VALUE = 'corrected'\n", encoding="utf-8")
+    decision = correct(
+        report,
+        rationale="shared helper",
+        bundle_before=bundle,
+        graph=graph,
+        plan_bytes=plan,
+        revision_id=_NEXT_REVISION,
+        acceptance_root=root,
+        collected=collected,
+    )
+    assert decision.affected_tests == ("TEST-1.1", "TEST-1.2")
+    assert decision.affected_kill_targets == ("publication.publish_plan",)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("seal_sha256", "f" * 64),
+        ("revision_id", "rev-" + "f" * 32),
+        ("nodeid", "worklogs/demo/acceptance/tests/test_publish.py::foreign"),
+        ("invariant_id", "INV-9"),
+        ("assertion", ""),
+    ],
+)
+def test_uphold_refuses_forged_report(tmp_path: Path, field: str, value: str) -> None:
+    bundle, _ = _seal(tmp_path)
+    report = replace(_report(bundle), **{field: value})
+    with pytest.raises(DefectError):
+        uphold(report, rationale="not a defect", bundle=bundle, graph=admitted_graph(), plan_bytes=_PLAN_BYTES)
+
+
+def test_uphold_rejects_foreign_plan_graph_and_tampered_seal(tmp_path: Path) -> None:
+    bundle, _ = _seal(tmp_path)
+    report = _report(bundle)
+    graph = admitted_graph()
+    part = graph.slices[0]
+    altered = replace(
+        graph, slices=(replace(part, contracts=(replace(part.contracts[0], cls="CONSTRAINT"), *part.contracts[1:])),)
+    )
+    for candidate, supplied_graph, plan in (
+        (bundle, graph, _PLAN_BYTES + b"\n"),
+        (bundle, altered, _PLAN_BYTES),
+        (replace(bundle, revision_id=_NEXT_REVISION), graph, _PLAN_BYTES),
+    ):
+        with pytest.raises(DefectError):
+            uphold(report, rationale="not a defect", bundle=candidate, graph=supplied_graph, plan_bytes=plan)
+
+
+def test_correct_rejects_tampered_old_seal(tmp_path: Path) -> None:
+    bundle, workspace = _seal(tmp_path)
+    report = _report(bundle)
+    forged = replace(bundle, revision_id="rev-" + "e" * 32)
+    with pytest.raises(DefectError):
+        _correct(workspace, forged, report)

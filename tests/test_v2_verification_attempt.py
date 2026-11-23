@@ -209,7 +209,7 @@ def test_claims_must_cover_the_seal_total_including_attested_and_pending() -> No
     """F3: 'the seal promised three, this attempt shows one' is refused, not smoothed over."""
     assert _rule(lambda: _attempt(contracts_total=3)) == "claims-total-mismatch"
 
-    attempt = _attempt(contracts_total=3, attested=("CT-1.2",), pending=("CT-1.3",))
+    attempt = _attempt(contracts_total=3, attested=("CT-1.2", "CT-1.3"), pending=("CT-1.3",))
     assert attempt.blocking is False
 
 
@@ -228,9 +228,44 @@ def test_a_contract_cannot_be_claimed_and_also_excused() -> None:
     assert _rule(lambda: _attempt(claims=(_claim(), _claim()), contracts_total=1)) == "claims-total-mismatch"
 
 
+def test_pending_without_a_matching_attestation_is_refused() -> None:
+    assert (
+        _rule(lambda: _attempt(contracts_total=2, attested=("CT-1.2",), pending=("CT-1.3",))) == "claims-total-mismatch"
+    )
+
+
+def test_two_tests_on_one_contract_require_both_outcomes_and_one_required_mutation() -> None:
+    mutation = MutationEvidence(operator="neutralise", target="src/x.py::f", verdict="proven")
+    first = _claim(mutation=mutation)
+    second = _claim(test_id="TEST-1.2", nodeid="worklogs/demo/acceptance/tests/test_publish.py::test_second")
+    attempt = _attempt(claims=(first, second), kill_required=("CT-1.1",))
+    assert not attempt.blocking
+    assert _attempt(
+        claims=(first, _claim(test_id=second.test_id, nodeid=second.nodeid, outcome="failed")),
+        kill_required=("CT-1.1",),
+    ).blocking
+    assert (
+        _rule(
+            lambda: _attempt(
+                claims=(first, _claim(test_id=second.test_id, nodeid=second.nodeid, mutation=mutation)),
+                kill_required=("CT-1.1",),
+            )
+        )
+        == "claim-mutation-missing"
+    )
+    assert _rule(lambda: _attempt(claims=(_claim(), second), kill_required=("CT-1.1",))) == "claim-mutation-missing"
+
+
+@pytest.mark.parametrize("duplicate", ["test_id", "nodeid"])
+def test_duplicate_test_identity_is_refused(duplicate: str) -> None:
+    values = {"test_id": "TEST-1.2", "nodeid": "worklogs/demo/acceptance/tests/test_publish.py::test_second"}
+    values[duplicate] = "TEST-1.1" if duplicate == "test_id" else _NODEID
+    assert _rule(lambda: _attempt(claims=(_claim(), _claim(**values)))) == "claims-total-mismatch"
+
+
 def test_pending_blocks_deploy_but_not_this_attempt() -> None:
     """D-V2-12: a debt owed to a host is a deploy question, not a verification failure."""
-    attempt = _attempt(contracts_total=2, pending=("CT-1.2",))
+    attempt = _attempt(contracts_total=2, attested=("CT-1.2",), pending=("CT-1.2",))
 
     assert attempt.blocking is False
     assert attempt.first_reason == ""

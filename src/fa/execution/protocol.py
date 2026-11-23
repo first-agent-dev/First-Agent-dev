@@ -168,6 +168,7 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.INSTALL_PROJECT: _object(validated_bundle_id=_id("bundle-"), project_slug=CONFIG_ID),
     Operation.HANDOFF: _object(target_namespace=NAMESPACE),
     Operation.RELEASE: _object(),
+    Operation.INVENTORY_ACCEPTANCE: _object(project_slug=CONFIG_ID),
     Operation.LIST_PROJECT_ARTIFACTS: _object(project_slug=CONFIG_ID),
     Operation.DIFF_REVISIONS: _object(base_revision=_id("rev-")),
     # No payload: the pinned view already names the revision to enumerate.
@@ -229,6 +230,20 @@ _REVISION_DIFF_REPLY = _object(
     total_changes=UINT,
     truncated=BOOL,
 )
+_ACCEPTANCE_INVENTORY_REPLY = _object(
+    revision_id=_id("rev-"),
+    tree_sha256=SHA,
+    entries={
+        "type": "array",
+        "maxItems": 4096,
+        "items": _object(
+            path=PATH | {"maxLength": 4096},
+            type=_enum("file", "directory", "symlink"),
+            size=UINT,
+            sha256=_nullable(SHA),
+        ),
+    },
+)
 RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.HEALTH: _object(ready=BOOL, protocol_version={"type": "integer", "const": 1}, profile_set_sha256=SHA),
     Operation.REGISTER_WORKSPACE: _object(workspace_id=_id("ws-"), revision_id=_id("rev-")),
@@ -249,6 +264,7 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.INSTALL_PROJECT: _COMMITTED,
     Operation.PREPARE_BUNDLE: _object(validated_bundle_id=_id("bundle-"), bundle_sha256=SHA),
     Operation.RELEASE: _object(released={"type": "boolean", "const": True}),
+    Operation.INVENTORY_ACCEPTANCE: _ACCEPTANCE_INVENTORY_REPLY,
     Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
     # Shared result projection for OperationJournal's closed Operation table;
     # decode_reply still rejects this v2-only operation under protocol v1.
@@ -262,10 +278,11 @@ RESULTS_V2: dict[Operation, dict[str, Any]] = {
         profile_set_sha256=SHA,
         features={
             "type": "array",
-            "items": _enum("diff_revisions", "list_project_artifacts", "list_projects"),
+            "items": _enum("diff_revisions", "inventory_acceptance", "list_project_artifacts", "list_projects"),
             "uniqueItems": True,
         },
     ),
+    Operation.INVENTORY_ACCEPTANCE: _ACCEPTANCE_INVENTORY_REPLY,
     Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
     Operation.DIFF_REVISIONS: _REVISION_DIFF_REPLY,
     Operation.LIST_PROJECTS: _PROJECTS_REPLY,
@@ -295,7 +312,13 @@ _ENVELOPE = _object(
         *(
             op.value
             for op in Operation
-            if op not in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS, Operation.LIST_PROJECTS}
+            if op
+            not in {
+                Operation.LIST_PROJECT_ARTIFACTS,
+                Operation.DIFF_REVISIONS,
+                Operation.LIST_PROJECTS,
+                Operation.INVENTORY_ACCEPTANCE,
+            }
         )
     ),
     namespace=_nullable(NAMESPACE),
@@ -310,7 +333,13 @@ _REPLY = _object(
     result={},
     error=_nullable(_ERROR),
 )
-_V2_OPERATIONS = (Operation.HEALTH, Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS, Operation.LIST_PROJECTS)
+_V2_OPERATIONS = (
+    Operation.HEALTH,
+    Operation.LIST_PROJECT_ARTIFACTS,
+    Operation.DIFF_REVISIONS,
+    Operation.LIST_PROJECTS,
+    Operation.INVENTORY_ACCEPTANCE,
+)
 _ENVELOPE_V2 = _object(
     protocol_version={"type": "integer", "const": PROTOCOL_V2},
     request_id=_id(""),
@@ -486,7 +515,12 @@ def decode_request(raw: bytes) -> dict[str, Any]:
         if version == PROTOCOL_V1:
             _check(_ENVELOPE_CHECK, record)
             op = Operation(record["op"])
-            if op in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS, Operation.LIST_PROJECTS}:
+            if op in {
+                Operation.LIST_PROJECT_ARTIFACTS,
+                Operation.DIFF_REVISIONS,
+                Operation.LIST_PROJECTS,
+                Operation.INVENTORY_ACCEPTANCE,
+            }:
                 raise ExecutionContractError
         elif version == PROTOCOL_V2:
             _check(_ENVELOPE_V2_CHECK, record)
@@ -619,7 +653,12 @@ def _validate_reply_body(
             raise ExecutionContractError
         result_checks = _RESULT_CHECKS_V2
     else:
-        if operation in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS, Operation.LIST_PROJECTS}:
+        if operation in {
+            Operation.LIST_PROJECT_ARTIFACTS,
+            Operation.DIFF_REVISIONS,
+            Operation.LIST_PROJECTS,
+            Operation.INVENTORY_ACCEPTANCE,
+        }:
             raise ExecutionContractError
         result_checks = _RESULT_CHECKS
     if tolerate_legacy and operation is Operation.PUBLISH and isinstance(record["result"], dict):

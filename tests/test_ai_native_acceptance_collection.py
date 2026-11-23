@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import shlex
+import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +30,14 @@ from fa.inner_loop.acceptance_collection import (
     sealed_test_paths,
     verify_sealed_acceptance,
 )
-from fa.inner_loop.slice_verification import JUNIT_BLOCK_END, JUNIT_BLOCK_START, CommandOutcome, CommandResult
+from fa.inner_loop.slice_verification import (
+    JUNIT_BLOCK_END,
+    JUNIT_BLOCK_START,
+    CommandOutcome,
+    CommandResult,
+    ManagedVerifyCommandExecutor,
+)
+from fa.runtime.pty_pool import PtyResult
 from tests.test_ai_native_plan_v2 import GRANT_PROBE_FILES, granted_graph, plan_document, plan_graph
 from tests.test_slice_verification_runner import _inband_executor
 
@@ -194,6 +203,37 @@ def test_a_sealed_tree_is_collected_before_any_seal_exists(tmp_path: Path) -> No
     assert collection.command is not None
 
 
+def test_precode_nonce_crosses_managed_adapter_into_real_pytest(tmp_path: Path) -> None:
+    """Adapter plus real shell/pytest: no env forwarded by the lower cell double."""
+    root = _tree(tmp_path)
+
+    class ShellCell:
+        view_revision_id = _REVISION
+
+        def run(self, command: str, timeout: int, workdir: Path | None, session_id: str | None) -> PtyResult:
+            assert session_id is None
+            clean_env = {key: value for key, value in os.environ.items() if not key.startswith("FA_VERIFY_")}
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=workdir,
+                timeout=timeout,
+                env=clean_env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return PtyResult(result.stdout + result.stderr, result.returncode, False, "", False)
+
+    executor = ManagedVerifyCommandExecutor(ShellCell(), root=tmp_path)  # type: ignore[arg-type]
+    collection = collect_sealed_tree(
+        root, sealed_root=_SEALED_ROOT, workspace=tmp_path, expected_revision_id=_REVISION, executor=executor
+    )
+    assert collection.outcomes == {_NODEID: True, _EXTRA_NODEID: True}
+    assert collection.command is not None and collection.command.outcome is CommandOutcome.PASS
+    assert collection.closure_sha256 == collect_acceptance_closure(root).digest
+
+
 def test_the_tree_collection_is_exactly_what_the_mint_accepts(tmp_path: Path) -> None:
     """The two halves must meet on the same bytes: this is the whole point of the seam."""
     root = _tree(tmp_path)
@@ -267,7 +307,19 @@ def test_a_tree_without_test_modules_is_refused(tmp_path: Path) -> None:
 def test_a_tree_collection_refuses_a_report_that_escaped_the_closure(tmp_path: Path) -> None:
     """A receipt naming a file the closure does not hold is refused, never re-prefixed into belief."""
     root = _tree(tmp_path)
-    host = _InbandHost(stdout=_receipt((f"{_SEALED_ROOT}/tests/test_elsewhere.py::test_x", "passed")))
+
+    class _ForeignReceipt(_InbandHost):
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            self.stdout = _receipt((f"{_SEALED_ROOT}/tests/test_elsewhere.py::test_x", "passed")).replace(
+                "</properties>",
+                f'<property name="fa_pytest_run_id" value="{env["FA_VERIFY_JUNIT_RUN_ID"]}"/>'
+                '<property name="fa_pytest_call_outcome" value="passed"/></properties>',
+            )
+            return super().run_verify_command(command, cwd=cwd, timeout_s=timeout_s, env=env)
+
+    host = _ForeignReceipt(stdout="")
     with pytest.raises(AcceptanceCollectionError) as refused:
         collect_sealed_tree(root, sealed_root=_SEALED_ROOT, workspace=tmp_path, executor=host)
     assert refused.value.rule == "collection-nodeid-outside-closure"
@@ -281,6 +333,27 @@ def test_a_tree_collection_refuses_a_receipt_with_no_report_block(tmp_path: Path
     with pytest.raises(AcceptanceCollectionError) as refused:
         collect_sealed_tree(root, sealed_root=_SEALED_ROOT, workspace=tmp_path, executor=host)
     assert refused.value.rule == "collection-report-invalid"
+
+
+@pytest.mark.parametrize("tampering", ["status", "nonce"])
+def test_precode_rejects_inconsistent_receipt(tmp_path: Path, tampering: str) -> None:
+    root = _tree(tmp_path)
+    actual = _inband_executor(writes_visible=False)
+
+    class TamperedReceipt:
+        writes_are_visible = False
+
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            result = actual.run_verify_command(command, cwd=cwd, timeout_s=timeout_s, env=env)
+            if tampering == "status":
+                return replace(result, exit_code=1, outcome=CommandOutcome.FAIL)
+            return replace(result, stdout_tail=result.stdout_tail.replace(env["FA_VERIFY_JUNIT_RUN_ID"], "stale"))
+
+    with pytest.raises(AcceptanceCollectionError) as refused:
+        collect_sealed_tree(root, sealed_root=_SEALED_ROOT, workspace=tmp_path, executor=TamperedReceipt())
+    assert refused.value.rule == ("collection-unusable" if tampering == "status" else "collection-report-invalid")
 
 
 def _seal_rule(callable_: Callable[[], object]) -> str:
@@ -318,6 +391,7 @@ def test_a_closure_without_any_test_module_is_refused(tmp_path: Path) -> None:
     bundle = _mint(
         root,
         graph=plan_graph(slice_body=_SLICE_WITHOUT_TESTS),
+        plan_bytes=plan_document(slice_body=_SLICE_WITHOUT_TESTS).encode(),
         collected={checker: [f"{checker}::check_publish"]},
     )
 
@@ -657,3 +731,90 @@ mint_sealed = _mint
 seal_fixture = _seal
 FakeHost = _FakeHost
 junit_report = _junit
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("assert True", "passed"),
+        ("assert False", "failed"),
+        ("raise ValueError('broken')", "collection-call-error"),
+        ("import pytest; pytest.skip('not executed')", "collection-skipped"),
+        ("raise NotImplementedError()", "collection-call-error"),
+    ],
+)
+def test_candidate_verifier_classifies_real_pytest_call_phase(tmp_path: Path, body: str, expected: str) -> None:
+    """C1: the actual pinned-run caller executes pytest; skip/error never become a failed claim."""
+    root = _tree(tmp_path, extra_test=False)
+    (root / "tests/test_publish.py").write_text(f"def test_publish():\n    {body}\n", encoding="utf-8")
+    bundle = _mint(root)
+
+    class ShellCell:
+        view_revision_id = _REVISION
+
+        def run(self, command: str, timeout: int, workdir: Path | None, session_id: str | None) -> PtyResult:
+            assert session_id is None
+            env = {key: value for key, value in os.environ.items() if not key.startswith("FA_VERIFY_")}
+            result = subprocess.run(
+                command, shell=True, cwd=workdir, timeout=timeout, env=env, capture_output=True, text=True, check=False
+            )
+            return PtyResult(result.stdout + result.stderr, result.returncode, False, "", False)
+
+    executor = ManagedVerifyCommandExecutor(ShellCell(), root=tmp_path)  # type: ignore[arg-type]
+    call = _sealed_call(bundle, tmp_path, executor)
+    if expected.startswith("collection-"):
+        assert _rule(call) == expected
+    else:
+        verification = call()
+        assert verification.run.outcomes == {_NODEID: expected == "passed"}
+        assert verification.command.exit_code == (0 if expected == "passed" else 1)
+
+
+@pytest.mark.parametrize("tampering", ["nonce", "status", "outcome", "duplicate", "failure-reported-pass"])
+def test_candidate_verifier_rejects_receipt_tampering(tmp_path: Path, tampering: str) -> None:
+    """C3: a valid pytest report cannot be replayed or contradicted by its receipt."""
+    if tampering == "failure-reported-pass":
+        root = _tree(tmp_path)
+        (root / "tests/test_publish.py").write_text("def test_publish():\n    assert False\n", encoding="utf-8")
+        bundle, workspace = _mint(root), tmp_path
+    else:
+        bundle, workspace = _seal(tmp_path)
+    actual = _inband_executor(writes_visible=False, revision=_REVISION)
+
+    class TamperedReceipt:
+        writes_are_visible = False
+        view_revision_id = _REVISION
+
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            result = actual.run_verify_command(command, cwd=cwd, timeout_s=timeout_s, env=env)
+            if tampering == "status":
+                return replace(result, exit_code=1, outcome=CommandOutcome.FAIL)
+            if tampering == "outcome":
+                return replace(result, outcome=CommandOutcome.FAIL)
+            if tampering == "failure-reported-pass":
+                return replace(result, exit_code=0, outcome=CommandOutcome.PASS)
+            stdout = result.inband_stdout if result.inband_stdout is not None else result.stdout_tail
+            if tampering == "nonce":
+                stdout = stdout.replace(env["FA_VERIFY_JUNIT_RUN_ID"], "stale")
+            else:
+                stdout += "\n" + stdout
+            return replace(result, stdout_tail=stdout, inband_stdout=stdout)
+
+    assert _rule(_sealed_call(bundle, workspace, TamperedReceipt())) == (
+        "collection-unusable"
+        if tampering in {"status", "outcome", "failure-reported-pass"}
+        else "collection-report-invalid"
+    )
+
+
+def test_candidate_verifier_refuses_setup_error_from_real_pytest(tmp_path: Path) -> None:
+    root = _tree(tmp_path, extra_test=False)
+    (root / "conftest.py").write_text(
+        "import pytest\n@pytest.fixture(autouse=True)\ndef broken():\n    raise RuntimeError('setup')\n",
+        encoding="utf-8",
+    )
+    bundle = _mint(root)
+    executor = _inband_executor(writes_visible=False, revision=_REVISION)
+    assert _rule(_sealed_call(bundle, tmp_path, executor)) == "collection-report-invalid"

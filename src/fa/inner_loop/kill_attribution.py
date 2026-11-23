@@ -40,19 +40,30 @@ from __future__ import annotations
 
 import enum
 import tempfile
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from .acceptance_bundle import AcceptanceBundle, verify_sealed_root
+from .acceptance_bundle import (
+    AcceptanceBundle,
+    AcceptanceBundleError,
+    _bind_graph_to_bytes,
+    load_seal,
+    seal_bytes,
+    verify_plan,
+    verify_sealed_root,
+)
 from .acceptance_closure import pytest_argv, shell_command
-from .plan_v2 import KillTarget, PlanGraph
+from .junit_properties import JUNIT_RUN_ID_ENV
+from .plan_v2 import Acceptance, KillTarget, PlanGraph
 from .slice_verification import (
     CommandOutcome,
     SliceVerdict,
     VerifyCommandExecutor,
-    parse_node_outcomes,
+    _gate_subprocess_env,
+    parse_kill_node_outcomes,
     run_commands,
 )
 
@@ -180,42 +191,77 @@ def _sealed_test_digest(bundle: AcceptanceBundle, nodeid: str) -> str:
     return entry.sha256
 
 
-def _binding(bundle: AcceptanceBundle, target: KillTarget) -> KillTargetBinding:
-    """Bind one target, trusting only what plan admission cannot guarantee.
+def _validated_seal(bundle: AcceptanceBundle) -> None:
+    """Reject a changed in-memory record rather than re-signing it by serialization."""
+    try:
+        verified = load_seal(seal_bytes(bundle))
+    except AcceptanceBundleError:
+        raise KillAttributionError("kill-seal-invalid") from None
+    if verified.seal_sha256 != bundle.seal_sha256:
+        raise KillAttributionError("kill-seal-invalid")
 
-    Admission already proves the target's contract exists in its slice and owns
-    the `TEST-ID` (`dangling-kill-target`, `kill-target-attribution-mismatch`), so
-    re-checking that here would be dead code. What admission cannot know is which
-    tests the *seal* selected.
-    """
-    sealed = bundle.nodeids()
-    if target.test_id not in sealed:
+
+def _binding(bundle: AcceptanceBundle, target: KillTarget, acceptance: Acceptance | None) -> KillTargetBinding:
+    """Join the admitted target to the exact selector and nodeid in the seal."""
+    rows = tuple(row for row in bundle.selectors if row.test_id == target.test_id)
+    if len(rows) != 1:
         raise KillAttributionError("kill-target-unsealed")
-    nodeid = sealed[target.test_id]
+    row = rows[0]
+    if (
+        acceptance is None
+        or acceptance.ct != target.ct
+        or row.ct_id != target.ct
+        or row.selector != acceptance.selector
+        or not (row.nodeid == row.selector or row.nodeid.startswith(f"{row.selector}["))
+    ):
+        raise KillAttributionError("kill-target-mismatch")
     return KillTargetBinding(
         target_id=target.target_id,
         contract_id=target.ct,
         test_id=target.test_id,
-        nodeid=nodeid,
-        test_sha256=_sealed_test_digest(bundle, nodeid),
+        nodeid=row.nodeid,
+        test_sha256=_sealed_test_digest(bundle, row.nodeid),
         seal_sha256=bundle.seal_sha256,
         revision_id=bundle.revision_id,
         closure_sha256=bundle.closure.digest,
     )
 
 
-def bindings(bundle: AcceptanceBundle, graph: PlanGraph) -> tuple[KillTargetBinding, ...]:
-    """Every declared kill target, bound and evidence-stamped, in plan order."""
+def bindings(bundle: AcceptanceBundle, graph: PlanGraph, *, plan_bytes: bytes) -> tuple[KillTargetBinding, ...]:
+    """Bind targets only after the admitted graph and plan bytes match the verified seal."""
     if not isinstance(bundle, AcceptanceBundle) or not isinstance(graph, PlanGraph):
         raise KillAttributionError("kill-input-invalid")
-    # Target ids are already unique per plan (`duplicate-kill-target-id`).
-    return tuple(_binding(bundle, target) for planned in graph.slices for target in planned.kill_targets)
+    _validated_seal(bundle)
+    try:
+        verify_plan(bundle, plan_bytes)
+        _bind_graph_to_bytes(graph, plan_bytes)
+    except AcceptanceBundleError:
+        raise KillAttributionError("kill-plan-mismatch") from None
+    entries = graph.acceptance()
+    return tuple(_binding(bundle, target, entries.get(target.test_id)) for target in graph.kill_targets())
+
+
+def _require_binding_matches(bundle: AcceptanceBundle, binding: KillTargetBinding) -> None:
+    """Refuse a stale or substituted binding before constructing a command."""
+    _validated_seal(bundle)
+    rows = tuple(row for row in bundle.selectors if row.test_id == binding.test_id)
+    if (
+        len(rows) != 1
+        or rows[0].ct_id != binding.contract_id
+        or rows[0].nodeid != binding.nodeid
+        or binding.seal_sha256 != bundle.seal_sha256
+        or binding.closure_sha256 != bundle.closure.digest
+        or binding.revision_id != bundle.revision_id
+        or binding.test_sha256 != _sealed_test_digest(bundle, binding.nodeid)
+    ):
+        raise KillAttributionError("kill-binding-mismatch")
 
 
 def oracle_argv(bundle: AcceptanceBundle, binding: KillTargetBinding, *, report: str) -> tuple[str, ...]:
     """The exact oracle invocation: one nodeid, sealed config, sealed root."""
     if not isinstance(binding, KillTargetBinding):
         raise KillAttributionError("kill-binding-invalid")
+    _require_binding_matches(bundle, binding)
     return pytest_argv(
         tests=(binding.nodeid,),
         ini=f"{bundle.sealed_root}/pytest.ini",
@@ -248,6 +294,8 @@ def run_node_oracle(
     bundle: AcceptanceBundle,
     binding: KillTargetBinding,
     *,
+    graph: PlanGraph,
+    plan_bytes: bytes,
     workspace: Path,
     executor: VerifyCommandExecutor | None = None,
     deadline: float | None = None,
@@ -259,6 +307,8 @@ def run_node_oracle(
     """
     if not isinstance(bundle, AcceptanceBundle) or not isinstance(binding, KillTargetBinding):
         raise KillAttributionError("kill-binding-invalid")
+    if binding not in bindings(bundle, graph, plan_bytes=plan_bytes):
+        raise KillAttributionError("kill-binding-mismatch")
     # The oracle is the sealed bytes. A tree that drifted — including one where
     # the coder's overlay reached the acceptance directory — never runs.
     verify_sealed_root(bundle, Path(workspace) / bundle.sealed_root)
@@ -266,7 +316,10 @@ def run_node_oracle(
         report = Path(directory) / "oracle.xml"
         argv = oracle_argv(bundle, binding, report=str(report))
         command = shell_command(argv)
-        (result,) = run_commands((command,), workspace=Path(workspace), deadline=deadline, executor=executor)
+        run_id = uuid.uuid4().hex
+        env = _gate_subprocess_env(Path(workspace), kill_check=True)
+        env[JUNIT_RUN_ID_ENV] = run_id
+        (result,) = run_commands((command,), workspace=Path(workspace), deadline=deadline, env=env, executor=executor)
         if result.outcome is CommandOutcome.ERROR:
             return NodeRun(
                 outcome=NodeOutcome.ERROR, command=command, exit_code=result.exit_code, detail="oracle-run-errored"
@@ -277,12 +330,20 @@ def run_node_oracle(
             return NodeRun(
                 outcome=NodeOutcome.MISSING, command=command, exit_code=result.exit_code, detail="oracle-no-report"
             )
-    outcomes, _detail = parse_node_outcomes(raw)
+    outcomes, _detail = parse_kill_node_outcomes(raw, run_id=run_id)
     if outcomes is None:
         return NodeRun(
             outcome=NodeOutcome.ERROR, command=command, exit_code=result.exit_code, detail="oracle-report-invalid"
         )
     outcome, detail = _classify(_rootdir_nodeid(bundle, binding), outcomes)
+    expected_exit = 1 if outcome is NodeOutcome.FAILED else 0
+    expected_result = CommandOutcome.FAIL if expected_exit else CommandOutcome.PASS
+    if outcome in {NodeOutcome.PASSED, NodeOutcome.FAILED, NodeOutcome.SKIPPED} and (
+        result.exit_code != expected_exit or result.outcome is not expected_result
+    ):
+        return NodeRun(
+            outcome=NodeOutcome.ERROR, command=command, exit_code=result.exit_code, detail="oracle-status-mismatch"
+        )
     return NodeRun(outcome=outcome, command=command, exit_code=result.exit_code, detail=detail)
 
 

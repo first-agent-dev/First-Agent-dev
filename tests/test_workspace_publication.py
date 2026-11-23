@@ -3123,3 +3123,29 @@ def test_plan_abort_removes_only_its_own_staged_buffer(site: Site, monkeypatch: 
         assert neighbour.read_text() == "not mine to delete"
         # Its own intent was the only one there, so it goes: the plan was never touched.
         assert _intent(site, ids) is None
+
+
+def test_bootstrap_recovery_records_origin_after_interrupted_install(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EDGE: recovery must record origin before clearing the durable install intent."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+
+        def fail(*_args: Any, **_kwargs: Any) -> None:
+            raise OSError(5, "injected origin write failure")
+
+        monkeypatch.setattr(WorkspaceAuthority, "_record_acceptance_origin", fail)
+        with pytest.raises(SupervisorError) as error:
+            _install(owner, ids, lease, bundle)
+        assert error.value.code == "DURABILITY_UNKNOWN"
+        assert _intent(site, ids) is not None
+        monkeypatch.undo()
+    with site.owner(view_profile=native_profile()) as recovered:
+        current = ok(lambda: site.register(recovered))
+        origin = json.loads((_workspace(site, ids) / "acceptance-origin-demo-project.json").read_bytes())
+        assert origin["workspace_id"] == ids["workspace_id"]
+        assert origin["revision_id"] == current["revision_id"]
+        assert _intent(site, ids) is None

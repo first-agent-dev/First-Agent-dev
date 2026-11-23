@@ -30,7 +30,11 @@ from .acceptance_bundle import (
     AcceptanceBundle,
     AcceptanceBundleError,
     PinnedIdentity,
+    _bind_graph_to_bytes,
+    load_seal,
     mint_seal,
+    seal_bytes,
+    verify_plan,
     write_seal,
 )
 from .plan_v2 import PlanGraph
@@ -141,34 +145,53 @@ def report_defect(
     )
 
 
-def _same_contract_tests(graph: PlanGraph, test_id: str) -> tuple[str, ...]:
-    contract = graph.acceptance()[test_id].ct
-    return tuple(sorted(entry.test_id for entry in graph.acceptance().values() if entry.ct == contract))
-
-
 def affected_scope(graph: PlanGraph, test_id: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """What a correction to ``test_id`` obliges to be re-proven.
+    """Conservatively re-prove the whole closure after any correction.
 
-    A contract's other tests can encode the same expectation, and a kill target's
-    oracle is the test it was bound to, so the affected set is the contract's
-    tests plus every kill target bound to any of them. Targets bound to other
-    contracts are untouched: their oracle bytes did not change meaning.
+    Fixtures, helpers and configuration can affect tests of unrelated contracts;
+    the plan does not encode a sound file-to-test dependency graph.
     """
     if not isinstance(graph, PlanGraph) or test_id not in graph.acceptance():
         raise DefectError("defect-unknown-test")
-    tests = _same_contract_tests(graph, test_id)
-    bound = tuple(
-        sorted(
-            target.target_id for planned in graph.slices for target in planned.kill_targets if target.test_id in tests
-        )
-    )
+    tests = tuple(sorted(graph.acceptance()))
+    bound = tuple(sorted(target.target_id for planned in graph.slices for target in planned.kill_targets))
     return tests, bound
 
 
-def uphold(report: DefectReport, *, rationale: str) -> DefectDecision:
-    """The tests stay byte-identical. Nothing is re-sealed and nothing re-runs."""
-    if not isinstance(report, DefectReport):
+def _validate_decision_report(
+    report: DefectReport, bundle: AcceptanceBundle, graph: PlanGraph, plan_bytes: bytes
+) -> None:
+    if not isinstance(report, DefectReport) or not isinstance(bundle, AcceptanceBundle):
         raise DefectError("decision-report-invalid")
+    if not isinstance(graph, PlanGraph) or not isinstance(plan_bytes, bytes):
+        raise DefectError("decision-report-invalid")
+    try:
+        verified = load_seal(seal_bytes(bundle))
+        if verified.seal_sha256 != bundle.seal_sha256:
+            raise DefectError("defect-seal-invalid")
+        verify_plan(bundle, plan_bytes)
+        _bind_graph_to_bytes(graph, plan_bytes)
+    except AcceptanceBundleError as error:
+        raise DefectError(f"defect-{error.rule}") from None
+    if report.seal_sha256 != bundle.seal_sha256:
+        raise DefectError("defect-seal-superseded")
+    validated = report_defect(
+        bundle,
+        graph,
+        test_id=report.test_id,
+        nodeid=report.nodeid,
+        assertion=report.assertion,
+        invariant_id=report.invariant_id,
+    )
+    if validated != report:
+        raise DefectError("decision-report-invalid")
+
+
+def uphold(
+    report: DefectReport, *, rationale: str, bundle: AcceptanceBundle, graph: PlanGraph, plan_bytes: bytes
+) -> DefectDecision:
+    """Keep the sealed tests unchanged after revalidating the reported identity."""
+    _validate_decision_report(report, bundle, graph, plan_bytes)
     text = _text(rationale, "decision-rationale-invalid")
     return DefectDecision(
         report=report,
@@ -259,6 +282,7 @@ def correct(
         # One closed vocabulary per module: a seal refusal reached through the
         # correction route is still a defect decision, not a raw bundle error.
         raise DefectError(f"defect-{error.rule}") from None
+    _validate_decision_report(report, bundle_before, graph, plan_bytes)
     if replacement.closure.digest == bundle_before.closure.digest:
         raise DefectError("defect-no-change")
     tests, targets = affected_scope(graph, report.test_id)

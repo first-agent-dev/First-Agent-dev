@@ -3,9 +3,17 @@
 **Plan format:** `AI-NATIVE-PLAN-V2` (planning contract; not yet a runtime-admitted artifact)<br>
 **Owning record:** [I03 execution/workspace increment](../increments/increment-03-execution-workspace-foundation.md), STEP9B<br>
 **Canonical target specification:** [artifact-schema-and-grammar.md](artifact-schema-and-grammar.md), the sole V2 grammar/source-of-truth after cutover. This linked plan specifies its V2 acceptance and slice obligations; it does not implement or replace the canonical schema, parser, or runtime.<br>
-**State:** REVIEW DRAFT, PLAN ONLY. STEP9 and STEP9A are still open; this document was drafted ahead of their required closure solely to enable review. It does not satisfy/close STEP9B, authorize implementation, or claim product implementation, new-schema parser, project-host witness, deployment, or acceptance. Reconfirm predecessor evidence and update review disposition before STEP9B can close.<br>
+**State:** REVIEW DRAFT, PLAN ONLY. SLICE6 STEP9 is locally closed (E556/E558); STEP9A and STEP9B remain open. This document was drafted ahead of the required predecessor closure solely to enable review. It does not satisfy/close STEP9B, authorize implementation, or claim product implementation, new-schema parser, project-host witness, deployment, or acceptance. Reconfirm predecessor evidence and update review disposition before STEP9B can close.<br>
 **Date:** 2026-11-15; adversarial reviews 2026-11-15/2026-11-21; **corrected 2026-11-22 (E605).**  
 **Corrections 2026-11-22 (why this plan was edited before implementation).** A source audit found the plan contradicting itself on the one rule the next slice must enforce, so five sentences said different things about evidence (grammar delta, §2 production grammar, INV-05, CT-3.1, §8 step 4) and §8 claimed Q-V2-ACC-1/2 were closed while the register carried no resolution. Changed in this revision: the `INVARIANTS` grammar and the deletion of `KIND` (D-V2-10); those five sentences, now one rule; Q-V2-ACC-2 marked RESOLVED; §8 step 4 and the SLICE3 planning-questions paragraph; Q-V2-MODEA-1 no longer described as open after D-V2-6 closed it; the canonical-schema status (D-V2-11); the SLICE2 paragraph that still described the deleted payload route as *today*; the duplicated §5 number; the out-of-order §11/§12; and five stale source citations (`parse_plan`, `_admit_published_project`, `_validate_plan_admission`, `_run_stage`, the acceptance-bank test count). Defects the audit found are §12 rows P4-1–P4-6 rather than prose in a note, so a later slice closes a row instead of re-describing it. Evidence and the independent cross-review: [i03-external-design-review-2026-11-22.md](i03-external-design-review-2026-11-22.md).
+
+**Operator direction 2026-11-23 — rolling-wave planning, vertical slices and deferred mutation binding.** The ratified
+MVP behavior and implementation work are in SLICE3's `D-V2-13` block below. It supersedes earlier proposals that
+make `TARGET-ID = path::symbol`, require the planner to guess future private symbols, or require two particular
+command invocations. Current code and historical ledger entries are not rewritten as if the feature landed.
+Rolling wave means a broad roadmap with the nearest increment and its slices detailed while later increments remain
+outlined; it does not require detailed I02 while I01 is unfinished. Collection of the current increment and
+proposal-transport proof remain technical checks, not implementation or host evidence. Existing user-facing semantics and other ratified decisions continue to apply.
 
 ## 1. Intent, scope, and authority
 
@@ -18,7 +26,7 @@ This is a linked semantic/acceptance authority for the new refactor slices, not 
 - The outer chat role supplies `project_slug` as an `invoke_workflow` field; controller/authority validates and owns its filesystem use. Planner output never chooses a filesystem slug. A slug alone does not imply create-new or existing-project selection; the route discriminator is explicit and closed. Invalid input or collision fails; do not auto-substitute, overwrite, or silently select an existing project.
 - Harness owns fixed scaffold/materialization. Project semantic artifacts and acceptance bytes are immutable after admission/seal; runtime evidence is run-scoped. Production V2 status ticks are a target obligation gated by Q-V2-STATUS-1; until a revision-safe authority design is source-proven, no tick implementation or host evidence is authorized. Planner owns semantic plans, scenarios, project questions, test-support/acceptance content, and acceptance criteria; it does not receive generic project write authority. Coder is unavailable until complete validation and seal.
 - `INV → CT → TEST-ID → selector`: one primary INV per CT; one INV may have multiple CTs; each TEST-ID belongs to exactly one CT and resolves to exactly one collected nodeid; one CT may have multiple TEST-IDs. Optional formal SCN expresses a scenario/path and links explicit `CT-ID[]`; TEST membership derives through CT→TEST.
-- Follow STEP9A custody: controller-minted versioned `AcceptanceBundle`; artifact C/workspace-revision strategy; mode A read-only projection to coder through shell and file tools; immutable-payload storage fallback if workspace revision cannot prove complete custody/projection. No hash-only sidecar. Visibility mode B is unsupported in MVP and fails closed. Mode A is visible/read-only, not an independent or hidden oracle.
+- Follow STEP9A custody: controller-minted versioned `AcceptanceBundle`; artifact C/workspace-revision strategy; mode A prevents writes through both file tools and shell (D-V2-6, amended by E657 / CT-3.3); immutable-payload storage fallback if the selected revision strategy cannot prove the required custody. No hash-only sidecar. Visibility mode B is unsupported in MVP and fails closed. Mode A is visible/read-only, not an independent or hidden oracle.
 - Exact kill attribution is one mutation target → one CT → one TEST-ID → one nodeid on the sealed revision. A mapped assertion failure alone proves a kill. A pass under mutation is VACUOUS; collection/setup/skip/timeout/crash/launch/JUnit failure or zero executions is ERROR, not PROVEN. Unrelated failures never prove the target. Custody/mapping integrity blocks in observe and enforce; determinate kill failures are advisory in observe and repair-blocking in enforce. TEST-DEFECT creates a new sealed revision and preserves the old evidence; invariant changes require replan.
 - No mandatory coder→planner/owner approval before implementation. Coder owns routine internal seam choices inside admitted behavior/safety/ownership constraints. Planner may resolve ordinary product-semantic questions best-effort in root `open-questions.md`; only dependent scope is held if unresolved. Changing a ratified invariant requires replan. Risk-gated independent review remains an open policy question, not an MVP gate.
 - The I03 one-off slice-count exception applies to these planned slices only; `_SLICE_CEILING = 7` remains unchanged for other increments.
@@ -37,9 +45,9 @@ Source grounding is summarized here; cited symbols are starting points for each 
 |---|---|---|
 | Chat caller | `src/fa/cli.py::_build_run_tool_registry` registers `invoke_workflow` only for chat. `src/fa/inner_loop/tools/workflow_tool.py::INVOKE_WORKFLOW_SCHEMA` is closed and currently has task/mode/roles/repair/replan fields only; `_prepare_invocation` carries no project slug. Child invocation, HANDOFF, return reconciliation, and `ToolResult.fail` already exist. | Extend this real tool contract with optional validated slug plus explicit route discriminator; thread context to existing child controller. Bootstrap errors must map after child HANDOFF/return settles to stable safe code/text/retryability, not `ToolResult.ok` with a nonzero child exit. Preserve non-bootstrap invocation behavior. |
 | Acquisition/bootstrap | `src/fa/inner_loop/managed_acquisition.py::BootstrapNewProjectChoice` currently carries planner-selected project/increment slugs and free-prose roadmap/increment bodies. `workflow_controller.py::_stage_acquisition_choice`, `_install_bootstrap_project_with_detail`, `_admit_installed_plan` render/install three files and then immediately admit the increment. | Evolve this path, not a parallel bootstrap. On explicit create-new, chat slug is authoritative. **D-V2-9 (2026-11-21) replaces the bounded-payload split:** the planner is the *writer* of the installed documents (it holds the WRITE `PROJECT` view under `worklogs/<slug>/`), the harness owns the scaffold, the path allowlist and the metadata cross-check. See §"D-V2-9 — planner-as-writer" for the ratified design; the payload/renderer/`install_project` path for create-new is deleted, not extended. Keep SELECT_EXISTING separate and do not reinterpret a typo as creation. |
-| Path/materialization authority | `src/fa/execution/publication.py::prepare_bundle/install_project` and `WorkspaceAuthority.install_project` implement a bound bundle, private staging, no-replace install, forward completion and uncertainty states — the **bootstrap** primitive. The **revision** primitive is separate and equally live: a WRITE view commits its whole tree through `STOP_VIEW → SEAL → PUBLISH` (`client.py:963–1030`), which is what every coder stage already uses. A `PROJECT` view is writable across `worklogs/`; only a `MUTATION` view is confined to `{"src","scripts"}` (`workspace.py:222–226`). | **D-V2-9 uses the revision primitive for create-new**, not the bundle: one stage publication, no install, no post-rename recovery branch. Reuse `RootedViewIO` path policy (no `..`, no dot components, no symlinks, `_BLOCKED_COMPONENTS`) and the authority's existing uncertainty handling. The acceptance closure ships **inside** the same committed revision (D-V2-5 unchanged): no immutable-payload fallback and no second store. `install_project` stays for its other callers and is off this path. |
+| Path/materialization authority | `src/fa/execution/publication.py::prepare_bundle/install_project` and `WorkspaceAuthority.install_project` implement a bound bundle, private staging, no-replace install, forward completion and uncertainty states — the **bootstrap** primitive. The **revision** primitive is separate and equally live: a WRITE view commits its whole tree through `STOP_VIEW → SEAL → PUBLISH` (`client.py:963–1030`), which is what every coder stage already uses. A `PROJECT` view is writable across `worklogs/`; only a `MUTATION` view is confined to `{"src","scripts"}` (`workspace.py:222–226`). | **D-V2-9 uses the revision primitive for create-new**, not the bundle: one stage publication, no install, no post-rename recovery branch. Reuse `RootedViewIO` path policy (no `..`, no dot components, no symlinks, `_BLOCKED_COMPONENTS`) and the authority's existing uncertainty handling. The acceptance closure ships **inside** the same committed revision (D-V2-5 unchanged); E657 retains the required isolated immutable-payload fallback if revision-backed custody cannot be proved. `install_project` stays for its other callers and is off this path. |
 | Grammar/admission | `src/fa/inner_loop/plan_ids.py::precheck/extract_plan_ids` and `workflow_controller.py::_validate_plan_admission/_admit_plan` validate current grammar and gate coder; `_SLICE_CEILING = 7`. Runtime grammar is currently code-defined while `notes/artifact-schema-and-grammar.md` is conformance input. | Make the canonical Markdown schema the only V2 source; trusted installed runtime pins supported V2 grammar independently of project files. Add explicit project plan-format marker and reject unsupported/missing/mixed/V1 input before coder. Whole-project validator checks required artifacts and complete graph, not only an increment. Do not change parser in STEP9B. |
-| Acceptance execution/custody | `workflow_controller.py::_pinned_verify_substrate` binds `ManagedVerifyCommandExecutor`; `slice_verification.py::verify_slice` and existing nodeid capture run tests from a pinned read view. `src/fa/execution/profiles.py` defines managed no-network/read-only-rootfs restrictions. Existing V1 does not prove stable TEST-ID→nodeid graph or complete closure custody. | Reuse managed runner, not a parallel runner. Resolve selector to exactly one nodeid, pin tests plus transitive support/config/fixture/driver/runner closure, expose identical bytes read-only to coder, and have verifier execute that exact seal. Missing or ambiguous closure is fail-closed; no host fallback. Read-only enforcement already has a live seam: `RootedViewIO(protected_paths=…)` is fed `plan_ref.workspace_relative_path` at both construction sites (`src/fa/execution/view_io.py:119–158`, `workspace.py:2188–2196` and `2808–2816`) and refuses writes to those paths **and their ancestors**; the closure is not in that tuple today. Shell access is separate: a writable view mounts the whole source read-write (`src/fa/execution/profiles.py:108–113`), so `run_bash` can write the closure unless the profile adds a read-only submount (Q-V2-MODEA-1). |
+| Acceptance execution/custody | `workflow_controller.py::_pinned_verify_substrate` binds `ManagedVerifyCommandExecutor`; `slice_verification.py::verify_slice` and existing nodeid capture run tests from a pinned read view. `src/fa/execution/profiles.py` defines managed no-network/read-only-rootfs restrictions. Existing V1 does not prove stable TEST-ID→nodeid graph or complete closure custody. | Reuse managed runner, not a parallel runner. Resolve selector to exactly one nodeid, pin tests plus transitive support/config/fixture/driver/runner closure, expose identical bytes read-only to coder, and have verifier execute that exact seal. Missing or ambiguous closure is fail-closed; no host fallback. Read-only enforcement already has a live seam: `RootedViewIO(protected_paths=…)` is fed `plan_ref.workspace_relative_path` at both construction sites (`src/fa/execution/view_io.py:119–158`, `workspace.py:2188–2196` and `2808–2816`) and refuses writes to those paths **and their ancestors**; the closure is not in that tuple today. Shell access is separate: a writable view can write the closure; Q-V2-MODEA-1 was resolved to D-V2-6; E657 amends that decision to require true read-only shell projection, with immutable-payload fallback if revision-backed projection cannot be proven. The old plan-only protected-path observation predates CT-3.3. |
 | Tick ownership | Canonical schema assigns tick updates to harness, but source audit found no production Markdown tick producer; run/admission status is not equivalent. | Add production harness-owned V2 tick producer and verify it at the host witness. Arena plan editing is not constrained by the production rule. Do not infer ticks from workflow status records. |
 
 ### V2 artifact and grammar contract to be ratified in the canonical schema
@@ -82,11 +90,15 @@ CONTRACTS:
 ACCEPTANCE:
   TEST-ID: TEST-<slice>.<n> | CT: CT-<slice>.<n> | SELECTOR: worklogs/<project_slug>/acceptance/tests/<path>.py::test_name
 KILL-TARGETS:
-  TARGET-ID: <production-symbol-or-caller-edge> | CT: CT-<slice>.<n> | TEST-ID: TEST-<slice>.<n>
+  CT: CT-<slice>.<n> | TEST-ID: TEST-<slice>.<n> | SITE: DEFERRED
 STEP-EXIT-CHECKS:
   CHECK-ID: CHECK-<n> | STEP: STEP<n> | TEST-ID[]: TEST-<slice>.<n>[, TEST-<slice>.<n>...]
 - [ ] STEP<n>: <imperative> EXIT-CHECK: CHECK-<n>
 ```
+
+**Example status:** the `KILL-TARGETS` row above is the D-V2-13 target shape, not accepted by current `plan_v2.py`;
+its pinned-site alternative and atomic cutover are specified in SLICE3 below. All other current/target differences
+remain as recorded by the slice status.
 
 **Two positional facts the block above encodes and the parser enforces** (recorded because both were got wrong in
 review, 2026-11-20): `STEPS: <mode>` is the *mode line* and there is exactly one per slice — a second `STEPS:` header
@@ -230,7 +242,7 @@ scaffold at all: it opens the view at the published revision and hands the plann
 "harness writes only the scaffold" rule true for every stage, not just the first.
 
 
-The production grammar must require one primary INV on each CT; each TEST-ID belongs to one CT and one exact selector; selectors resolve to exactly one collected nodeid (including stable parametrized IDs); every target maps to exactly one CT and TEST-ID; SCN contains explicit CT-ID[] edges and derives TEST membership; every CT is discharged exactly once, by a selector that resolves to one collected nodeid or by a typed disposition the caller granted — no severity, no exempt class, and no `ready` state to argue about. Reject duplicate IDs, dangling edges, multiple primary INV, missing evidence, duplicate selector ownership, uncollected/ambiguous selectors, unknown fields and orphan V1 `TESTS:`/kill syntax. The schema's prose example and parser/conformance tests must agree byte-for-byte on these names/cardinalities; this plan does not claim runtime parsing exists.
+The production grammar must require one primary INV on each CT; each TEST-ID belongs to one CT and one exact selector; selectors resolve to exactly one collected nodeid (including stable parametrized IDs); every target maps to exactly one CT and TEST-ID; SCN contains explicit CT-ID[] edges and derives TEST membership; every CT is discharged exactly once at the contract-evidence level, by one or more selectors each resolving to one collected nodeid or by a typed disposition the caller granted — no severity, no exempt class, and no `ready` state to argue about. Reject duplicate IDs, dangling edges, multiple primary INV, missing evidence, duplicate selector ownership, uncollected/ambiguous selectors, unknown fields and orphan V1 `TESTS:`/kill syntax. The schema's prose example and parser/conformance tests must agree byte-for-byte on these names/cardinalities; this plan does not claim runtime parsing exists.
 
 **Trusted schema pin:** the deployed source is the single canonical `notes/artifact-schema-and-grammar.md` in the approved read-only `/repo` mount; installed runtime must read it only from that fixed trusted control-plane path and verify its content digest/version against build-time trusted metadata. Never load it from `worklogs/<slug>`, `ctx.workspace`, a planner payload or an editable project copy. Missing path, digest mismatch, malformed canonical document or unsupported version fails closed before provider/coder. Local tests inject a fixed trusted schema fixture; host test proves installed path+digest match the approved source/image. This chooses a packaging/runtime boundary without copying a second normative schema; record the digest with run evidence. The image/approved checkout update mechanism must ensure both are the same candidate SHA before execution.
 
@@ -283,7 +295,7 @@ seal half; its install half no longer applies to V2 create-new.
 | INV-04 | No provisional/unvalidated/unsealed plan reaches coder. Every role sees only its declared capability; coder cannot mutate the plan or the acceptance closure. A published-but-unadmitted revision is an audit fact, never a coder input (D-V2-8). |
 | INV-05 | Every admitted CT is discharged **exactly once** — an executable selector that resolves to exactly one collected nodeid, or a typed disposition the caller granted — and the `INV→CT→TEST-ID→selector` graph is complete. No `KIND`, severity or class exempts a contract (D-V2-10); the seal records the contract total and attests every one of them, so a contract cannot disappear between the graph and the evidence (P4-2). |
 | INV-06 | AcceptanceBundle binds canonical plan and full acceptance source/config/support/helper/fixture/driver/runner closure to immutable workspace revision; verifier executes that same closure. |
-| INV-07 | Mode A holds across two interfaces with two mechanisms (D-V2-6): **file tools are prevented** — `RootedViewIO.protected_paths` refuses writes to every sealed semantic path and its ancestors; **shell is detected** — a write that reaches the closure there is byte drift and fails closed at the next closure check, before any verification result exists. No acceptance byte that differs from the seal can produce a verdict, and every verification entry point (including incremental/repair-time checks) proves the closure digest first. Unsupported mode B, missing/stale seal, ambiguous mapping or incomplete closure fails closed. |
+| INV-07 | Mode A is actually read-only across file tools and shell (D-V2-6 as amended by E657); post-hoc drift detection alone does not satisfy it. The authority protects the full sealed closure and relevant ancestors, and the verifier executes the same pinned bytes. If revision-backed projection cannot prove this, use the isolated immutable-payload fallback. No differing acceptance bytes may produce a verdict. Unsupported mode B, missing/stale seal, ambiguous mapping or incomplete closure fails closed. |
 | INV-08 | Kill outcome is attributable only to its exact mapped TEST-ID/nodeid assertion against the pinned revision. Other outcomes never imply PROVEN. |
 | INV-09 | Planner TEST-DEFECT cannot mutate sealed evidence in place; new revision, evidence lineage and affected gate reruns are required. Ratified semantics change only via replan. |
 | INV-10 | V2 STEP/CT status ticks are produced by production harness code and observable on the host; status projections do not substitute for artifact ticks. |
@@ -300,7 +312,7 @@ This plan is an E530/E546 exceptional **W3 planning input**. It is not W2 work a
 | Order | I03 state / blocking work | Relationship to this plan |
 |---|---|---|
 | W2 | **CLOSED Arena-locally** by E526–E527. Nested `invoke_workflow`, acquisition, lease/return, selection/bootstrap and Q66 local composition are predecessors only; W4 host witnesses remain open. | Reuse these seams; do not reopen or claim their local closure proves V2. |
-| W3 / STEP9 | **OPEN, first in order.** Remaining Arena-local STEP9 work includes final `tests/integration/`/E2E fixture/package prep, S6P5/7/8/9/10 and Q108/producer evidence reconciliation, approved Q97 profile check, local high-ROI changed-seam checks, independent review/run sheet and core package/preflight gates. Q139 stays `DEFERRED` per E531/E544. The W3 rows in the increment are controlling; broad `just check`/`check-deep`, full mutation sweep, wheel build and ShellCheck-only tests are best-effort, not hard blockers. | This review draft must wait for STEP9 close before STEP9A starts. It does not close any STEP9 item or require a host update. |
+| W3 / STEP9 | **LOCAL-CLOSED** (SLICE6 STEP9 `[x]`, E556/E558). Four local exit families were reproduced; Q139 remains `DEFERRED` under E544. Other W3 and W4 work remains open and is not evidence against this specific tick. | STEP9 no longer blocks STEP9A; this closure does not close STEP9A, STEP9B, W3 or host acceptance. |
 | W3 / STEP9A | **OPEN and gated by STEP9.** Implement and locally prove artifact-C `AcceptanceBundle`, mode-A shell+file read-only custody, full closure, exact target attribution, pre-code gate and TEST-DEFECT lifecycle for the new plan path; immutable-payload fallback if C cannot prove custody/projection. | The new slices consume this mechanism; they must not build a second custody/kill engine. |
 | W3 / STEP9B | Planning-only gate after STEP9 and STEP9A. | This document is presently an early review draft. Only after predecessor evidence is reproduced and this plan is independently reviewed, links/grammar structure pass, and gaps below are resolved may STEP9B be marked complete. No product code starts before that. |
 | W3 / new slices + STEP10 | After STEP9B, implement each new slice and pass its Arena-local DoD. Then resume remaining original STEP10 local package/review prerequisites and close W3 on Arena-local evidence only. | Slices 1–5 are the new I03 extension; no W4-only work may be pulled forward as proof. |
@@ -496,7 +508,7 @@ unblocks what, and each is independently revertible:
 Every step keeps the suite green on its own. Step 1 is a pure deletion once step 3 is in place, so steps 3 and 4
 land first if a single commit is preferred.
 
-**Bounded planning ASK/Q items:** Q-V2-BOOT-1 is **resolved** (D-V2-5, audit `notes/q-v2-boot1-install-seal-audit-2026-11-20.md`): the closure is installed inside the revision, the seal is minted from installed bytes + plan bytes + receipt revision into private metadata, and the pointer/recovery rules are E1–E9. SLICE2 therefore implements that chain rather than choosing one; the only open item on this slice is Q-V2-MODEA-1 (shell-side read-only policy), which does not block install. Route fields/error mapping above are this plan's selected bounded interface, not coder choices. The initial increment slug is harness-fixed `initial-plan`; planner cannot supply it. No interactive approval is required for routine implementation seams.
+**Bounded planning ASK/Q items:** Q-V2-BOOT-1 is **resolved** (D-V2-5, audit `notes/q-v2-boot1-install-seal-audit-2026-11-20.md`): the closure is installed inside the revision, the seal is minted from installed bytes + plan bytes + receipt revision into private metadata, and the pointer/recovery rules are E1–E9. SLICE2 therefore implements that chain rather than choosing one; Q-V2-MODEA-1 was resolved by D-V2-6; E657 strengthens it to true read-only file-tool and shell projection, with fallback if unprovable; it does not block installation. Route fields/error mapping above are this plan's selected bounded interface, not coder choices. The initial increment slug is harness-fixed `initial-plan`; planner cannot supply it. No interactive approval is required for routine implementation seams.
 
 ### SLICE3: V2 acceptance graph and STEP9A custody integration
 
@@ -510,7 +522,7 @@ land first if a single commit is preferred.
 |---|---|---|---|
 | CT-3.1 | FUNCTIONAL / INV-05 | Build and validate the `INV→CT→TEST-ID→selector` graph with required cardinalities; **every** CT is discharged exactly once — executable evidence resolving to one collected nodeid, or a caller-granted typed disposition (`PRESERVATION` never dispositionable, no `KIND` exemption, no `SOFT` escape); TEST-ID maps to one exact collected nodeid. | TEST-3.1 → `tests/test_ai_native_plan_v2.py::test_slice_rules_refuse_invalid_graphs` (the closed edge/cardinality rules) plus `tests/test_ai_native_acceptance_bundle.py::test_an_incomplete_nodeid_report_never_reaches_the_seal`, `…::test_a_record_with_two_rows_for_one_test_id_is_refused` and `…::test_a_seal_is_refused_while_a_contract_has_no_evidence` (discharged exactly once). **Corrected 2026-11-22 (D-2):** the row named `…bundle.py::test_acceptance_graph_requires_complete_unique_contract_and_nodeid_edges`, which exists in no file. |
 | CT-3.2 | FUNCTIONAL / INV-06 | Fresh-project V2 materializer emits the complete schema-declared acceptance manifest into the STEP9A seal request; the authority returns a controller-minted seal bound to exact plan and acceptance-closure revision. Admission rejects a missing/stale seal, unresolved selector or closure mismatch before coder. | TEST-3.2 → `tests/test_ai_native_acceptance_bundle.py::test_mints_a_seal_bound_to_plan_revision_closure_and_nodeids`, `…::test_a_selector_outside_the_sealed_bytes_is_refused`, `…::test_a_graph_that_does_not_describe_the_plan_bytes_is_refused`, and on the route `tests/test_v2_seal_store_and_mint.py::test_admission_mints_the_seal_and_the_next_stage_reads_it` (the mint now *has* a caller: N1, `7b750f5`). **Corrected 2026-11-22 (D-2):** the row named `test_v2_materialization_binds_complete_closure_to_step9a_seal`, absent from the tree. |
-| CT-3.3 | CONSTRAINT / INV-07 | Mode A under D-V2-6 (detection for the shell half): the V2 coder view carries **every** sealed semantic path in `RootedViewIO.protected_paths` (`view_io.py:119–234`) — roadmap, ledger, `open-questions.md`, increments and `worklogs/<slug>/acceptance/` — and refuses writes to them and their ancestors. The set is **derived in the authority** from the admitted plan (`execution.workspace.sealed_project_paths`: the whole `worklogs/<slug>` directory, or the plan's own path on the legacy single-file route), so it does not depend on the view's purpose — which is what makes it hold for both coder topologies (P4-4), and a caller cannot shrink it. A write through any other interface (shell) does not need to be blocked to be harmless: the next closure check reports drift and the run fails closed with no verdict produced. The tests prove both halves — the file-tool write refused by the IO layer in a `PROJECT` **and** a `MUTATION` view (`PATH_DENIED`, including a *new* file beside the seal), and a shell-level mutation of the closure (simulated at the tree; no container) producing `seal-byte-drift` with **no command run** at both verdict entry points (`acceptance_collection`, `kill_attribution`). No profile change, no hash-only sidecar, no second seal. | TEST-3.3 → `tests/test_execution_purposes.py::test_v2_coder_projection_protects_every_sealed_semantic_path` (moved from the bundle module in S3: the authority/IO harness that can open both purposes lives there; the bundle module keeps the layout↔enforcement bind, `test_every_scaffolded_project_artifact_is_inside_a_protected_path`). Drift half: `tests/test_ai_native_acceptance_collection.py::test_a_drifted_tree_never_runs`, `tests/test_ai_native_kill_attribution.py::test_a_drifted_acceptance_tree_never_runs_the_oracle`. |
+| CT-3.3 | CONSTRAINT / INV-07 | Mode A under D-V2-6 as amended E657: the authority derives sealed semantic paths and prevents file-tool writes to them and their ancestors in both PROJECT and MUTATION coder views. Coder shell must also have a genuinely read-only acceptance projection, including resistance to ancestor replacement and transient ABA; post-hoc drift detection and publication validation are additional safeguards, not substitutes. The verifier must execute the same pinned closure. If revision-backed projection cannot establish these properties, use the isolated immutable-payload fallback. Until authority-private seal and this projection are proven, the V2 pre-dispatch guard refuses coder execution. | Existing TEST-3.3 file-tool coverage: `tests/test_execution_purposes.py::test_v2_coder_projection_protects_every_sealed_semantic_path`; shell projection, exact verifier binding and host tests remain required, not credited by existing drift tests. |
 | CT-3.4 | PRESERVATION / INV-08 | Every V2 target/CT/TEST-ID edge is translated without loss into STEP9A's exact-attribution contract. On the V2 route, target pass remains VACUOUS; only the mapped nodeid's assertion failure can be PROVEN; unrelated failures remain suite failures; setup/collect/skip/timeout/crash/JUnit/zero-run remain ERROR. This test proves V2 does not reintroduce the existing Q53(c) slice-wide rule. | TEST-3.4 → `tests/test_ai_native_kill_attribution.py::test_a_target_is_bound_to_its_contract_test_nodeid_and_sealed_evidence`, `…::test_a_baseline_pass_and_a_mutation_failure_is_proven`, `…::test_a_mutation_that_still_passes_is_vacuous`, `…::test_a_report_with_a_second_row_is_refused`, `…::test_an_empty_report_never_proves_anything`. **Corrected 2026-11-22 (D-2):** the row named `…bundle.py::test_v2_mapping_delegates_exact_attribution_without_slice_fallback`, absent from the tree. **Not wired to the route yet:** `kill_attribution` has no production caller (measured `grep -rn kill_attribution src/` → the module itself only), which is the recorded deviation in §8 step 4 and the factual basis of Q-V2-SLICE3-4/5. |
 | CT-3.5 | PRESERVATION / INV-09 | V2 `TEST-DEFECT` report is bound to STEP9A seal/test/nodeid; it follows STEP9A's existing immutable old-evidence/new-revision baton and replan behavior. V2 adds no second state machine and cannot silently change an invariant. | TEST-3.5 → `tests/test_ai_native_acceptance_defect.py::test_a_report_is_pinned_to_the_seal_revision_nodeid_and_invariant`, `…::test_a_correction_is_a_new_seal_that_supersedes_the_reported_one`, `…::test_the_old_revision_stays_readable_after_a_correction`. **Corrected 2026-11-22 (D-2):** the row named `…bundle.py::test_v2_test_defect_uses_step9a_revision_and_preserves_prior_evidence`, absent from the tree. |
 | CT-3.6 | CONSTRAINT / INV-06 | Managed verifier runs the acceptance closure through STEP9A's pinned managed no-network/read-only cell (`slice_verification.py:162` argv, not the planner fence at `:552`) and the same closure revision while importing the explicit current candidate revision; records both revision identities and refuses a closure/code path overlap. **Planner-authored `verify` fences are no longer executed on the `PLAN-V2` route** — command text never drives a result (the fence path is retired for V2, retained only for the frozen legacy route). No host fallback or different runner/config. | TEST-3.6 → `tests/test_ai_native_acceptance_bundle.py::test_v2_verifier_uses_sealed_closure_with_current_candidate_revision` | **Landed in part 2026-11-22 (E615):** the pinned verifier now exists as `acceptance_collection.verify_sealed_acceptance` — it refuses a host-shaped substrate (`verifier-substrate-required`), a malformed candidate (`candidate-revision-invalid`) and a closure that overlaps a code root (`sealed-root-code-overlap`) *before* any cell command, runs the sealed argv with its report carried in the receipt, and records **both** revision identities (`sealed_revision_id`, `candidate_revision_id`). Test: `test_v2_verifier_uses_sealed_closure_with_current_candidate_revision`. **Landed since (2026-11-22):** the controller wiring — on a sealed snapshot the verifier stage calls `_sealed_stage_verification` and never `verify_plan` (`workflow_controller.py:2084–2104`), so the planner fence is not reached on the `PLAN-V2` route, and the attempt lands in `verification.json`'s append-only entry. **Still not landed:** `run_kill_checks` itself (F10 item 5), which is what Q-V2-SLICE3-4 and Q-V2-SLICE3-5 now own. **Superseded detail:** the paragraph below describes the pre-wiring state and thereby retires the planner fence (`slice_verification.py:552`) — that needs an answer to what the V2 verification artifact should be (today's `write_verification` consumes `PlanVerification`, which is built from planner commands). Filed as Q-V2-SLICE3-1 (now answered, see `notes/verification-entities-2026-11-22.md`). **Verified defect in the landed half (F9, 2026-11-22):** `verify_sealed_acceptance` never runs a mutation, so for a plan carrying `KILL-TARGETS` it would record a claim as proven while the kill check never ran. It must compose with STEP9A's existing runner through a public `run_kill_checks` seam (SLICE3's intent forbids a second runner) and, until it does, **record the declaration instead of refusing** (**RATIFIED 2026-11-22 = Q-V2-SLICE3-4 option A**): the attempt carries `kill_declared` with `executed: false`, the artifact and the eval block name the gap, and `proven` speaks only about the selector's execution. The refusal this paragraph used to demand (`claim-mutation-missing` for a *declared* target) is option B and was rejected by measurement: the authoring prompt requires a `KILL-TARGETS` block (`prompt.py:1248`, `:1299`), so B would block every project written to the instructions, permanently, until `run_kill_checks` exists.
@@ -525,7 +537,389 @@ the planner's `correct(...)` refuses a plan change, a same-revision re-seal and 
 as it does for a report. The proposal artifact lives outside `acceptance/`, so mode A still holds and no
 coder-authored byte can reach the sealed closure without a new seal. CT-3.5 covers both inputs.
 
-**Failure/negative controls:** stale/missing seal; modified, added or deleted accepted bytes; a file-tool write attempt on every sealed semantic path (refused) and a shell-level mutation of the closure (detected as `seal-byte-drift` before any verdict), including a sealed path under `src/`/`scripts/`; unsupported visibility mode B; incomplete closure; ambiguous selector; target passes while unrelated test fails; collection/setup/skip/timeout/crash; new behavior test red at pre-coder T0 but mapped assertion fails on scenario-specific no-op/known-bad witness; then mapped test passes against current implementation immediately before STEP9A's kill; changed test assertion preserves prior evidence; managed executor unavailable. Custody/mapping integrity blocks in observe and enforce; determinate kill results follow configured observe/enforce behavior. **No duplicate producer kill:** STEP9A owns mutation engine/JUnit classification producer kill and its EDGE; this slice's local mutation/EDGE check targets only the V2 adapter/mapping and its caller into the already-proven STEP9A/managed verifier, proving that bypassing the adapter loses the exact V2 project selector/evidence. If STEP9A proof is unavailable, SLICE3 is blocked, not credited with a new local mutant. **Local DoD:** V2 project closure is materially collected and run at the exact `worklogs/<slug>/acceptance/tests/...` path through existing managed runner; seal/mode-A/digest behavior is delegated and proven by STEP9A evidence; V2 graph round-trips to exactly the same bundle/test/nodeid; no closure/code path overlap; exact attribution behavior is not reimplemented; no unreviewed skip; targeted static checks pass. Host remains separate.
+**Failure/negative controls (E657 supersedes detection-only wording):** stale/missing seal; modified, added or deleted accepted bytes; a file-tool write attempt on every sealed semantic path (refused) and a shell-level mutation of the closure (prevented, including transient/ABA attempts), including a sealed path under `src/`/`scripts/`; unsupported visibility mode B; incomplete closure; ambiguous selector; target passes while unrelated test fails; collection/setup/skip/timeout/crash; new behavior test red at pre-coder T0 but mapped assertion fails on scenario-specific no-op/known-bad witness; then mapped test passes against current implementation immediately before STEP9A's kill; changed test assertion preserves prior evidence; managed executor unavailable. Custody/mapping integrity blocks in observe and enforce; determinate kill results follow configured observe/enforce behavior. **No duplicate producer kill:** STEP9A owns mutation engine/JUnit classification producer kill and its EDGE; this slice's local mutation/EDGE check targets only the V2 adapter/mapping and its caller into the already-proven STEP9A/managed verifier, proving that bypassing the adapter loses the exact V2 project selector/evidence. If STEP9A proof is unavailable, SLICE3 is blocked, not credited with a new local mutant. **Local DoD:** V2 project closure is materially collected and run at the exact `worklogs/<slug>/acceptance/tests/...` path through existing managed runner; seal/mode-A/digest behavior is delegated and proven by STEP9A evidence; V2 graph round-trips to exactly the same bundle/test/nodeid; no closure/code path overlap; exact attribution behavior is not reimplemented; no unreviewed skip; targeted static checks pass. Host remains separate.
+
+### D-V2-13 — rolling-wave mutation obligation and late binding (operator direction 2026-11-23)
+
+**Status: behavior selected; NOT implemented or runtime-verified.** This block is the forward specification for
+Q-V2-SLICE3-5/6, not a claim that the current V2 route runs mutations. Do not treat the old brief's A recommendation
+or its two-command sketch as the selected contract. The goal is carefully designed cross-component seams and
+critical invariants with MVP-level internals, implemented in vertical slices; future private names are not a
+planner obligation. The planner authors invariants, optional explicit scenarios and CTs, and the acceptance tests
+that demonstrate those requirements. One primary INV per CT; optional SCN links explicit CTs; tests belong to CTs,
+with membership of SCN derived from CT. An INV/SCN is not silently given a new direct test edge. Coder owns routine
+implementation choices within those admitted boundaries; harness performs deterministic work where possible.
+
+**Contract B1 — responsibility and grammar.** Every **executable** `FUNCTIONAL` CT has exactly one mandatory
+mutation check for this MVP and its `TEST-ID` is **always explicitly named**, including when only one test exists.
+The TEST-ID must exist, belong to that CT and resolve to exactly one sealed nodeid. A CT may have multiple acceptance
+tests; the named TEST-ID selects the mutation oracle without discarding any other test evidence. `CONSTRAINT` and
+`PRESERVATION` have no blanket mutation obligation. A FUNCTIONAL carried solely by a valid caller-granted
+`NON_EXECUTABLE` disposition is attested/pending, not mutation-proven; a CT with an executable selector is
+executable even if its invariant also requests disposition (`contract_evidence` strongest-wins). Missing or
+unauthorized dispositions cannot be used as an exemption. Preserve D-V2-10/12 and `PRESERVATION`'s prohibition.
+
+Target authoring shape for the **atomic D-V2-11 cutover**, using the existing pipe-separated labelled-row convention:
+
+```text
+KILL-TARGETS:
+  CT: CT-1.1 | TEST-ID: TEST-1.1 | SITE: DEFERRED
+  CT: CT-1.2 | TEST-ID: TEST-1.2 | SITE: src/orders/api.py::create_order | MUTATION: remove-call -> save_order
+```
+
+`SITE: DEFERRED` means the obligation and oracle are sealed now, not that a mutation may be skipped. A pinned
+`SITE` is used only when a known producer/public or cross-component seam is genuinely a plan constraint; presence
+of an existing repository alone is not a reason to bind a new private implementation. `MUTATION` is required only
+for pinned SITE and forbidden for DEFERRED. For a pinned SITE, `MUTATION` is `neutralise` or
+`remove-call -> <callee>`; `neutralise` has no callee. Path is repo-relative under existing `src`/`scripts` mutation roots; symbol
+is an exact qualified dotted identifier supported by CT50b/CT81. Reject ambiguous/duplicate rows, invalid paths,
+operators, callee shapes, foreign CT/TEST, and missing rows for applicable CTs at admission, without requiring a
+future candidate file or symbol to exist at admission. For this MVP use CT as the stable identity of the *one*
+check; do not make the planner mint a separate target ID. Any internal identity and old-record mapping must be
+unambiguous, not based on row position. More than one mutation per CT is out of scope, not silently discarded.
+These target rows supersede current `TARGET-ID` grammar; the actual parser today still requires that field. V1
+remains frozen. Grammar table, parser, authoring prompt, skills, fixtures and conformance tests move together;
+repair diagnostics and admission-record vocabulary must accept the new rules without relaxing legacy validation.
+
+**Contract B2 — proposal, authority and receipt.** For DEFERRED, after code is published the coder supplies one
+bounded, untrusted proposal for the CT: exact site, operator/callee and a short claimed connection to the sealed
+behavior. Harness, not the coder, binds it to the seal/plan digest, explicit CT/TEST/nodeid, run/attempt and the
+actual candidate revision named by the pinned substrate. Do not trust a revision, verdict or nodeid supplied in
+coder text. A planner-pinned directive uses the same validation/execution path and records `planned` provenance;
+a deferred proposal records `coder-proposed`. Do not claim `derived` unless an actual deterministic producer is
+implemented and proven; no automatic first-killed-mutant search. A proposal neither changes the seal nor becomes an
+acceptance test. Once verification begins for an attempt, the selected directive is fixed; a later revision or
+proposal is a new attempt with retained prior evidence. No automatic retry with alternate candidates until green.
+
+The selected minimal transport is the existing in-memory **terminal coder `SessionOutcome.final_text`** through
+`_cmd_run(..., outcome_sink=...)` into `_run_stage` after `_capture_managed_revision_boundary(..., after_stage=True)`.
+This is a new consumer of an existing channel, not a claim that current code reads coder output. In a PLAN-V2 coder
+stage the prompt requests exactly one fenced block ` ```fa-kill-proposals ` (without the spaces) containing a JSON
+object with exactly `{"proposals": [...]}`. Each proposal has exactly `ct`, `test_id`, `path`, `symbol`, `operator`,
+`callee` (string or null), and `rationale` (bounded untrusted text); no nodeid, revision, seal, verdict or command.
+The block may coexist with ordinary final prose. A stage with no deferred obligations need not supply a block; if it does, it must satisfy the same rules with an empty array. Harness extracts at most one well-formed block, uses JSON parsing
+that rejects duplicate object keys, limits the block to 32 KiB UTF-8 and rationale to 512 characters per entry, and
+requires exactly one proposal per in-scope DEFERRED CT, no extra CTs, no duplicates, no proposal for a pinned CT.
+An empty proposal array is valid only when no in-scope CT is deferred. Reject a missing block when deferred obligations exist, multiple/unterminated blocks,
+non-object/unknown fields, unknown or mismatched CT/TEST, oversized text, invalid operator/callee and unexpected
+proposal rather than repairing or guessing it. Explicit `TEST-ID` must equal the sealed target row. Take only the
+successful terminal coder stage outcome for the current invocation, check the sink and exit/release outcome, then
+bind that in-memory input to the controller-observed post-stage candidate revision and run/attempt; clear it on
+failure, retry, new stage or replan. Never accept a model-supplied revision or recover a prior stage's final text.
+Keep stdout behavior unchanged; do not echo proposal text into a privileged command or unbounded eval context. The
+real CLI prints final_text, so tests must check both output and result transport; file-based handoff is **not**
+a fallback. If production source proves this channel unavailable on a supported topology, stop and file a scoped
+Q before substituting a different authority or adding a writable project file. This design adds no extra LLM call.
+D-V2-4 is a useful *analogy* for a bounded coder proposal, not an existing mutation channel:
+its test patch and `acceptance_defect.correct` have different semantics and must not be reused to alter the plan or
+acceptance. No extra approval/LLM call for routine binding; independent review remains Q-V2-REVIEW-1, not an MVP gate.
+
+Harness checks site syntax/root confinement, no path traversal/absolute path or symlink escape, one exact AST
+definition, correct operator/callee and at least one actual edit, and reads bytes via the same pinned `WorkspacePort`
+as the executor's revision. Missing, malformed, duplicate, ambiguous, stale or foreign proposal never becomes a
+mutation pass or silently falls back to another target. Plan-pinned site missing at candidate time is a diagnosed
+producer/binding failure, not admission-time proof that future code is absent. Facts only: this validates execution
+and provenance, **not** semantic optimality of the site. The sealed acceptance still checks observable behavior;
+for external/durable effects it must observe the authoritative effect/no-effect (Hollow-Facade). A killed mutation
+is evidence that the named test detected this particular perturbation, not proof of requirement completeness.
+
+**Contract B3 — execution and honest evidence.** Generalise the existing V1 managed in-band mutation overlay and
+pure `apply_kill`, do not build a second runner or host fallback. `run_kill_checks` is the composition seam, not an
+independent engine: thread the port from `_VerifySubstrate`, reuse `oracle_argv` from the seal and execute baseline
+and mutant for the same exact nodeid, same candidate revision, same sealed config/closure and equivalent environment.
+The baseline is immediately before mutation on the current candidate, not pre-coder T0. Prove overlay import
+provenance in both relevant runs and ensure actual mutated bytes are imported. Preserve the existing one-JUnit-block
+per receipt rule. MVP uses two harness-built managed commands, one baseline and one mutant, each with one report
+and a fresh scratch overlay built by the same setup, argv/config/nodeid, cwd and environment policy; compare
+normalised configuration and source snapshot identities rather than requiring identical absolute temporary paths.
+Each command cleans up its own scratch. The only intentional source difference is the one mutated file. The pinned
+executor/view must remain alive across both, and the same absolute deadline covers both; failure/uncertainty of
+either yields no PROVEN. A different composition requires demonstrated equivalent receipts and must not weaken
+the one-block parser. The existing in-band bootstrap removes its scratch in `finally`, so two commands do not share
+one directory. The existing `_PROVENANCE_PROBE` runs in a separate process and checks a module path, not what pytest
+actually imports: extend/reuse the trusted pytest-side overlay hook to attest the selected module path and original/
+mutated bytes in the **test process**, with a distinct run nonce and before verdict. Prove an import diverted after
+the standalone probe cannot pass. If that cannot be enforced under the selected profile, stop and replan the owning
+STEP9A seam; do not describe the standalone probe as proof of pytest's actual import. Use the
+existing detailed JUnit parser through an in-band adapter, not `parse_inband_nodeids`' boolean projection; verify
+command outcome/exit against report, exact nodeid, run binding, complete untruncated receipt and phase/type. A
+pytest `<failure>` alone does not establish `AssertionError`; only assertion failure in the named test's call phase
+is PROVEN, never non-assertion exceptions, setup/teardown, skip, crash, timeout, zero/extra rows or bad report.
+**E652/E653 READ projection binding:** the authority now compares the finished read-only
+execution copy with the revision manifest (normalizing only write-bit stripping) before it
+accepts its digest; failed read-only staging cleanup is safe and retryable. Authority and
+backend negative tests prove no cell launch on injected copy corruption; positive read-only
+mount rendering is exercised through a literal Docker peer, not a live container. This does
+not close coder mode A, complete custody or STEP9A; see ledger E652–E653.
+
+**E650/E651 local evidence:** candidate sealed pytest now requires nonce-bound call-phase
+classification and exit/report coherence; skipped/error calls refuse instead of becoming
+ordinary failed claims. Publication and replay tests also prove rejection of a forged,
+self-consistent manifest with substituted or omitted acceptance entries. These are local
+sub-obligations, not B5 routing, full custody, STEP9A closure or live-host evidence; see ledger.
+
+**E649 partial publication safeguard:** the common seal/publication validator now
+freezes an existing acceptance subtree for a project-increment-bound view against the
+base manifest, including additions/deletions/mode/omission; ordinary no-plan authoring
+and code-only publication have service-backed positive tests. This is not a coder
+shell read-only projection, a bundle-scoped complete closure fence, an immutable payload,
+or TEST-DEFECT reseal; STEP9A remains open. See ledger E649 for evidence and limits.
+
+**E648 custody controller join:** admission and V2 verifier compare the live pinned
+authority inventory to a complete no-symlink host walk before and after execution, including
+empty directories; admission rechecks after mint and joins bundle file hashes while the reader
+is still open. Real authority/UDS→controller admission tests and 583 gate tests pass; the
+pytest executor in that admission test is a local double. This closes neither transient/ABA
+protection nor mode-A coder projection/publication and does not prove live host; see E648.
+
+**E647 custody transport:** bounded authority inventory is now exposed through negotiated V2
+read-only operation and client, with revision/tree join to the reader grant; service/authority
+and real UDS client tests pass. It is not yet consumed by admission or compared with the seal,
+and does not prove mode-A custody; see E647.
+
+**E646 custody component:** `WorkspaceAuthority.inventory_acceptance` projects bounded complete
+subtree metadata from a capability-bound pinned revision; local authority tests cover foreign
+grant, host drift, symlink and over-limit refusal. It has no wire or controller consumer and
+does not yet join inventory to the seal or prove coder projection; see E646.
+
+**E645 priority gap-closure work order (STEP9A; all unchecked).** This is execution detail for the
+existing E530/STEP9A and B1–B6 gates, not a new step or permission to bypass STEP9B:
+
+- [ ] **Custody, first critical dependency (INV-04/08, CT-3.3/3.6):** extend the existing authority
+  revision/pinned-reader and mode-A write-view seams to bind complete closure bytes and membership
+  to the authority's revision, pre-code run, minted bundle and candidate verifier. Prove added,
+  deleted, substituted, symlinked and transiently changed content cannot produce a verdict;
+  prove file tools and shell cannot write coder-visible acceptance and publication rejects drift.
+  Existing READ projection is authority-materialized and read-only, but host-side closure hashing
+  is not evidence of that projection's content. `WorkspacePort.read_file` has no recursive
+  inventory; checking only host-known files misses extra authority files. Use a bounded
+  authority-owned inventory/manifest seam, or the ratified immutable-payload fallback if C cannot
+  prove full closure and read-only projection. No host filesystem or in-band self-attestation
+  fallback. C1 authority→controller→managed execution and C3 adversarial tests, producer/EDGE
+  kills, then live-host witness remain required.
+- [ ] **Pre-code (INV-04/11/12):** use the same custody binding for real admission→pinned pytest→
+  seal; retain classified per-node outcomes and applicable known-bad/no-op witness evidence.
+  Test a fresh project without foreknowledge of coder seams; if impossible, record the scoped
+  producer-absent replan rather than weakening mandatory later checks (E639).
+- [ ] **Exact mutation (INV-06/08, CT-3.4):** B2 grammar/guard cutover, B3 coder proposal and
+  B4 managed baseline/mutant composition over existing overlay and authority port; bind selected
+  TEST-ID, candidate, seal, actual imported source, receipts and call-phase assertion. No
+  manufactured PROVEN or standalone probe substituted for actual pytest import provenance.
+- [ ] **TEST-DEFECT (INV-09, CT-3.5):** validate both planner decisions against sealed report,
+  plan and revision, connect coder→planner→decision→coder and retain old evidence; corrected
+  closure creates a new seal and re-runs affected gates. E645 hardens decision components only;
+  full workflow and authority-backed retention remain open.
+- [ ] **Evidence/routing (INV-08/11, B5):** preserve typed pass/assertion/skip/error outcomes
+  through real linear and adaptive routes: custody and indeterminate failures block both modes;
+  determinate failure is advisory only in observe and repairable in enforce. Check artifact
+  history, declared versus executed mutation and no missing/duplicate evidence.
+- [ ] **W4 live and ledger E2E (INV-10/12):** after W3 and approved deploy, add/run reviewed
+  host cases for actual workflow and append-only ledger: assert authoritative old+new records
+  and producer/consumer-visible identity, no append on refusal/uncertainty, no duplicate on
+  replay, correct ordering and retained previous evidence across TEST-DEFECT and mutation.
+  Respect Q-V2-LEDGER-1 writer policy; until resolved no post-seal writer is inferred. These
+  are planned, not executed or host acceptance.
+
+**E644 adversarial review:** TEST-DEFECT correction validates report identity and
+conservatively re-proves all closure tests/targets; workflow integration remains open.
+The E643 service failure was a PTY stateful-shell regression and is fixed with a subshell
+prefix; 435 local tests pass. Custody, exact managed mutation, typed observe/enforce
+routing and production-path pre-code witness remain open; see E644.
+
+**E643 STEP9A review:** managed shell markers are exported for subsequent subprocesses, with
+real-shell and managed-adapter/pytest tests; separate service-backed test initially failed with
+uncertain execution; resolved and re-tested in E644. This is not authority custody proof; see E643.
+
+**E642 STEP9A component:** an unconfirmed pinned-reader stop now invalidates pre-code admission and
+post-coder provisional attempts instead of merely logging; observe/enforce remain blocked. Fault-injected local
+controller evidence is not managed-host custody proof; see E642.
+
+**E641 STEP9A component:** the pre-code caller checks the executor's named revision, compares the pre-run
+closure digest to the minted closure and refuses identity mismatches without a planner repair. This does not
+prove authority-backed receipt/source identity, in-run custody or host execution; see E641.
+
+**E640 STEP9A component:** pre-mint full pytest collection now distinguishes assertion-red from other call
+exceptions/skip and checks invocation metadata and exit/report coherence. This is not witness sensitivity,
+managed authority/custody proof or full pre-code gate closure; see E640.
+
+**E637 component progress:** sealed projection now preserves multiple unique tests per CT, counts distinct CTs,
+checks pending against attested and compares projected keys to the seal; controller baseline pass/fail and payload
+are exercised. This is not selected-TEST-ID mutation binding or the managed kill EDGE; see ledger E637.
+
+**E636 component progress:** the trusted pytest plugin writes call-phase outcome metadata, the strict parser checks
+it together with a run nonce, and `run_node_oracle` checks report/exit coherence. The in-band parser shares this
+validation. Real local pytest negatives and component kills pass; neither managed runner integration nor trusted
+actual overlay-import provenance nor receipt/candidate identity joins have been proven. The plugin, run nonce and
+report must be supplied via the trusted harness path; the metadata alone is not proof against an adversary who can
+rewrite the runner/report or manipulate plugin execution.
+Baseline pass + mutant pass is VACUOUS; failed baseline or unprovable execution is not a kill. Keep the existing
+single verdict vocabulary and `attribute` as the verdict owner after its input classification is made sufficient.
+
+Persist in the existing append-only `verification.json` attempt and bounded eval projection: plan/seal/closure and
+candidate identities, CT, explicit TEST-ID, exact nodeid, one proposed/planned site, operator/callee, selection
+provenance, actual mutation application, baseline and mutant outcomes and their harness-authored command receipts.
+No model-supplied free text is authority; bound and label it untrusted. Maintain all acceptance results for multi-test
+CTs and the seal's contract totality without confusing the number of selectors with the number of contracts.
+`kill_required` must cover every applicable CT and absence of its mutation cannot be `ClaimEvidence.proven`.
+Until the entire new path is wired, retain Q-V2-SLICE3-4's honest `kill_declared`/`executed: false` behavior for
+current-format records; preserve old readers/history when changing new records. Do not invent an eternal
+`declared-but-not-executed` success state for executable checks. The exact new key shape is a consumer-audited
+implementation choice, not an authorization to erase historical fields or bump a schema gratuitously.
+
+**Source-audited adapter contracts (required before B2/B3 can be credited).**
+
+1. **Seal ↔ graph:** `acceptance_bundle._bind_graph_to_bytes` currently checks INV heading count plus invariant/
+   contract text and CT substring, not class, INV edge, selectors, TEST-ID, kill rows or steps. A direct stdlib
+   probe on this checkout parsed both the original test fixture and a version with `test_publish` replaced by
+   `test_different` (and separately `FUNCTIONAL` → `CONSTRAINT`); `_bind_graph_to_bytes(changed_graph,
+   original_bytes)` accepted both. This proves the helper accepts graph/byte disagreement, not that an attacker can
+   reach `mint_seal` through every production topology. Replace the substring check at the owning seal boundary with
+   structural equality against the parsed increment's semantic graph, including all plan-owned fields and edges (apply trusted dispositions through the existing binder before comparing grant-bearing fields);
+   compare caller-granted disposition data separately against the existing binding authority, without treating the
+   planner as grantor. The roadmap marker is separately validated by admission; do not synthesize roadmap bytes.
+   `mint_seal` and `acceptance_defect.correct` must both refuse substituted class, CT→INV, selector, TEST ownership,
+   kill mode/TEST/site/operator, SCN and step edges, even when all old text/IDs remain present. Prove the real mint
+   and correct paths, not only the helper; old seal bytes remain loadable under the existing schema contract.
+2. **Seal ↔ selected nodeid:** E635 adds a component-level binding: `bindings` validates seal identity, exact
+   plan bytes and authored graph, then joins `(ct, test_id, selector, nodeid)`; `run_node_oracle` re-derives the
+   binding before a subprocess, and `oracle_argv` checks seal/revision/closure/test identity. It refuses wrong CT,
+   swapped selector, forged target or reused binding. This is **not production wiring**: the module has no caller
+   in `src`; the forthcoming managed composition must supply admitted plan bytes and prove its real EDGE. Candidate
+   revision, run nonce and baseline/mutant receipts remain B3–B5 obligations and are not provided by these sealed
+   revision checks. The current legacy `TARGET-ID` grammar remains until the atomic D-V2-13 cutover.
+3. **Multi-test projection and totality:** `sealed_attempt` builds one claim per `bundle.selectors`; current
+   `VerificationAttempt._check_v2` rejects two claims with the same CT. Change the entity and projection together:
+   expected selector keys are the exact sealed `(CT, TEST-ID, nodeid)` tuples, each appears once, none extra/missing;
+   distinct executable CT IDs plus `attested` cover the seal's `contracts_total` exactly, `pending ⊆ attested`, and
+   no CT is both executed and attested. Attach one mutation only to the explicitly selected TEST-ID; other claims
+   remain ordinary test evidence. Contract completion requires *all* selected tests pass and the mandatory mutation
+   proves for functional CT, not just the mapped test. Compute obligations from the admitted graph, never from a
+   caller-supplied empty tuple. Include adversarial same-count substitution/duplicate tests, not only length checks.
+4. **Admission diagnostics:** `ADMISSION_RULES_V2` lacks `plan-v2`, `_record_diagnostics` checks only V1-style
+   `CT\d+`, and `_validate_v2_existing_selection`/`_validate_v2_bootstrap` constrain permitted namespaces. Trace
+   `_validate_v2_admission`, create-new repair (`_admit_published_project` and `_bootstrap_failure`) and record
+   writers/readers end-to-end. Add a closed V2 namespace and grammar-specific CT validation without broadening V1;
+   update relevant route/severity validation or explicitly retain a lossless bounded diagnostic detail if the
+   canonical schema requires the existing bootstrap wrapper. Assert specific missing TEST-ID and foreign mapping
+   rule survives to the legal repair/caller path; do not merely update the enum while the route still folds it.
+5. **Route projection:** `_sealed_stage_verification` currently converts every `sealed.blocking` into
+   `PlanVerification.errors`; `_verification_is_indeterminate` treats *any* error as indeterminate, and
+   `_effective_controller_route` consequently blocks completion even in observe. Project determinate failed tests
+   and VACUOUS as determinate results, not generic errors; classify missing/stale mapping, unavailable substrate,
+   invalid reports and mutation-not-executed as indeterminate/integrity. With evaluator requesting complete,
+   observe may complete for a determinate VACUOUS while enforce requests bounded coder repair; neither mode may
+   finish successfully for indeterminate evidence. Preserve the existing precedence of explicit eval repair/replan
+   routes; a repair attempt may run but cannot convert missing integrity evidence into DONE. Test actual `_run_stage`
+   and linear/adaptive terminal routing and emitted artifact, not only a `VerificationAttempt.blocking` property.
+6. **Evidence joins and retention:** `NodeRun` contains outcome/command/exit but no nodeid, run nonce or candidate
+   identity; `attribute` cannot itself prove both runs are for its binding. Extend the existing run/result entity or
+   its single owning adapter so that it refuses cross-target, cross-seal, cross-revision or cross-attempt receipts,
+   binds each nonce and baseline/mutant phase before verdict, and persists the actual `CommandResult` receipts in
+   the same append-only attempt (not only `commands_authored_by`). Persist a refusal with stable code and available
+   verified identity even when no full attempt can be constructed; never reuse `_WorkflowAdmission.last_attempt`.
+   An artifact append/identity failure prevents DONE, with existing authority reconciliation; no host-side retry
+   can mint a success. Source-hash and overlay-hash checks bind actual target bytes, not a claimed mutation string.
+
+**Failure policy and UX.** Custody, plan/test mapping, revision mismatch, stale/ambiguous/missing binding and
+unavailable substrate are integrity/uncertainty failures and block in observe and enforce; determinate test/kill
+failures remain advisory in observe and repair-blocking in enforce per §1. A failure must identify the safe CT and
+TEST-ID and the actionable category, not just `claims-total-mismatch` or `bootstrap-invalid-metadata`; sanitize and
+bound any path/text, distinguish source/proposal defect, test defect and infrastructure, and never tell the coder to
+edit sealed files. A real TEST-DEFECT follows D-V2-4; a changed semantic invariant/plan requires replan and a new
+seal; an internal proposal correction is a new attempt, not an acceptance edit. No semantic change is silently
+approved. The previous `proven` word for a passed claim without a required kill must not be reused to imply a kill.
+
+**Rolling-wave planning and pre-code collection (operator clarification 2026-11-23).** A roadmap can describe the
+long-term direction, but only the nearest increment and its vertical slices are detailed; later increments may
+remain `OUTLINED`. Do not require I02's architecture, detailed CTs, selectors or acceptance tests to be authored,
+sealed, synchronized or executed while I01 is unfinished. This does **not** authorize partial sealing or
+selective verification of an admitted increment: STEP9A's current complete-closure, pre-code and pinned-verifier
+contracts still apply. `parse_plan(roadmap, increment)` currently parses one increment; this is a source observation,
+not a claim that the complete multi-increment workflow is implemented.
+
+The independent technical risk is within the **current** increment: `collect_sealed_tree` runs pytest before
+mint, so an acceptance module importing a not-yet-created producer may fail before coder. First diagnose with a
+production-root fixture for one detailed increment and an outlined successor, using an acceptance test that imports
+its not-yet-implemented producer. Record command, collection/seal/dispatch boundary and error without assuming
+outcome; also exercise a legal acceptance test that is collected and red at T0. A later acceptance test must prove
+that this workflow can progress without detailing the successor, while preserving all current-increment seal,
+pre-code, scope and evidence obligations. No future-increment tests are manufactured for the experiment. If the
+current-inc test cannot meet the existing pre-code contract, stop and file a scoped Q with evidence and options;
+no automatic collect-only substitution, test rewriting, skipped claim, active-slice authority or policy change is
+approved here. Q-V2-ROLLING-1's prior active-slice premise was my misinterpretation and is withdrawn.
+
+**Ordered implementation slices and DoD (all unchecked).** Respect STEP9/STEP9A and S0 host prerequisites;
+when a required STEP9A interface is absent, amend that owner through a scoped replan, not a parallel engine.
+
+- [ ] B1 — run the current-increment pre-code diagnostic described above against the production root, and audit `SessionOutcome.final_text` /
+  `_cmd_run` / `_run_stage` / revision boundary and artifact consumers on direct and nested managed paths. It may
+  record a blocking result: this is diagnostic, not B6 acceptance. If an existing pre-code contract cannot be
+  satisfied or the selected outcome transport is not viable, stop and file a scoped Q. Record reproducible
+  commands, fixture, outcomes and exact owner; no success or host claim from a mocked substrate.
+- [ ] B1a — fix and prove the seal/graph equality and seal→binding tuple checks in the owning STEP9A modules before
+  handing new rows to the verifier (source-audited adapter contracts 1–2); include both seal producers and an EDGE
+  mutant. This is a prerequisite for B2/B3, not a second seal, not the full runner.
+- [ ] B2 — atomic grammar cutover (D-V2-11), explicit TEST-ID and total FUNCTIONAL obligation, both site modes,
+  all prompt/skill/schema/fixture readers and safe diagnostic routing. Preserve valid multiple tests per CT.
+  Migrate `acceptance_defect.affected_scope` and correction output, `kill_attribution` bindings,
+  `verification_attempt._check_kill_targets`, `_sealed_attempt_payload`, `_verification_evidence_lines` and
+  their callers/tests from TARGET-ID to unambiguous CT identity in the same cutover. Keep V1 frozen; read historical
+  target-ID records in their original shape without rewriting or treating them as new CT evidence. Test old/new
+  records, correction and eval readers, including `tests/test_v2_seal_store_and_mint.py`.
+  Ship an executable-route guard with the cutover: until B3/B4 provide required evidence, the controller must
+  refuse or produce a blocking missing-mutation result, never pass `kill_required=()` as if no check were owed.
+  If this guard cannot land safely on its own, land B2–B4 together; test the intermediate and final paths.
+- [ ] B3 — compose the bounded coder final-text block through the real coder→controller path; bind planned and
+  deferred rows to the post-stage candidate view; exercise multiple CTs, strict duplicate/missing/extra fields,
+  provenance/staleness/revision mismatch and closed failure reporting. A pinned-only or no-deferred stage requires
+  no block; a supplied block must still be well-formed and contain no unauthorized proposals.
+- [ ] B4 — implement managed exact-nodeid baseline/mutation using existing engine and port; preserve F9 fail-closed
+  transition and do not claim mutation execution until this and B3 are live. Repair assertion-phase classification
+  at the STEP9A owner via the scoped prerequisite, then consume it here.
+- [ ] B5 — integrate complete attempt/eval evidence, mode matrix and history (adapter contracts 3–6). A stage-time CT/TEST/nodeid check
+  runs without relying on status ticks. V2 CT83 completed-slice auditing of persisted late bindings is a separate
+  task gated by Q-V2-STATUS-1: source-prove revision-safe completion/evidence identity before reading ticks; the V1
+  script is not a V2 producer-ownership proof. Do not claim B5/SLICE3's full ownership DoD until that task closes;
+  any semantic slice-ownership assertion not derivable from source is reported as a residual, not invented.
+- [ ] B6 — prove a real vertical caller→planner→seal→coder→candidate→managed verification→artifact flow and
+  retained history for pinned/deferred cases, followed by the existing host/S0/W4 witness, separately reported.
+
+Planned test ownership (names below are **NEW targets**, not existing evidence):
+`tests/test_ai_native_acceptance_bundle.py::test_mint_rejects_changed_graph_semantics_with_original_plan_bytes`;
+`tests/test_ai_native_acceptance_defect.py::test_correct_rejects_changed_graph_semantics_with_original_plan_bytes`;
+`tests/test_ai_native_kill_attribution.py::test_binding_rejects_foreign_ct_and_cross_revision_receipt`;
+`tests/test_admission_v2_provenance.py::test_v2_rule_survives_real_route_and_legacy_contract_ids_stay_strict`;
+`tests/test_verify_gate_live.py::test_coder_proposal_reaches_pinned_verifier_and_observe_enforce_routes`;
+
+`tests/test_ai_native_plan_v2.py::test_functional_kill_requires_explicit_owned_test_and_accepts_deferred_site` and
+`::test_multiple_tests_per_contract_are_preserved`; `tests/test_ai_native_kill_attribution.py::test_managed_binding_and_exact_assertion_phase`;
+`tests/test_ai_native_acceptance_collection.py::test_managed_baseline_and_mutant_share_pinned_identity`;
+`tests/test_v2_verification_attempt.py::test_required_kill_and_all_contract_tests_survive_projection`;
+`tests/test_ai_native_bootstrap.py::test_current_increment_seals_without_detailing_outlined_successor`;
+and the existing `tests/test_verify_gate_live.py` production-caller bank for a **NEW** pinned/deferred binding
+case reaching the actual stage/artifact writer. The pre-code diagnostic must establish whether this bootstrap bank reaches the production path; if not, move the NEW
+test to the verified live-composition bank, retaining the same oracle. The post-implementation B6 acceptance, not
+the diagnostic, must pass.
+Mutation handoff: removing the B1 required-test check must fail the first parser test; replacing structural graph
+comparison with the old substring check must fail both named seal-producer tests; removing the revision binding
+must fail the managed binding test; collapsing determinate VACUOUS into `errors` must fail the observe route case;
+bypassing the stage→binding call must fail the real caller test. These are
+planned oracles and mutation targets, not claims they already exist or have killed a mutant.
+
+Required tests: parser/refusal matrix including explicit TEST-ID even with one test, duplicate CT directive, dotted
+method, both operators/callee, cross-CT selector, mixed executable/disposition, traversal/symlink, no source at
+admission; two tests per CT without lost claims; known seam and a deferred fresh implementation whose internal
+rename does not modify the seal; missing, stale, duplicate, malformed and foreign proposals; candidate/port/executor
+revision mismatch and altered closure; mutation not applied, over-limit payload, baseline failed, mutant pass,
+assertion failure vs other call exception, setup/teardown, skip, second nodeid, malformed/truncated JUnit, runner
+exit mismatch, timeout and provenance failure; planned/coder provenance and append-only retry history; observe and
+enforce including linear/adaptive caller routes; current increment plus outlined successor and pre-code import case. Each new enforcement rule has a named
+producer kill-check and the production caller has an EDGE kill-check; prove removing the binding/validator cannot
+produce a green attempt. Test real durable effect/no-effect, not just an HTTP status. UX diagnostics must be
+bounded, structured, identify available CT/TEST and name a permitted action. Measure first-pass admission, repair
+causes, tokens/tool calls and stale/missing site frequency as baseline, without invented success thresholds.
+Local targeted tests, static/format and no-new-red gate comparisons are necessary; live host evidence and S0 are
+separate and cannot be inferred from fake executors, a documentation change or a local green.
 
 **Bounded planning questions — both resolved 2026-11-22.** Q-V2-ACC-1: the test root is fixed at `worklogs/<slug>/acceptance/tests/`, the trusted external inputs (workspace `pytest.ini`, runner, toolchain) are bound by digest at seal, and the transitive-import half stays a **named residual** rather than a closed gate — an import that reaches outside the closure is pinned, so a change to it invalidates the seal instead of silently changing what ran. Q-V2-ACC-2 = **D-V2-10**: every CT is discharged exactly once at admission; refusal there is the repair trigger, and the seal refuses while any contract is uncovered. Neither may become a free-text exception or a newly invented reviewer gate. The fixed `acceptance/tests/` root, artifact C and mode A remain selected; no hash-only custody and no second runner.
 
@@ -584,6 +978,15 @@ Before final W4 suite freeze, STEP10's package owner must:
 3. Run `python scripts/check_execution_e2e_coverage.py` and artifact checks after mapping changes; retain frozen producer counts/keys unless authorized reviewed revision. Unmapped producer, altered frozen key, or changed baseline without authorization fails, not a waived result.
 4. Execute only in W4, after W3 closes: fresh-fetch/freeze approved `origin/main` candidate SHA on clean approved host; perform the sole approved `AUTO_STASH=0 SKIP_TESTS=1 SKIP_UV_SYNC=1 PRUNE=0 fa update`; record exit, running image SHA/digest/config/profile/healthy status and explicit in-container CLI/core-import smoke. Then freeze image; run reviewed suite with `FA_REQUIRE_EXECUTION_HOST=1`, including unmocked direct+nested witnesses, real clean-readiness test, every reviewed `tests/integration/` host case, and this V2 witness. No rebuild/update during suite. Missing host/cgroup/image/opt-in prerequisite is failure, never skip. Capture authoritative project revision, plan version, AcceptanceBundle identity, exact verifier revision/digest, status ticks, tool result, safe diagnostics and no-effect evidence for refusal controls.
 
+**Ledger append host E2E obligation (NEW, not registered):** add a reviewed live-host case to the W4 package
+that observes a real permitted ledger append through its production author/authority path and verifies the durable
+revision, exact appended content and preservation of prior entries after a fresh read; include unauthorized write,
+rewrite/truncation and failed/uncertain publication controls with authoritative no-effect or explicit uncertainty.
+Prove producer and caller/EDGE via local mutation tests. Whether the case can append *after* admission and which
+ledger is authoritative is gated by Q-V2-LEDGER-1; do not invent a post-seal writer or waive custody. Record actual
+host evidence in the worklog ledger, distinguish test artifacts from project ledger, and map the actual producers
+through the reviewed protocol above.
+
 **Host exit:** independently reviewed PASS for installed image identity/health/smoke and all required cases, including the V2 witness; reviewed fixture/package/producer mapping frozen before execution; no simulated/local evidence substituted. Until that exact run exists, mark NOT RUN/OPEN. W4 remains separate from STEP9B plan completion and Arena-local slice DoD.
 
 ## 5b. Cross-slice failure policy and evidence semantics
@@ -622,7 +1025,7 @@ This linked plan fixes a lightweight V2 `open-questions.md` table (6 compact fie
 | Q-V2-ACC-1 | **RESOLVED 2026-11-22 = config inside the root, plus a named residual (last cell).** Prove the transitive helper/config closure is inside `worklogs/<slug>/acceptance/` or specify the smallest trusted external pytest config/runner/toolchain inputs to pin, plus enforceable existing authority budgets for file count, per-file/aggregate bytes, path length and depth. | SLICE3; test root is selected. Dynamic/unbounded imports and ambiguous plugins fail closed; do not add a runner. | **Closed as code, with the residual named.** The runner config is *inside* the sealed root, not an external pinned input: `acceptance_closure.ACCEPTANCE_INI` requires `pytest.ini` at the root (`:223 missing-pytest-ini`, `pytest-ini-invalid`) and refuses any key outside the allowlist (`:266 validate_pytest_ini`), and the scaffold ships it with the project (`project_scaffold.py:152`) — so the digest covers the file the run actually reads. **Residual:** transitive *imports* are not enumerated; the closure carries what the planner declared, and an import reaching outside `acceptance/` fails closed at collection rather than being silently trusted. No runner added. |
 | Q-V2-ACC-2 | **RESOLVED 2026-11-22 = refuse at admission (D-V2-10).** Not "waive", and not "only at seal". A `TEST_REQUIRED` contract with neither a selector nor a disposition is refused where the plan is admitted, because a refusal there *is* the repair trigger (`bootstrap-invalid-metadata` → one authoring repair → re-admission), and because the seal must assert the consequence rather than discover it. `HARD + NON_EXECUTABLE` stays legal: the disposition pipeline exists precisely for critical unobservable claims, and refusing it would leave the mechanism only for claims nobody cares about. Its residual — the caller grants a *reason*, and the planner chooses *which claim* carries it — is recorded with its mitigation in S2 (attested ids, reason and owner written into the seal and the run report). The measurements that made the old wording untenable: a `SOFT`+`TEST_REQUIRED` contract with no selector is admitted and grades `UNCOVERED`; `KIND` is read in exactly one place and only to exempt; `mint_seal` mints happily with `attested=()` and records no contract total; three tests encode the hole deliberately. | SLICE1 (parser policy), SLICE2/3 (seal and route); implemented by S1–S2 in §8. No waiver for a test the planner did not write, no free-text exception, no new reviewer gate. Measurements: [evidence-model-audit-2026-11-21.md](evidence-model-audit-2026-11-21.md); cross-review and reproductions: [i03-external-design-review-2026-11-22.md](i03-external-design-review-2026-11-22.md) §3, §6, Appendix A. | |
 | Q-V2-STATUS-1 | **RESOLVED 2026-11-20 = projection outside the sealed bytes (option A).** Ticks live in a harness-written status record plus a deterministic human-readable projection; the sealed plan bytes never change on a tick and validation never reads the status record. Chosen because a single agent must learn slice/step state in one read instead of filtering a multi-thousand-line ledger, and because tick state must not be able to influence admission. | SLICE4b/5; the status record is authority-owned and revision-referencing, never in `acceptance/`, never an admission input. No re-admission/re-seal per tick. | |
-| Q-V2-MODEA-1 | **RESOLVED 2026-11-20 = B (detection, D-V2-6).** File tools are prevented through `RootedViewIO.protected_paths`; the shell half is not blocked and does not need to be: a write that reaches the closure is byte drift, every verification entry point proves the closure digest first, and a drifted closure yields no verdict. Chosen because it leaves the approved security profile and every W4 digest that pins it untouched, and because the property that matters is "no result can come from bytes that differ from the seal", not "the coder cannot type the command". | SLICE3 CT-3.3, CT-3.6; no profile change, no submount, no second seal. | |
+| Q-V2-MODEA-1 | **RESOLVED; amended 2026-11-23 by E657.** True read-only acceptance for coder shell and file tools is required, with authority-private seal and revision-backed projection as primary route; isolated immutable payload is mandatory if that route cannot be proved. The earlier shell drift-detection-only resolution is superseded. | SLICE3 CT-3.3/3.6, STEP9A B1; actual Docker host proof remains W4. | |
 | Q-V2-EVIDENCE-1 | **RESOLVED 2026-11-22 = A (D-V2-12).** **Do the four ratified disposition reasons belong in one bucket?** `HOST_READINESS`, `DEPLOYMENT_IDENTITY` and `DURABILITY_POWER_LOSS` are *deferred executables* — each becomes checkable in a named place (a host probe, an image digest, a fault-injection test); only `OWNER_APPROVAL` is untestable by construction. Today all four are `NON_EXECUTABLE` + a caller's grant, so "we cannot run it here" and "nobody can ever test this" cost the same human signature. Options: **(A, recommended)** replace the severity axis with a closed *route* axis `EVIDENCE: TEST | HOST_PROBE | APPROVAL`, each naming its artifact — a probe file plus host label, an image digest, or the approval lane — and let admission check the artifact exists; a `HOST_PROBE` claim is `pending` (a debt that blocks deploy) rather than `attested` (a decision that does not). **(B)** keep one bucket and only narrow the grant (contract id + claim hash + expiry, per P4-8). **(C)** status quo. A/B differ in what the planner is allowed to be wrong about: with B it still declares "unprovable", with A it declares "provable elsewhere" and the pointer is checkable. Ratified as A: the record half (route, artifact, owner, `reviewed_at`, scope digest, `pending` beside `attested`) lands in S2's single schema bump, the authoring half (`ROUTE:` replacing the two-valued `EVIDENCE:` axis on invariants, the prompt example and the grammar table) lands with S6/D-V2-11 because it changes what the model writes and must arrive with the one table. A also re-scopes the S0 host probe from a wiring prerequisite to an evidence type. |
 | Q-V2-S0-1 | **Where does the S0 managed-executor probe live, and what counts as proof?** The plan names "the managed-executor probe at `acceptance/tests/`" and stops there: it does not say whether that is a *repo* test that opens a real managed view through the authority and runs one sealed pytest command inside it, a probe inside a **fixture project's** acceptance closure exercised by a live `fa invoke-workflow` run, or both. The stakes are not stylistic — S0 gates SLICE3 wiring (nothing may depend on the pinned substrate before something proves it actually executes sealed bytes), so the answer decides what "SLICE3 has started" means. Measured 2026-11-22: this environment has **no container runtime** (`docker` and `podman` absent, no `/var/run/docker.sock`), so the probe can be written here and cannot be *run* here. Options: **(A, recommended)** a repo test `tests/test_ai_native_managed_substrate_probe.py` marked `xfail(strict=True, reason="requires the W4 Docker host: managed executor + approved profile")` — the repo's V4 rule allows exactly this, `strict` makes the host run fail loudly if the probe stops working, and the file carries the exact command to run it; **(B)** no repo test: a documented manual host check plus a ledger entry, and SLICE3 wiring begins with the real run; **(C)** only the fixture-project closure probe, which needs a live planner run first and therefore cannot gate SLICE3 — it *is* SLICE3. Senior take: A now and C as the live evidence once a host can run it; **RESOLVED 2026-11-22 = A.** Ratified by the operator's direction to finish the remaining work after the recommendation was presented (and after the transport measurement in E612 showed B's premise — an in-process run without a container engine — does not exist). Landed as `tests/test_ai_native_managed_substrate_probe.py`; the host XPASS and marker removal remain owed on W4. B leaves nothing in the tree that would notice the substrate breaking. **Transport answer measured 2026-11-22 (E612), which closes the interesting half of this question:** a Docker-free, in-process path to a real managed command does **not** exist, so the probe is host-only by construction and option A is not a concession to the sandbox. `backend.CellBackend` (`:95`) is built over `DockerEngine`/`DockerCells` (`:20`, `:113`) and every RUN goes through `self._cells.launch_new` (`:252`, `:290`); both fallbacks are ruled out in the modules' own words (`supervisor.py:288` "no … host-shell fallback", `service.py:7` "no host-side runner"), and `DockerUnavailableError` is caught only to fail honestly (`:266`, `:305`, `:493`, `:527`). The harnesses that look like they run a cell do not: `test_execution_composition._configure_local_cell_backend` points the authority at `test_execution_docker.Endpoint`, a fake Docker unix socket that answers the HTTP API and records calls, so `test_managed_workflow_e2e.py` proves the protocol rather than the execution. The option-A probe (written, unrun, unlanded) is parked verbatim at `notes/s0-managed-substrate-probe-draft-2026-11-22.md` with its host command. | Blocks SLICE3 wiring start. | |
 | Q-V2-SLICE3-1 | **RESOLVED 2026-11-22 = one append-only attempt log (the second half of this row).** What artifact does a sealed verification write? `write_verification` (`workflow_controller`) persists a `PlanVerification` whose per-slice record is built from the planner's own `verify` commands — the thing CT-3.6 retires on the V2 route. A sealed run produces `SealedVerification` (seal, closure digest, both revisions, sealed nodeids), which is a different shape and answers a different question ("did the sealed oracle execute against this candidate" vs "did the slice's declared commands pass"). Options: **(A, recommended)** add a sibling artifact `verification-v2.json` written beside the existing one, leaving the legacy artifact untouched and the gate mode logic reading whichever the route produced; **(B)** widen `PlanVerification` with an optional sealed block, so one artifact stays one artifact but every existing reader must be taught to ignore it; **(C)** replace the legacy artifact on the V2 route and accept that anything reading `verification.json` cannot see a V2 run. A is additive and keeps D-V2-8's "publication is not admission" honest, but it is new state and must be argued. | Blocks CT-3.6's wiring half. **Answered 2026-11-22 by going back to entities instead of files:** the minimal surface is **one append-only attempt log** — `VerificationAttempt = RunIdentity + [ClaimEvidence] + [CommandRun] + Verdict` — where the route is a *value* in the attempt (`sealed` / `planner-fence`) rather than a second file. Today's `SliceVerification`/`PlanVerification` lacks the whole `RunIdentity` (seal, closure digest, sealed revision, candidate revision) and attaches per-contract evidence only as mutation verdicts; that absence, not the layout, was the real question. So: not A (two logs, join by attempt index — the join is the drift), not C (destroys the legacy record operators use to switch to enforce mode), but **B with a different justification**: route-tagged attempt, legacy keys retained for the legacy route. Reasoning in `notes/verification-entities-2026-11-22.md`. **Adversarial pass changed the design (same note, second half):** per-contract rows must fold mutation evidence in, otherwise the artifact joins two structures by contract id; `route` splits into grammar (`v2`/`legacy`) and a per-command `authored_by` (`planner`/`harness`), which turns the rule that the fence never drives a V2 result into a write-time invariant instead of an omission; `claims[]` must cover the seal's total including `attested`/`pending`, or a vanished selector reads as green; a refused attempt must be distinguishable from an empty one; and `candidate_revision_id` must come from the substrate's own view, refused on disagreement (`verifier-revision-mismatch`), rather than believed from the caller. | |
@@ -639,15 +1042,20 @@ This linked plan fixes a lightweight V2 `open-questions.md` table (6 compact fie
 | D-V2-3 | **Status ticks are a projection, not a plan edit** (Q-V2-STATUS-1 = A). | SLICE4b: harness writes one authority-owned status record keyed to the sealed revision and renders the artifact view; ticks never enter `acceptance/`, never change the seal and are never an admission input. | |
 | D-V2-4 | **The coder may propose a test change, never apply one** (Q159 = C). A proposal is a bounded patch artifact outside the sealed tree plus the `DefectReport` (seal, `TEST-ID`, nodeid, assertion); the planner applies it through `acceptance_defect.correct(...)`, which mints the superseding seal and returns the affected tests/kill targets to re-prove. | SLICE3/SLICE4: no new state machine and no new writer into `acceptance/`; the proposal path is a second *input* to the existing correct/uphold decision. Prompts stay the first gate; the proposal path exists so the coder never has to weaken an assertion to make progress. | |
 | D-V2-5 | **Install→seal chain = A′** (Q-V2-BOOT-1). Closure shipped inside the installed revision; seal derived from installed bytes + plan bytes + receipt revision; immutable per-seal files in private metadata plus one atomic pointer; revision pin at coder admission, content checks afterwards; supersede appends rather than overwrites. | SLICE2/SLICE3: no `INSTALLED_UNSEALED` record, no fifth intent kind, no extra recovery branch, and the seal never lives under `worklogs/`. | |
-| D-V2-6 | **Mode A = prevention for file tools, detection for shell** (Q-V2-MODEA-1 = B). `protected_paths` carries every sealed semantic path; shell writes surface as `seal-byte-drift`, and every verification entry point — including incremental and repair-time checks — proves the closure digest before producing a verdict. | SLICE3: no change to `profiles.py` or any approved profile identity; the honest sentence in the plan and in INV-07 is "prevented where the interface allows it, detected everywhere else". | |
+| D-V2-6 | **Mode A = actual read-only file-tool and shell projection** (operator amendment E657, 2026-11-23). The earlier detection-only shell allowance is superseded. Authority-private seal and revision-backed projection are preferred; if not provable use isolated immutable payload. Drift/publication checks are supplementary. | STEP9A B1, SLICE3 CT-3.3/3.6; profile/mount changes may be required and must be verified locally and on W4 host. | |
 | D-V2-9 | **Planner-as-writer, scaffold-inside-the-stage** (ratified 2026-11-21). The planner holds a WRITE `PROJECT` view and authors the documents; the harness writes only the scaffold, inside the same stage, through the same port; one stage publication produces the project; the bundle/`install_project` path is retired for create-new. See §2 "D-V2-9.1–9.6" for the mechanism and the authoring split. | SLICE2 CT-2.3/2.7/2.8; supersedes D-V2-7 and its ordering; P2-4 owns the deletion list. | |
 | D-V2-8 | **Publication is not admission** (ratified 2026-11-21). Under D-V2-9 the plan is committed to canonical history *before* it is validated, because the planner writes the artifact and the ordinary stage publication commits it. Admission remains the sole gate to coder. A revision holding an unadmitted plan is an audit fact with no consumer: no coder dispatch, no seal, no verification, no reader pin that presents it as the plan of record. A refused run therefore leaves either no project (stage rejected) or a blocked project with an unadmitted revision (repair budget exhausted) — never a half-valid state that looks approved. | SLICE2 CT-2.9; the revision history must not be read as "the plan was valid from the start", and no component may treat "published" as "admitted". | |
 | D-V2-10 | **Evidence totality, and `KIND` deleted** (ratified 2026-11-22; answers Q-V2-ACC-2). Every admitted CT is discharged exactly once — an executable selector resolving to one collected nodeid, or a caller-granted typed disposition — and no label exempts a contract. `KIND` leaves the MVP grammar, `PRESERVATION` is never dispositionable, and the seal records the contract total, attests every contract, and refuses to mint while any is `UNCOVERED` or has no owner. `HARD + NON_EXECUTABLE` stays legal; the residual (the caller grants a reason, the planner picks which claim carries it) is mitigated by recording attested ids, reason and owner in the seal and the run report. | SLICE1 policy and field removal; SLICE2/3 seal mint on the route; the three tests that encode the hole are rewritten with their rules named. No waiver for a test the planner did not write. | |
 | D-V2-11 | **One machine-readable grammar table, and the doc triad moves atomically** (ratified 2026-11-22). `notes/artifact-schema-and-grammar.md` is the single V2 source, but it is still the V1 contract: measured 2026-11-22 it holds 0 occurrences of `AI-NATIVE-PLAN-V2`, 0 of `KIND:` and still teaches `TESTS:`. The rule vocabulary is split across three places that disagree — `plan_v2` emits rule codes, `admission_schema.ADMISSION_RULES_V2` (`:71`) has no `plan-v2` name, and `contract_id` (`admission_schema.py:169`, `CT\d+[a-z]?`) cannot carry the `CT-<slice>.<n>` ids the parser produces. | SLICE1: schema, the three skills, their `INJECT.md` surfaces and `tests/test_skill_grammar_emit.py` change in one commit, and the prompt's worked example must parse. Until then no new contract is designed against the document. | |
 | Q-V2-SLICE3-4 | **RATIFIED 2026-11-22 = A (operator), implemented — a declared kill target that never runs must not look like "none declared".** The V2 route passes `kill_required=()` unconditionally, correctly, because `KillTarget(target_id, ct, test_id)` carries no *operator*, and — more precisely than this row first said — no agreed shape for `target_id` either (the authoring prompt teaches `path::symbol`, every fixture uses a dotted id; Q-V2-SLICE3-5), so nothing here is executable (F10 item 5). The artifact then records `kill_required: []` even for a plan that declares `KILL-TARGETS  KT-1 -> CT-1.1, TEST-1.1`, so absence of mutation evidence and absence of a declared target are the same bytes — F3's shape, one field over, and the reason F1 was called the worst defect. Options: **(A, recommended)** record the declaration without claiming it ran — `kill_declared: [{target_id, ct_id, test_id, executed: false}]` on the attempt and in the artifact, `proven` unchanged, and the schema bump shared with N3; **(B)** pass the declared CT ids as `kill_required` so the attempt refuses `claim-mutation-missing` — honest but it blocks every plan that declares a target until `run_kill_checks` exists (F10 item 5), i.e. a permanent refusal is traded for a silent gap; **(C)** status quo with the gap named in the run report. A and B differ in which party is asked to be patient: with A the report tells the truth and the coder keeps working, with B the pipeline stops on a field the grammar only uses for attribution. | SLICE3 (artifact, **additive — no schema bump**: `verification.json`'s envelope is versioned and the new keys live inside one attempt entry, and N3's `attestations` ride the same change; the earlier "one bump with N3" was not needed and would have broken readers for nothing); `run_kill_checks` stays unbuilt until the grammar can express an executable mutation (Q-V2-SLICE3-5). | Measured 2026-11-22: `grep kill_required src/fa/inner_loop/workflow_controller.py` → one call site, literal `()`; artifact key `kill_required` is always `[]` on V2; audit table in [verification-entities-2026-11-22.md](verification-entities-2026-11-22.md) §"F1–F9 closure audit". |
 | Q-V2-SLICE3-3 | **RESOLVED 2026-11-22 = A (operator): one axis, one spelling.** Two vocabularies described the same fact — did the mutation die? — and they disagreed on case: `SliceVerdict` (`proven`/`vacuous`/`error`) versus `kill_attribution.ATTRIBUTION_VERDICTS` (`PROVEN`/`VACUOUS`/`ERROR`). Measured before the fix: `ATTRIBUTION_VERDICTS` was exported and read by nothing (no validation inside `KillAttribution`), and `MutationEvidence` refuses anything outside `MUTATION_VERDICTS` (lowercase), so the day CT-3.4/3.5 wired attribution into the attempt, the honest outcomes were a hard `mutation-invalid` on a correct proof or a silent `False` from comparing `"PROVEN"` to `SliceVerdict.PROVEN` — F1's exact shape, one entity over. Options were **(A, chosen)** unify on `SliceVerdict` and derive the constant; **(B)** keep the uppercase spelling with one derived set and one conversion function; **(C)** status quo plus a guard test. A won because there were zero production consumers and zero stored artifacts, so the change was free exactly then and a migration later. `NODE_OUTCOMES` was **not** merged: `PASSED/FAILED/SKIPPED/MISSING` describe one run, not a verdict (no verdict counterpart exists for `MISSING`), so it is typed as its own `StrEnum` with the set derived from it. | SLICE3 (before CT-3.4/3.5 wiring); no artifact, grammar or prompt change. | Landed: `kill_attribution.py` (`NodeOutcome`, derived `NODE_OUTCOMES`/`ATTRIBUTION_VERDICTS`, `KillAttribution.verdict: SliceVerdict` with `kill-attribution-invalid`, `NodeRun` validating `kill-run-invalid`); bank 35 passed, 9/9 mutants killed; `tests/test_ai_native_kill_attribution.py::test_an_attribution_verdict_is_the_verdict_the_attempt_accepts` is the bind that stops the third spelling appearing. |
-| Q-V2-SLICE3-5 | **OPEN — what shape is `TARGET-ID`, now that it is on the path to being executable?** Measured 2026-11-22: the field is an unconstrained string ≤ 256 chars (`plan_v2.py:522–530`); the authoring prompt *teaches* `TARGET-ID: src/widget.py::parse` (`prompt.py:1299–1300`); every test fixture writes a dotted id (`publication.publish_plan`, `tests/test_ai_native_plan_v2.py:121`, `tests/test_ai_native_kill_attribution.py:341–355`); and `kill_attribution._binding` never reads it as a path — it is a label there. So one field means "a site" to the planner and "an opaque id" to the tests, and no runner can be specified against it: a site is not a mutation either (it still needs an operator), and a label is not a site. Options: **(A, recommended)** `target_id` becomes `path::symbol`, validated to resolve inside the writable scope, and the operator arrives as its own field (`MUTATION: delete-call`, `return-none`, …) in the same grammar bump; **(B)** keep `target_id` opaque and carry the whole instruction in one free-text `MUTATION: <operator> <path>::<symbol>`, cheap to author and parseable only by convention; **(C)** retire `KILL-TARGETS` from V2 until the grammar can express an operator, rather than guess its meaning. | SLICE3 groundwork + SLICE1 grammar bump (D-V2-11: schema, parser, prompt and skills move atomically). **Second axis in the same decision — obligation:** V1 *required* a directive for every `FUNCTIONAL` contract (`slice_verification.validate_kill_directives` → `kill-directive-missing`, CT54) and exempted `CONSTRAINT`/`PRESERVATION`; the V2 parser requires nothing (`plan_v2._admit_kill_targets` only validates rows that exist, `:610–615`). So today a `FUNCTIONAL` contract on the V2 route can be `proven` with no mutation ever declared — strictly weaker than the frozen legacy route. Whatever shape is chosen, the obligation has to be answered with it, or the shape is a decoration. | Operator direction 2026-11-22: the mutation operator ("option D" of Q-V2-SLICE3-4) is prioritised above the remaining S4/S5 work, so this row decides what "executable" means *before* any runner is written. Nothing here changes until the operator answers: A and B differ in how much the planner can get wrong, C in whether the report can say anything at all. |
-| Q-V2-SLICE3-6 | **OPEN — how does a mutation reach the pinned read-only cell?** Revealed while scoping Q-V2-SLICE3-5's "option D" (the option the operator prioritised). The existing mutation engine is **host-side by construction**: `mutation_overlay` builds a throwaway tree with `tempfile.mkdtemp` on the controller host and points `PYTHONPATH` at it (`slice_verification.py:1390–1416`), and `_assert_overlay_wins` proves the mutated module is the one imported. The V2 oracle runs through `ManagedVerifyCommandExecutor`, which forwards only harness markers (`_MANAGED_ENV_MARKERS`, `:569–579`), refuses to forward the caller's environment, and executes with `workdir=cwd` inside the pinned read-only view — so a host `/tmp` overlay is simply not there. **Correction (2026-11-23, source-measured):** "host-side by construction" is true only of the non-managed path — `_run_kill_check` already dispatches to `_run_inband_kill_check` whenever `executor.writes_are_visible is False` (`slice_verification.py:2101–2114`), and that path builds a self-contained cell-side bootstrap (`_build_inband_kill_command`, `:1873`) that copies `src` (+`scripts`) into the cell's scratch, writes the mutated bytes, proves provenance with `_PROVENANCE_PROBE`, runs pytest and returns JUnit in-band. What is missing is narrower, and named with addresses in `notes/q-v2-slice3-5-6-blockers-and-context-brief-2026-11-23.md` §3.2: no baseline run, `KILL_CHECK_COMMAND` instead of the sealed argv, no `WorkspacePort` on the sealed route, `run_node_oracle`'s report written to a host temp directory (`kill_attribution.py:265`, so on a managed executor every baseline reads as `MISSING`), and `_junit_block`'s exactly-one-block rule (`:840–843`), which makes two runs two commands rather than one. `verify_sealed_acceptance` already refuses a host-shaped substrate (`verifier-substrate-required`), so the V1 composition cannot be reused as-is. Options: **(a, recommended)** a harness-owned cell-side bootstrap — the gate builds one self-contained command that copies the candidate code and the sealed closure into the cell's private scratch, applies the same pure AST transform there, proves with the existing `_PROVENANCE_PROBE` that the mutated module is the imported one, and runs the sealed nodeid twice (baseline, then mutated); the command text stays harness-built, so CT-3.6's "no planner-authored command" holds, and a failed probe is `ERROR`, never `PROVEN`; **(b)** ask the authority for a second pinned view of a mutated tree, which needs a published mutated revision and therefore the immutable-payload store D-V2-5 explicitly forbids; **(c)** run the mutation on the host, which is the substrate the F10 fix removed (`verifier-substrate-required`); **(d)** defer the runner and keep Q-V2-SLICE3-4 = A (declared, `executed: false`). | SLICE3 (after Q-V2-SLICE3-5 decides the shape); no authority or profile change is implied by (a) — it uses the scratch the read-only profile already grants (`slice_verification.py:479–489`). | Measured 2026-11-22 in source: `_MUTATION_ROOTS = {"src","scripts"}`; `KillOperator` has exactly two members (`neutralise`, `remove-call`) and `KillDirective` is `(operator, path, symbol, callee)`, parsed from `kill: <operator> <path>::<symbol> [-> <callee>]`; the sealed oracle already exists per target (`kill_attribution.bindings` → nodeid, `run_node_oracle`, `attribute(baseline, mutated)`), so the missing piece is only the *mutated* run inside the cell. |
+| D-V2-13 | **DECIDED 2026-11-23 — rolling-wave planned/deferred mutation binding and explicit TEST-ID.** | SLICE3 B1–B6 specifies behavior, ownership, cutover, gates and tests; no production implementation is claimed. | Operator direction and E630; source anchors and open dependencies in the SLICE3 block. |
+| Q-V2-SLICE3-5 | **DECIDED 2026-11-23 — D-V2-13: explicit CT/TEST obligation plus planned or deferred site binding.** Each executable FUNCTIONAL CT has one mutation check and an explicitly named TEST-ID; coder may propose a late site as untrusted input, harness binds and verifies. Target grammar and implementation contracts are in SLICE3 B1–B6; this supersedes the earlier `TARGET-ID = path::symbol` recommendation. | SLICE3 and atomic D-V2-11 cutover; transport proof and current-increment pre-code diagnostic remain open implementation gates, not further permission to drop the obligation. | Current `KillTarget` has no operator; production still passes `kill_required=()` and records `kill_declared`. |
+| Q-V2-SLICE3-6 | **DIRECTION SELECTED 2026-11-23 — managed harness-owned in-band composition (a), not yet implemented.** Reuse the existing managed overlay, pure AST transform and exact sealed oracle; no host fallback, no second runner. Exact receipt/scratch lifecycle is an engineering proof, not an assumed two-command requirement. | SLICE3 B3–B6; preserve F9, detailed assertion-phase classification, one report per receipt, same pinned revision/closure and observable outcome. | `_run_inband_kill_check` exists; baseline, sealed argv, port plumbing, managed `run_node_oracle` and production composition do not. |
+| Q-V2-ROLLING-1 | **WITHDRAWN 2026-11-23** — active-slice scope was incorrectly inferred from rolling wave. Operator clarified that planning detail advances increment by increment, with later increments outlined. No partial-seal or scoped-verification authority is selected. | Current-increment pre-code collection remains a source-grounded diagnostic in D-V2-13, not an open policy decision about future increments. | `parse_plan` parses one increment; `collect_sealed_tree` runs the current closure before mint. |
+| Q-V2-SEQUENCE-1 | **RESOLVED 2026-11-23 — operator: remove ownership ceremony; actively resolve dependencies toward I03 MVP.** Do the necessary custody/attribution work on existing seams to satisfy STEP9A, preserving its DoD and predecessor order; reconcile new grammar and remaining slice obligations as they are implemented. No review, STEP or host gate is silently marked complete. | Graph/plan binding now has a scoped implementation; seal-to-binding tuple, runner/composition and associated evidence remain open. Finish STEP9A, then recorded independent STEP9B review and remaining local slices/W3, then W4. | Operator clarification and E634; parent I03 STEP9A/STEP9B exit clauses. |
+| Q-V2-PRECODE-1 | **DIRECTION SELECTED 2026-11-23 — retain full pinned pre-code run and classify outcomes honestly.** A planner-authored suitable no-op/known-bad witness can support an assertion-sensitivity claim; a fake is not proof of production behavior, and skip, unexpected exception or absent producer are not sensitivity evidence. The complete STEP9A gate and actual receipt identity remain to be implemented/proven. | Future concrete fresh-project fixture must test viability without planner knowledge of future private seams. If impossible, scope a replan for an explicit producer-absent state and later mandatory checks; do not silently switch to collect-only or relax custody. This direction does not close STEP9A, B1 or the later workflow. | E638 diagnostic, source audit and E639 operator decision. |
+| Q-V2-LEDGER-1 | **OPEN — ledger append after admission.** D-V2-9 calls the planner ledger body append-only, while the same section treats the admitted ledger as immutable and CT-3.3 protects the project tree from coder writes. A host test cannot infer who may append after seal or whether this changes the admitted revision. | Blocks any claim that post-seal project-ledger append is supported, not ordinary run-scoped verification evidence. A: only planner-owned pre-admission appends, later changes use a new validated revision; B: a distinct authority-owned append-only runtime evidence journal outside sealed semantic bytes, projected as needed; C: another explicit lifecycle retaining seal identity and custody. Select only after source audit; no automatic writable exception. | D-V2-9 authoring split and post-admission immutability; CT-3.3; operator request for live-host ledger-append E2E. |
 | D-V2-12 | **Evidence routes: "cannot be tested here" must name where it can be tested** (ratified 2026-11-22; answers Q-V2-EVIDENCE-1 = A). The four disposition reasons are not one bucket. `HOST_READINESS`, `DEPLOYMENT_IDENTITY` and `DURABILITY_POWER_LOSS` name a place where the claim *is* checkable — a host probe, an image identity, a fault-injection case — while only `OWNER_APPROVAL` is untestable by construction. Under one bucket a reviewer's "we cannot run this in the sandbox" and a planner's "nobody can ever test this" cost the same signature, and a cheap signature is the `KIND: SOFT` hole with better syntax. So the route is a closed axis derived from the reason — `HOST_READINESS`/`DEPLOYMENT_IDENTITY`/`DURABILITY_POWER_LOSS` → `HOST_PROBE`, `OWNER_APPROVAL` → `APPROVAL` — and the route decides the **kind** of artifact the caller must name: for `HOST_PROBE` a probe path inside the sealed acceptance closure plus a host label (`probe:<path>@host:<label>`), for `APPROVAL` a doc digest, an issue or a review (`doc:|issue:|review:`). `plan_admission.parse_dispositions` enforces the reason↔kind pairing, so "host readiness" cannot be discharged by a document that says nothing about a host; `mint_seal` proves the probe path is in the closure, records route, artifact, owner, `reviewed_at` and a scope digest over the invariant and contract text it attested, and lists such contracts as **`pending`** — a debt that blocks deploy — beside `attested`, which stays the set of contracts a named party carries. Invalidation is the rule that keeps this from being a bypass: a plan edit invalidates the seal through `plan_sha256`, `mint_seal` now refuses a graph whose bytes are not the plan bytes handed to it (so a scope digest can never describe a plan nobody sealed), and the scope digest names exactly which sentence was attested, so a re-review can be shown to cover the new text. The authoring surface (`ROUTE:` on invariants) is S6/D-V2-11; no route removes the requirement that a named party carries the claim, and `APPROVAL` is the only route with no artifact to check — which is what makes it the expensive one. |
 
 Two consequences of D-V2-1/D-V2-2 that the implementation slices must state explicitly: the legacy module
@@ -657,10 +1065,12 @@ negative control (so its absence is proven, not asserted).
 
 ## 8. Implementation sequence and local acceptance gates
 
-1. Confirm STEP9 and STEP9A close with their actual evidence before implementation. STEP9A's exact custody/mapping controls are dependencies, not repeated implementation authorization.
+The dated progress paragraphs below are historical snapshots, not assertions of current route or fresh test results; D-V2-13 and the latest ledger govern remaining work.
+
+1. STEP9 is locally closed (E556/E558); confirm STEP9A closes with its actual evidence before new-slice implementation. STEP9A's exact custody/mapping controls are dependencies, not repeated implementation authorization.
 2. Implement SLICE1; run its named local command and producer/EDGE kill checks. No dependent cutover until V2 parser/admission gate is complete.
 3. Implement SLICE2 as **D-V2-9** (P2-4): delete the payload/renderer layer, plumb the authoring dispatch and its write allowlist, write the scaffold inside the stage, add the metadata cross-check and the `project_exists` mapping, then rewrite the prompt. Keep D-V2-5's revision-bound seal mint. Prove slug no-clobber (`project_exists`) and the rejected-stage-leaves-nothing property before touching the prompt.
-4. Implement SLICE3 and prove full closure, mode-A projection and exact attribution before coder can consume acceptance tests. **Recorded deviation (2026-11-22):** the route now consumes sealed acceptance claims while exact attribution is still unwired (`kill_attribution` has no production caller). What keeps that honest rather than a hole is Q-V2-SLICE3-4 = A — a declared target is recorded with `executed: false` and the artifact names the gap — and the exit criterion is that each such target moves to `kill_required` the day the grammar can express an operator (Q-V2-SLICE3-5, prioritised by the operator on 2026-11-22 above the remaining S4/S5 work). **Q-V2-ACC-2 is RESOLVED (D-V2-10)** and implemented by S1 before CT-3.1 is written; **Q-V2-ACC-1 is closed as code plus a named residual** (the transitive-import half is pinned by digest and fails closed, not enumerated) — its §7 row carries both; **Q-V2-MODEA-1 is RESOLVED = B (D-V2-6)**, so CT-3.3 is prevention for file tools and detection for shell, and no profile change is implied.
+4. Implement SLICE3 and prove full closure, mode-A projection and exact attribution before coder can consume acceptance tests. **Recorded deviation (2026-11-22):** the route now consumes sealed acceptance claims while exact attribution is still unwired (`kill_attribution` has no production caller). What keeps that honest rather than a hole is Q-V2-SLICE3-4 = A — a declared target is recorded with `executed: false` and the artifact names the gap — and the exit criterion is that every executable FUNCTIONAL CT moves to `kill_required` only with the D-V2-13 planned/deferred binding and real runner wired; no executable obligation is silently proven without mutation. **Q-V2-ACC-2 is RESOLVED (D-V2-10)** and implemented by S1 before CT-3.1 is written; **Q-V2-ACC-1 is closed as code plus a named residual** (the transitive-import half is pinned by digest and fails closed, not enumerated) — its §7 row carries both; **Q-V2-MODEA-1 is RESOLVED, amended E657**: CT-3.3 requires actual prevention for both interfaces, with fallback if unprovable; a profile change may be necessary.
 5. Implement SLICE4 roles/questions; status tick producer is blocked until the distinct design gate in §2 has a source-proven, revision-safe resolution. Cover every actual dispatch path and caller edge.
 6. Implement SLICE5 local real composition only after SLICE4's design gate closes; test success/refusal matrix and record local-only evidence. Then finish reviewed E2E package/mapping updates before suite freeze; host test remains unrun until W4.
 7. Every slice local DoD is independently reviewed and evidenced before remaining STEP10/W3 work. Broad baseline failures/skips remain their real disposition under E544; do not claim pass. Do not begin W4 before W3 closes.
@@ -688,7 +1098,7 @@ site passes exactly those ids to `verify_plan` (`workflow_controller.py:1757` vi
 `verify_plan(PlanIds(), root=<tmp>)` → `plan commands: ()`, `slices: ()`, `errors: ()`, **`blocking: False`** —
 so enforce mode reads a stage that measured nothing as a pass, today, on the only forward grammar. This is
 strictly worse than the F9 guard (which cannot even fire: V2 `KILL-TARGETS` are `KillTarget(target_id, ct,
-test_id)` attribution, whose `TARGET-ID` is an unconstrained string — the prompt teaches `path::symbol`, the fixtures use dotted ids — and which carries no operator, so nothing is executable until Q-V2-SLICE3-5 decides the shape), and it fixes the order of work: projection →
+test_id)` attribution, whose `TARGET-ID` is an unconstrained string — the prompt teaches `path::symbol`, the fixtures use dotted ids — and which carries no operator, so nothing is executable in the current code; D-V2-13 now specifies its planned/deferred successor), and it fixes the order of work: projection →
 substrate-named revision → controller branch on the snapshot grammar (not on "are there commands") → artifact
 writer. Recorded in `notes/verification-entities-2026-11-22.md` (F10), including the correction that F9 did not
 make today's V2 results false.
@@ -802,13 +1212,13 @@ For every implementation slice, follow `/tests-writing` (active skill): existenc
 - **Confirmed install behavior (Q-V2-BOOT-1 resolved by D-V2-5; audit `notes/q-v2-boot1-install-seal-audit-2026-11-20.md`):** `prepare_bundle` is currently only a fixed three-file private validated bundle (`publication.py:507–553, 664–701`), distinct from STEP9A's `AcceptanceBundle`. Install is no-clobber/forward-only and has recovery that uses the exact installed tree to finish the revision (`workspace.py:3485–3554, 5385–5422`). Not proven is how V2's expanded closure is staged and how a crash after recovered install but before final AcceptanceBundle minting resumes against that exact operation/revision. Solved as A′: closure inside the installed revision, seal derived from installed bytes + plan bytes + receipt revision, immutable per-seal files with one atomic pointer, revision pin at admission and content checks afterwards.
 - **Confirmed current caller behavior requiring a scoped V2 fix:** after child lifecycle settlement, `workflow_tool.py:894–904` unconditionally returns `ToolResult.ok` with `exit_code` and `status`; there is no success gate there for child exit 0 plus terminal `DONE`. CT-2.5 now requires the V2 new-project route to enforce that gate and map child failure safely, while leaving `AUTO_SELECT_EXISTING` semantics unchanged.
 - **Confirmed defect — V1 validators would judge V2 documents (found in the 2026-11-20 adversarial review):** `snapshot_from_bytes` always runs V1 `extract_plan_ids` (`plan_admission.py:160–169`), whose slice regex matches `PLAN-V2` headings verbatim (`plan_ids.py:65`); `_validate_plan_admission` then runs `precheck`, `validate_kill_directives` and a `zero-slices` refusal unconditionally (`workflow_controller.py:3058–3100`). A correct V2 plan would therefore be admitted or refused by V1 rules — precisely the mixed state INV-01 forbids. SLICE1 CT-1.3 now requires that a V2 snapshot never reaches those validators.
-- **Confirmed defect — mode A was overclaimed (same review):** the plan asserted path-level read-only custody, but the only live mechanism protects the plan file (`RootedViewIO(protected_paths=plan_ref.workspace_relative_path)`, `workspace.py:2188–2196`, `2808–2816`), nothing protects `worklogs/<slug>/acceptance/`, and a writable view mounts the whole source read-write (`profiles.py:108–113`), so `run_bash` can write the closure. CT-3.3 now names the real seam and Q-V2-MODEA-1 decides the shell half.
+- **Confirmed defect — mode A was overclaimed (same review):** the plan asserted path-level read-only custody, but the only live mechanism protects the plan file (`RootedViewIO(protected_paths=plan_ref.workspace_relative_path)`, `workspace.py:2188–2196`, `2808–2816`), nothing protects `worklogs/<slug>/acceptance/`, and a writable view mounts the whole source read-write (`profiles.py:108–113`), so `run_bash` can write the closure. CT-3.3 names the real seam; Q-V2-MODEA-1 was subsequently resolved by D-V2-6.
 - **Confirmed defect — the verifier still executes planner-authored shell (same review):** `slice_verification.py:552` runs the planner `verify` fence while §2 forbids planner-authored command text from driving promotion. CT-3.6 now retires the fence on the `PLAN-V2` route, keeping the frozen legacy route only.
 - **No other defect found in reviewed boundaries:** the unified `invoke_workflow` V2 cutover, W2/W3/W4 ordering, STEP9A custody reuse, E2E non-registration boundary, and exact target-to-test mapping are explicitly bounded in this plan. These document-level checks do not establish parser conformance, runtime success, producer-baseline changes, or host PASS.
 
 ## 10. STEP9B plan-only verification and exit boundary
 
-**Plan artifact checks (this task):** linked references resolve; unique slice/CT/TEST IDs; every CT has one primary INV and one exact TEST-ID/nodeid; every planned slice has dependency, producer, caller/EDGE, exact command, local DoD, negative controls and failure behavior; all proposed slices are semantically complete; host witness and final package/index/coverage update obligations are present; no unratified recommendation becomes policy; no baseline/register row is changed; no implementation starts. Run repository document-link validation, I03 execution E2E coverage validation, and `git diff --check`. The `PLAN-V2` parser and its admission rules exist (`src/fa/inner_loop/plan_v2.py`, STEP9A slice 2) but **no production route calls them**; the controller still admits through V1 `plan_ids.precheck` (`workflow_controller.py:3058–3100`). This plan is therefore design input for the wiring, not a claim of production admission, and it must not be passed to V1 `plan_ids.precheck` as a V2 artifact. The canonical V2 grammar source/version binding is specified here as the target of SLICE1; runtime parser conformance is an implementation-slice gate, not evidence furnished by this plan.
+**Plan artifact checks (this task):** linked references resolve; unique slice/CT/TEST IDs; every CT has one primary INV and each executable selector has an exact TEST-ID/nodeid (a CT may have several); every planned slice has dependency, producer, caller/EDGE, exact command, local DoD, negative controls and failure behavior; all proposed slices are semantically complete; host witness and final package/index/coverage update obligations are present; no unratified recommendation becomes policy; no baseline/register row is changed; no implementation starts. Run repository document-link validation, I03 execution E2E coverage validation, and `git diff --check`. Historical note: the original review found no V2 production caller; this is no longer current. `workflow_controller._validate_plan_admission` and `_run_stage` now have V2 admission/verification paths (E620), while D-V2-13 mutation composition remains unimplemented. V1 and V2 validation remain separate. The canonical V2 grammar source/version binding is specified here as the target of SLICE1; runtime parser conformance is an implementation-slice gate, not evidence furnished by this plan.
 
 **STEP9B exit:** complete linked plan and parent/handoff references are reviewed; document/link checks pass; no implementation, migration, deploy, test-suite pass, or host acceptance is claimed. STEP10 remains blocked until all new slices meet Arena-local DoD. W3 and W4 criteria remain exactly as in parent I03 STEP10.
 
@@ -855,3 +1265,124 @@ later entry can close a row instead of re-describing it.
 **Resolved 2026-11-22 (supersedes the paragraph below):** the seal now has a production caller — the create route mints and stores it before any coder is dispatched (`workflow_controller._seal_published_project`, N1, `7b750f5`). "An operator sees a verdict" still waits for a host run, but the gap the paragraph describes is closed. **Original record:** R2's seal half has no production caller yet — `mint_seal` is invoked only from
 `acceptance_defect.py` and tests. "G3 landed for the seal" must not be read as "an operator sees a verdict"; that
 waits for SLICE3's seal mint.
+
+### Current custody audit continuation — E654–E656 (2026-11-23)
+
+E654 hardens local seal-pointer parsing and binds the loaded seal to the pointer, including
+predecessor validation on replay/supersession. E655 bounds shared closure traversal by
+incremental bytes and 4096 entries before returning inventory or closure. Regression,
+mutation and remaining limits are recorded in [ledger E654–E656](../ledger.md).
+Neither change satisfies B1 authority custody: local `.fa` metadata and the writable coder
+shell leave a systemic exposure. The first attempted interim guard was removed after an incorrect context lookup; E657 subsequently implements a tested pre-dispatch refusal. Do not treat V2 coder
+execution as custody-safe or close STEP9A on these patches. Continue B1 with authority-private
+seal and protected execution or the specified immutable fallback, then complete B2–B6;
+independent STEP9B and W4 remain required.
+
+### E657 — operator amendment and interim dispatch fence (2026-11-23)
+
+The operator selected authority-private seal metadata plus revision-backed, genuinely read-only
+mode-A projection (B); isolated immutable payload (C) is mandatory if B cannot be proved.
+This **supersedes D-V2-6's shell drift-detection-only allowance**, including historical
+detection-only wording in CT-3.3. It does not move W4 or require an early live deployment.
+Local tests and Docker request-contract evidence are necessary but do not prove live-host
+mount behavior; W4 remains mandatory. E657's temporary guard refuses V2 coder dispatch in
+both modes until the authority-owned custody and projection are implemented and proven.
+The existing host-workspace `.fa` store is not authority-private. Historical E656's guard
+status is superseded by E657; the store and projection are not yet fixed. STEP9A remains open.
+
+**E658 regression correction:** old bootstrap fixtures discarded the now-required authority
+inventory. They now retain the actual pin/service inventory and substitute only local pytest;
+205 related tests pass. This is not evidence of a live Docker cell or completed B1.
+
+**E659/E660 preparation, not B1 closure:** the legacy seal-store's metadata reads are now
+bounded and refuse final-component links/nonregular files; the foreign-nodeid regression
+fixture was updated for nonce/call-phase reports. Six related modules report 373 passed;
+see [ledger](../ledger.md) for mutants and limits. Workspace-local seal still lacks
+private-authority ownership and safe ancestor binding. The guard is still active; B requires
+the authority-backed seal lifecycle and revision-backed read-only projection/fallback.
+
+**E661 internal authority seam, not B1 closure:** a candidate record can now be stored
+under private workspace/project authority state only after OWNER, current revision,
+settled-view, plan and full file-inventory checks. Replay and project isolation are
+locally tested; supersession remains deliberately refused pending correction authorization.
+See [ledger](../ledger.md) for tests, mutants and durability limits. Collection/semantic
+provenance, loss-of-metadata recovery, integration and genuinely read-only mode A (or C)
+remain open; the E657 dispatch fence must remain in place.
+
+**E662 recovery hardening, still not B1 closure:** absent private pointer plus any
+surviving seal record or unexpected `.fa` entry is now an ambiguous-history refusal, not
+a remint. Full metadata loss cannot be detected by this check; integration and actual
+read-only custody remain open. See [ledger](../ledger.md) for negative proof and scope.
+
+**E663/E664 linked preparation, not STEP9A closure:** authority-local per-project
+started markers now detect loss of a project seal directory while the workspace
+binding survives; total binding rollback/loss remains unprovable. Classified sealed
+assertion failures are now determinate in the existing controller gate, while skip,
+error and mutation uncertainty remain blocking in both modes. See [ledger](../ledger.md)
+for exact boundaries, negative proofs and regression banks. Guard E657 remains active;
+full mode-A custody, managed mutation, end-to-end routing and host proof remain open.
+
+**E665/E666 custody preparation:** the internal authority store now reparses the
+revision's actual plan to reject foreign TEST/CT/selector/attestation scope and
+reuses the canonical closure collector on revision bytes before writing. The
+candidate's purported nodeids and grants are not independent provenance. See
+[ledger](../ledger.md) for negative controls and limits; no service/controller C1,
+mode-A proof or STEP9A closure follows, and guard E657 stays active.
+
+### Q-V2-CUSTODY-RECOVERY-1 — authority state loss / rollback boundary (RESOLVED, 2026-11-23)
+
+**Blocking STEP9A authority custody.** The later operator requirement forbids a silent
+remint when prior seal history cannot be disproved; historical D-V2-5 audit E9 and its
+pointer-absent deterministic-remint rule must not be treated as authorization for that
+case. Existing E663 started marker survives loss of a project subdirectory only: it is
+inside the same workspace binding/state root as the pointer. `WorkspaceAuthority.__enter__`
+creates an absent catalog, `register_existing` assigns a new workspace/revision when no
+binding is loaded, and E661–E666's internal `store_acceptance_seal` accepts a matching
+candidate without external proof of an earlier seal. A local diagnostic with real authority
+and a temporary filesystem sealed a project, deleted the entire protected state root, then
+registered the unchanged canonical project and accepted a different seal under new workspace
+and revision identities. This is an **internal seam diagnostic**, not an exposed wire operation
+or a claim of live coder dispatch: E657 remains in force. A coherent older backup of the
+entire authority state is a separate rollback case; a marker within that backup cannot prove
+it is newest. No host rollback witness was run.
+
+**Historical question and options (resolved below): which independent trust and recovery boundary is operationally
+available?** (A) An independently protected durable workspace-identity/history registry,
+with a rollback-resistant checkpoint where rollback is in scope; require it for existing-root
+registration and fail closed on missing/mismatched proof. (B) Fail closed whenever history
+is unavailable, and provide a separately authorized recovery/rebootstrap process that preserves
+or explicitly accounts for old evidence; a normal missing marker must never authorize mint.
+This still needs a way to distinguish a clean new installation from a coherent old-state
+rollback if the latter is in scope. (C) Another owner-specified independent backup/registry
+and recovery protocol with equivalent no-silent-remint and history guarantees. The engineering
+recommendation is **A plus B's fail-closed recovery**, but the owner must identify the trusted
+host/backup boundary and whether coherent rollback must be detected; inventing an external
+service or declaring an untrusted reset a fresh project would be a policy choice.
+
+Until implementation is proven: do not wire this internal store as seal authority, do not lift E657, and do
+not claim B1/STEP9A or recovery closure. A sound authorized fresh-install proof and recovery
+intent/replay design remain required whichever option is chosen. The immutable-payload fallback
+C is not by itself a history/rollback authority and cannot resolve this question merely by
+copying bytes. W4 must test the chosen boundary, failure and evidence retention; no early host
+run is implied. Existing Q-V2-LEDGER-1 remains separately open only for its dependent ledger
+append scope.
+
+**E668 risk calibration:** this is an exceptional state-loss/restore problem, not an
+observed normal-run failure. The repository's current backup script omits the spec's
+supervisor state path and session workspaces, although actual host backup coverage is
+unknown. Session SQLite/blackboard are session-scoped and event bus is transient; none is
+currently the independent workspace/seal history authority. Before choosing a new external
+registry, evaluate fail-closed fresh-vs-existing lifecycle and consistent backup/restore.
+Full coherent rollback detection is a separate stronger boundary. See [ledger](../ledger.md)
+for source audit; this assessment preceded the resolution below.
+
+
+**Q-V2-CUSTODY-RECOVERY-1 resolution (operator, 2026-11-23):** use the minimal
+authority-owned fresh-provisioning-versus-existing distinction and fail closed when
+seal history is unprovable; no silent remint. Back up and restore project, session and
+supervisor state consistently, and prove the chosen recovery on W4. Fully coherent
+rollback of all state is outside the MVP guarantee; no independent anti-rollback service
+is mandated. This supersedes the historical audit E9 remint allowance and the former
+recommendation to require an external registry. This is a decision, not implementation
+or host evidence: fresh-install provenance, crash recovery, backup protocol and guard
+E657 remain open until implemented and tested. Q-V2-LEDGER-1 remains separate.

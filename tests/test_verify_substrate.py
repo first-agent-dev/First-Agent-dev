@@ -22,7 +22,7 @@ import pytest
 
 from fa.execution import composition
 from fa.execution.cell_worker import serve_once
-from fa.execution.client import ExecutionClient, ExecutionRejectedError
+from fa.execution.client import ExecutionClient, ExecutionRejectedError, ExecutionUnavailableError
 from fa.execution.composition import ExecutionBinding, managed_execution_for_run
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.profiles import ExecutionProfile
@@ -39,7 +39,7 @@ from fa.inner_loop.slice_verification import (
     VerifyCommandExecutor,
     verify_plan,
 )
-from fa.inner_loop.tools.workspace_port import WorkspacePort
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError
 from fa.inner_loop.workflow_controller import (
     WorkflowContext,
     _capture_stage_baseline,
@@ -267,6 +267,28 @@ def test_the_pin_names_the_current_revision_and_keeps_cache_out_of_workspace(tmp
 
     assert client.pin_calls and client.pin_calls[0]["revision_id"] == "rev-" + "3" * 32
     assert client.pin_calls[0]["plan_ref"] is ctx.managed_plan_ref
+    assert len(client.stop_calls) == 1
+
+
+def test_unsettled_reader_invalidates_result_and_suspends_both_capabilities(tmp_path: Path) -> None:
+    class Unsettled(_Client):
+        @override
+        def stop_view(
+            self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None
+        ) -> bool:
+            super().stop_view(namespace, view=view, grant=grant, deadline=deadline)
+            return False
+
+    client = Unsettled(grant=_grant(view=_view()))
+    substrate = None
+    with pytest.raises(ExecutionUnavailableError):
+        with _pinned_verify_substrate(_ctx(tmp_path, managed=_Managed(client, _profile()))) as substrate:
+            assert substrate is not None and substrate.port is not None
+            assert substrate.executor.view_revision_id == _view().base_revision  # type: ignore[attr-defined]
+    assert substrate is not None and substrate.port is not None
+    assert substrate.executor.view_revision_id is None  # type: ignore[attr-defined]
+    with pytest.raises(WorkspacePortError, match="unavailable"):
+        substrate.port.read_file("x")
     assert len(client.stop_calls) == 1
 
 

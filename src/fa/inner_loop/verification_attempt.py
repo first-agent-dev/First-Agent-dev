@@ -18,8 +18,9 @@ writes one, with the rules that make it honest as **constructor** refusals rathe
 conventions:
 
 ======================  =====================================================================
-``claims-total-mismatch``  the attempt must cover the seal's own total (claims + attested +
-                           pending = ``contracts_total``). A short list is not "some passed".
+``claims-total-mismatch``  the attempt must cover the seal's own total (distinct claimed
+                           CTs + attested = ``contracts_total``; pending is
+                           a subset of attested). A short list is not "some passed".
 ``claim-mutation-missing``  a contract that declares a kill target must carry its mutation
                            verdict; ``None`` therefore means "no kill target", never "did not
                            get to it" (F1/F9).
@@ -298,7 +299,9 @@ class VerificationAttempt:
         # The record's coherence is a fact about the record, not about the route: a legacy attempt
         # carries neither list today, so this costs nothing, and a route that starts declaring
         # targets inherits the same rules instead of a second copy of them.
-        covered = {claim.contract_id: claim for claim in self.claims}
+        covered: dict[str, tuple[ClaimEvidence, ...]] = {}
+        for claim in self.claims:
+            covered[claim.contract_id] = (*covered.get(claim.contract_id, ()), claim)
         self._check_kill_targets(covered)
         self._check_attestations()
         if self.route == "v2":
@@ -318,7 +321,7 @@ class VerificationAttempt:
         if any(not isinstance(error, str) for error in self.errors):
             raise VerificationAttemptError("attempt-invalid")
 
-    def _check_v2(self, covered: Mapping[str, ClaimEvidence]) -> None:
+    def _check_v2(self, covered: Mapping[str, tuple[ClaimEvidence, ...]]) -> None:
         """The rules that only bind the route whose oracle is sealed (F2, F3, F8, F9)."""
         identity = self.identity
         if identity is None or identity.seal_sha256 is None or identity.closure_sha256 is None:
@@ -327,25 +330,28 @@ class VerificationAttempt:
             raise VerificationAttemptError("identity-missing-on-v2")
         if any(command.authored_by == "planner" for command in self.commands):
             raise VerificationAttemptError("fence-on-v2-route")
-        if len(covered) != len(self.claims):
-            # One contract with two claims is ambiguous evidence, and it would also let the
-            # totals below add up while a contract is missing.
+        if len({claim.test_id for claim in self.claims}) != len(self.claims) or len(
+            {claim.nodeid for claim in self.claims}
+        ) != len(self.claims):
             raise VerificationAttemptError("claims-total-mismatch")
-        excused = set(self.attested) | set(self.pending)
-        if set(covered) & excused:
+        attested = set(self.attested)
+        pending = set(self.pending)
+        if (
+            len(attested) != len(self.attested)
+            or len(pending) != len(self.pending)
+            or not pending <= attested
+            or set(covered) & attested
+            or len(covered) + len(attested) != self.contracts_total
+        ):
             raise VerificationAttemptError("claims-total-mismatch")
-        # Every contract is accounted for exactly once. ``pending`` is a deploy qualifier, so a
-        # contract that is attested *and* pending counts once -- the seal's own partition
-        # (``acceptance_bundle`` requires ``pending`` ⊆ ``attested``), which is why this is a
-        # coverage count and not a sum of the three list lengths.
-        if len(covered) + len(excused) != self.contracts_total:
-            raise VerificationAttemptError("claims-total-mismatch")
+        if len(set(self.kill_required)) != len(self.kill_required):
+            raise VerificationAttemptError("claim-mutation-missing")
         for contract_id in self.kill_required:
-            claim = covered.get(contract_id)
-            if claim is None or claim.mutation is None:
+            mutations = [claim for claim in covered.get(contract_id, ()) if claim.mutation is not None]
+            if len(mutations) != 1:
                 raise VerificationAttemptError("claim-mutation-missing")
 
-    def _check_kill_targets(self, covered: Mapping[str, ClaimEvidence]) -> None:
+    def _check_kill_targets(self, covered: Mapping[str, tuple[ClaimEvidence, ...]]) -> None:
         """A declared target is attribution, a required one is a mutation: never both (N2)."""
         required = set(self.kill_required)
         for target in self.kill_declared:
@@ -355,6 +361,8 @@ class VerificationAttempt:
                 raise VerificationAttemptError("kill-target-unknown")
             if target.ct in required:
                 raise VerificationAttemptError("kill-target-conflict")
+            if self.route == "v2" and not any(claim.test_id == target.test_id for claim in covered[target.ct]):
+                raise VerificationAttemptError("kill-target-unknown")
         if len({target.target_id for target in self.kill_declared}) != len(self.kill_declared):
             raise VerificationAttemptError("kill-target-duplicate")
 

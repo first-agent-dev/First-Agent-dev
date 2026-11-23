@@ -251,6 +251,7 @@ def _validate_sealed_tree(
     for entry in entries:
         _validate_against_base(entry, base.get(entry["path"]))
     _validate_plan_boundary(entries, base, plan_path)
+    _validate_acceptance_boundary(entries, base, plan_path)
     if purpose is ViewPurpose.MUTATION:
         _validate_mutation_roots(entries, base)
     if _tree_hash(entries) != manifest["tree_sha256"]:
@@ -351,6 +352,39 @@ def _validate_plan_boundary(
             continue
         if _changes_plan_bytes(entry, base.get(path), plan_path):
             raise SupervisorError("INPUT_POLICY")
+
+
+def _validate_acceptance_boundary(
+    entries: Sequence[Mapping[str, Any]], base: Mapping[str, Mapping[str, Any]], plan_path: str | None
+) -> None:
+    """Freeze an existing project acceptance subtree on plan-bound ordinary seals.
+
+    Initial authoring without an admitted plan or an existing acceptance root is
+    unaffected. Corrections require their own authority-controlled reseal path.
+    """
+    if plan_path is None:
+        return
+    parts = plan_path.split("/")
+    if len(parts) != 4 or parts[0] != "worklogs" or parts[2] != "increments":
+        return
+    root = f"worklogs/{parts[1]}/acceptance"
+    if root not in base:
+        return
+    protected_base = {path for path in base if path == root or path.startswith(root + "/")}
+    present = {entry["path"] for entry in entries}
+    if not protected_base <= present:
+        raise SupervisorError("PATH_DENIED")
+    for entry in entries:
+        path = entry["path"]
+        if path != root and not path.startswith(root + "/"):
+            continue
+        prior = base.get(path)
+        if (
+            entry["deleted"]
+            or prior is None
+            or any(entry[key] != prior[key] for key in ("type", "mode", "size", "sha256", "link_target"))
+        ):
+            raise SupervisorError("PATH_DENIED")
 
 
 def _changes_plan_bytes(entry: Mapping[str, Any], base: Mapping[str, Any] | None, plan_path: str) -> bool:

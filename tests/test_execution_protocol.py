@@ -337,6 +337,7 @@ def test_a_writer_view_still_names_the_bytes_it_mutates(purpose: str) -> None:
             Operation.LIST_PROJECT_ARTIFACTS,
             Operation.DIFF_REVISIONS,
             Operation.LIST_PROJECTS,
+            Operation.INVENTORY_ACCEPTANCE,
         }
     ],
 )
@@ -349,6 +350,7 @@ def test_all_v1_operations_keep_their_complete_payloads_and_results(op: Operatio
             Operation.LIST_PROJECT_ARTIFACTS,
             Operation.DIFF_REVISIONS,
             Operation.LIST_PROJECTS,
+            Operation.INVENTORY_ACCEPTANCE,
         }
     )
     req, res = request(op), response(op)
@@ -837,3 +839,29 @@ def test_expired_request_frame_cannot_borrow_command_time(monkeypatch: pytest.Mo
             framed.add_execution_budget(2000)
         with pytest.raises(TimeoutError):
             framed.remaining()
+
+
+def test_acceptance_inventory_is_v2_only_and_has_closed_reply() -> None:
+    req = v2_request(Operation.INVENTORY_ACCEPTANCE)
+    req["payload"] = {"project_slug": "demo-project"}
+    assert decode_request(encode_json(req)) == req
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json({**req, "protocol_version": 1}))
+    reply = {
+        "protocol_version": 2,
+        "request_id": RID,
+        "status": "OK",
+        "error": None,
+        "result": {
+            "revision_id": REV,
+            "tree_sha256": SHA,
+            "entries": [{"path": "tests/a.py", "type": "file", "size": 1, "sha256": SHA}],
+        },
+    }
+    assert (
+        decode_reply(encode_json(reply), operation=Operation.INVENTORY_ACCEPTANCE, request_id=RID, protocol_version=2)
+        == reply
+    )
+    reply["result"]["entries"][0]["extra"] = True
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(reply), operation=Operation.INVENTORY_ACCEPTANCE, request_id=RID, protocol_version=2)

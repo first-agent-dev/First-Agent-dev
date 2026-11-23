@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import shlex
 import tempfile
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -47,13 +48,15 @@ from .acceptance_closure import (
     pytest_argv,
     shell_command,
 )
+from .junit_properties import JUNIT_RUN_ID_ENV
 from .plan_v2 import KillTarget
 from .slice_verification import (
     CommandOutcome,
     CommandResult,
     VerifyCommandExecutor,
+    _gate_subprocess_env,
     inband_junit_command,
-    parse_inband_nodeids,
+    parse_inband_precode_outcomes,
     parse_nodeid_report,
     run_commands,
 )
@@ -116,6 +119,7 @@ class SealedCollection:
     #: The receipt's own command record. A collection that cannot name the command that
     #: produced it is not evidence, and the attempt entity requires provenance.
     command: CommandResult | None = None
+    closure_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,7 +259,9 @@ def sealed_collection_inband_command(bundle: AcceptanceBundle, *, report: str) -
     Exactly one argv element may carry the flag; anything else is refused rather
     than rendered, so the command that runs is always the argv that was checked.
     """
-    return _render_inband(sealed_collection_argv(bundle, report=report), report=report)
+    return "export PYTHONDONTWRITEBYTECODE=1; " + _render_inband(
+        sealed_collection_argv(bundle, report=report), report=report
+    )
 
 
 def _render_inband(argv: tuple[str, ...], *, report: str) -> str:
@@ -298,6 +304,7 @@ def collect_sealed_tree(
     workspace: Path,
     deadline: float | None = None,
     executor: VerifyCommandExecutor | None = None,
+    expected_revision_id: str | None = None,
 ) -> SealedCollection:
     """Collect a sealed tree's nodeids **before** any seal exists.
 
@@ -326,29 +333,44 @@ def collect_sealed_tree(
         raise AcceptanceBundleError("sealed-root-invalid")
     root = require_sealed_root(sealed_root)
     _require_managed_substrate(executor)
+    if expected_revision_id is not None:
+        _require_named_revision(executor, expected_revision_id)
     try:
         closure = collect_acceptance_closure(acceptance_root)
     except AcceptanceClosureError as error:
         raise AcceptanceCollectionError(f"closure-{error.rule}") from None
     argv = _argv_for(closure, root, report=_INBAND_REPORT_NAME)
+    run_id = uuid.uuid4().hex
+    env = _gate_subprocess_env(Path(workspace))
+    env[JUNIT_RUN_ID_ENV] = run_id
     (result,) = run_commands(
-        (_render_inband(argv, report=_INBAND_REPORT_NAME),),
+        ("export PYTHONDONTWRITEBYTECODE=1; " + _render_inband(argv, report=_INBAND_REPORT_NAME),),
         workspace=Path(workspace),
         deadline=deadline,
         executor=executor,
+        env=env,
     )
     if result.outcome is CommandOutcome.ERROR:
         raise AcceptanceCollectionError("collection-error")
     carried = result.inband_stdout if result.inband_stdout is not None else result.stdout_tail
-    outcomes, _detail = parse_inband_nodeids(carried)
-    if outcomes is None:
+    classified, _detail = parse_inband_precode_outcomes(carried, run_id=run_id)
+    if classified is None:
         raise AcceptanceCollectionError("collection-report-invalid")
+    if "other" in classified.values():
+        raise AcceptanceCollectionError("collection-call-error")
+    if "skipped" in classified.values():
+        raise AcceptanceCollectionError("collection-skipped")
+    outcomes = {nodeid: state == "passed" for nodeid, state in classified.items()}
     if not outcomes:
         raise AcceptanceCollectionError("collection-empty")
-    if result.exit_code not in {0, 1}:
+    expected_exit = 0 if all(outcomes.values()) else 1
+    expected_outcome = CommandOutcome.PASS if expected_exit == 0 else CommandOutcome.FAIL
+    if result.exit_code != expected_exit or result.outcome is not expected_outcome:
         raise AcceptanceCollectionError("collection-unusable")
     keyed = _key_nodeids(closure, root, outcomes)
-    return SealedCollection(argv=argv, nodeids=_group_nodeids(keyed), outcomes=keyed, command=result)
+    return SealedCollection(
+        argv=argv, nodeids=_group_nodeids(keyed), outcomes=keyed, command=result, closure_sha256=closure.digest
+    )
 
 
 def collect_sealed_nodeids_inband(
@@ -364,21 +386,32 @@ def collect_sealed_nodeids_inband(
     _require_managed_substrate(executor)
     verify_sealed_root(bundle, Path(workspace) / bundle.sealed_root)
     argv = sealed_collection_argv(bundle, report=_INBAND_REPORT_NAME)
+    run_id = uuid.uuid4().hex
+    env = _gate_subprocess_env(Path(workspace))
+    env[JUNIT_RUN_ID_ENV] = run_id
     (result,) = run_commands(
         (sealed_collection_inband_command(bundle, report=_INBAND_REPORT_NAME),),
         workspace=Path(workspace),
         deadline=deadline,
         executor=executor,
+        env=env,
     )
     if result.outcome is CommandOutcome.ERROR:
         raise AcceptanceCollectionError("collection-error")
     carried = result.inband_stdout if result.inband_stdout is not None else result.stdout_tail
-    outcomes, _detail = parse_inband_nodeids(carried)
-    if outcomes is None:
+    classified, _detail = parse_inband_precode_outcomes(carried, run_id=run_id)
+    if classified is None:
         raise AcceptanceCollectionError("collection-report-invalid")
+    if "other" in classified.values():
+        raise AcceptanceCollectionError("collection-call-error")
+    if "skipped" in classified.values():
+        raise AcceptanceCollectionError("collection-skipped")
+    outcomes = {nodeid: state == "passed" for nodeid, state in classified.items()}
     if not outcomes:
         raise AcceptanceCollectionError("collection-empty")
-    if result.exit_code not in {0, 1}:
+    expected_exit = 0 if all(outcomes.values()) else 1
+    expected_outcome = CommandOutcome.PASS if expected_exit == 0 else CommandOutcome.FAIL
+    if result.exit_code != expected_exit or result.outcome is not expected_outcome:
         raise AcceptanceCollectionError("collection-unusable")
     keyed = _workspace_nodeids(bundle, outcomes)
     return SealedCollection(argv=argv, nodeids=_group_nodeids(keyed), outcomes=keyed, command=result)
@@ -568,6 +601,10 @@ def sealed_attempt(
         )
         for selector in bundle.selectors
     )
+    expected = {(selector.ct_id, selector.test_id, selector.nodeid) for selector in bundle.selectors}
+    actual = {(claim.contract_id, claim.test_id, claim.nodeid) for claim in claims}
+    if len(expected) != len(bundle.selectors) or len(actual) != len(claims) or actual != expected:
+        raise AcceptanceCollectionError("attempt-claims-seal-mismatch")
     try:
         return VerificationAttempt(
             route="v2",

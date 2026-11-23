@@ -355,6 +355,70 @@ class ExecutionClient:
         )
         return _grant(Operation.PIN_READER, result)
 
+    def inventory_acceptance(
+        self,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        grant: GrantReply,
+        project_slug: str,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """Get authority-pinned acceptance inventory; never fall back to host files."""
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or not isinstance(view, ViewRef)
+            or view.access is not Access.READ
+            or view.purpose is not ViewPurpose.PROJECT
+            or view.owner_run_id != namespace.run_id
+            or not isinstance(grant, GrantReply)
+            or grant.view_ref != view
+            or grant.operation is not Operation.PIN_READER
+            or not isinstance(project_slug, str)
+        ):
+            raise ExecutionContractError
+        try:
+            health = self.request(
+                Operation.HEALTH,
+                request_id=uuid4().hex,
+                namespace=None,
+                view=None,
+                grant=None,
+                payload={},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+            features = health.get("features")
+            if (
+                health.get("ready") is not True
+                or health.get("protocol_version") != PROTOCOL_V2
+                or not isinstance(features, list)
+                or "inventory_acceptance" not in features
+                or features != sorted(set(features))
+            ):
+                raise ExecutionUnavailableError
+            result = self.request(
+                Operation.INVENTORY_ACCEPTANCE,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={"project_slug": project_slug},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            raise ExecutionUnavailableError from None
+        if result["revision_id"] != view.base_revision or result["tree_sha256"] != grant.input_tree_sha256:
+            raise ExecutionContractError
+        return result
+
     def list_project_artifacts(
         self,
         namespace: NamespaceRef,

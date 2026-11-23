@@ -733,10 +733,18 @@ def parse_plan(*, roadmap: str, increment: str) -> PlanGraph:
     """Parse and admit one V2 roadmap/increment pair, or refuse with a closed rule."""
     if not isinstance(roadmap, str) or not isinstance(increment, str):
         raise PlanV2Error("document-invalid")
-    for text in (roadmap, increment):
-        if len(text.encode("utf-8")) > MAX_PLAN_BYTES or "\x00" in text:
-            raise PlanV2Error("document-invalid")
+    if len(roadmap.encode("utf-8")) > MAX_PLAN_BYTES or "\x00" in roadmap:
+        raise PlanV2Error("document-invalid")
     _require_marker(roadmap, where="roadmap")
+    return _parse_increment(increment)
+
+
+def _parse_increment(increment: str) -> PlanGraph:
+    """Parse the increment independently; its marker and admission rules still apply."""
+    if not isinstance(increment, str):
+        raise PlanV2Error("document-invalid")
+    if len(increment.encode("utf-8")) > MAX_PLAN_BYTES or "\x00" in increment:
+        raise PlanV2Error("document-invalid")
     _require_marker(increment, where="increment")
     sections = _split_sections(_mask_fences(_strip_front_matter(increment.splitlines())))
     invariants: tuple[Invariant, ...] = ()

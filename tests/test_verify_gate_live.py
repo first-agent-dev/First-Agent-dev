@@ -21,6 +21,7 @@ import os
 import shlex
 import time
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -4522,6 +4523,7 @@ def test_a_v2_stage_never_runs_the_planner_verify_fence(tmp_path: Path, monkeypa
     "no commands, no errors" and the stage read that as a pass. The fence in this plan's text is
     the thing that must not become the oracle, so ``verify_plan`` is made to fail loudly if called.
     """
+    monkeypatch.setattr(workflow, "_v2_custody_ready", lambda: True)  # downstream component only
     called: list[object] = []
     monkeypatch.setattr(workflow, "verify_plan", lambda *args, **kwargs: called.append((args, kwargs)))
 
@@ -4547,6 +4549,7 @@ def test_a_v2_stage_reads_the_seal_and_then_refuses_an_unmanaged_cell(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The seal is read from the workspace, so the only thing missing is the cell -- not the plan."""
+    monkeypatch.setattr(workflow, "_v2_custody_ready", lambda: True)  # downstream component only
     from fa.inner_loop.acceptance_seal_store import SealStore
     from tests.test_ai_native_acceptance_collection import _mint, _tree
 
@@ -4569,6 +4572,7 @@ def test_a_v2_stage_reads_the_seal_and_then_refuses_an_unmanaged_cell(
 
 def test_a_v2_stage_with_a_cell_produces_a_sealed_attempt_and_never_a_vacuous_pass(tmp_path: Path) -> None:
     """The whole point of F10: the V2 gate's verdict comes from a claimed, proven nodeid."""
+    from fa.inner_loop.acceptance_closure import collect_acceptance_inventory
     from fa.inner_loop.acceptance_seal_store import SealStore
     from fa.inner_loop.workflow_controller import _VerifySubstrate
     from tests.test_ai_native_acceptance_collection import (
@@ -4585,12 +4589,20 @@ def test_a_v2_stage_with_a_cell_produces_a_sealed_attempt_and_never_a_vacuous_pa
     SealStore(tmp_path).store(bundle)
     context = _v2_context(tmp_path, run_id="v2-sealed-cell", fence=False)
 
+    root_for_inventory = tmp_path / "worklogs" / "demo" / "acceptance"
     verification, attempt = workflow._sealed_stage_verification(
         context,
         _admitted_snapshot(context),
         # The same managed-substrate stand-in the sealed tests use: no visible writes, and it
         # names the revision it is pinned at (F5). The wrapper's forwarding is proven separately.
-        _VerifySubstrate(executor=_inband_executor(writes_visible=False, revision=_REVISION), port=None),
+        _VerifySubstrate(
+            executor=_inband_executor(writes_visible=False, revision=_REVISION),
+            port=None,
+            inventory=lambda _slug: {
+                "revision_id": _REVISION,
+                "entries": collect_acceptance_inventory(root_for_inventory),
+            },
+        ),
         attempt=1,
         repair_round=0,
     )
@@ -4605,8 +4617,60 @@ def test_a_v2_stage_with_a_cell_produces_a_sealed_attempt_and_never_a_vacuous_pa
     assert [result.command for result in verification.plan_command_results] == [attempt.commands[0].command]
 
 
+@pytest.mark.parametrize("mode", ["observe", "enforce"])
+def test_unsettled_v2_reader_discards_attempt_and_blocks_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    monkeypatch.setattr(workflow, "_v2_custody_ready", lambda: True)  # downstream component only
+    from fa.execution.client import ExecutionUnavailableError
+
+    context = _v2_context(tmp_path, run_id=f"unsettled-{mode}", mode=mode, fence=False)
+    attempt = _v2_attempt()
+    assert context.admission is not None
+    context.admission.last_attempt = attempt
+    monkeypatch.setattr(
+        workflow, "_capture_stage_baseline", lambda *_args, **_kwargs: BaselineCapture(nodeids_by_slice={})
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_sealed_stage_verification",
+        lambda *_args, **_kwargs: (PlanVerification(plan_command_results=(), slice_verifications=()), attempt),
+    )
+
+    @contextmanager
+    def unsettled(_ctx: Any) -> Iterator[None]:
+        yield None
+        raise ExecutionUnavailableError
+
+    monkeypatch.setattr(workflow, "_pinned_verify_substrate", unsettled)
+    result = _run_stage(
+        context,
+        "coder",
+        fresh=True,
+        progress=WorkflowProgress(),
+        transition_reason="test",
+        run_stage_fn=lambda *_args, **_kwargs: 0,
+    )
+    assert result.verification is not None and result.verification.blocking
+    assert context.admission.last_attempt is None
+    artifact = json.loads(context.artifact_paths.verification.read_text(encoding="utf-8"))
+    assert artifact["attempts"][0]["blocking"] is True
+    assert "claims" not in artifact["attempts"][0]
+    assert (
+        _effective_controller_route(
+            _eval_report("unsettled"),
+            result.verification,
+            gate_mode=mode,
+            eval_requested=True,
+            verification_required=True,
+        )
+        == "blocked"
+    )
+
+
 def test_a_failing_sealed_nodeid_blocks_the_v2_stage(tmp_path: Path) -> None:
     """The measured defect's other half: a failing seal must not read as a pass either."""
+    from fa.inner_loop.acceptance_closure import collect_acceptance_inventory
     from fa.inner_loop.acceptance_seal_store import SealStore
     from fa.inner_loop.workflow_controller import _VerifySubstrate
     from tests.test_ai_native_acceptance_collection import _REVISION, _mint, _tree
@@ -4618,12 +4682,20 @@ def test_a_failing_sealed_nodeid_blocks_the_v2_stage(tmp_path: Path) -> None:
     SealStore(tmp_path).store(bundle)
     context = _v2_context(tmp_path, run_id="v2-failing-seal", fence=False)
 
+    root_for_inventory = tmp_path / "worklogs" / "demo" / "acceptance"
     verification, attempt = workflow._sealed_stage_verification(
         context,
         _admitted_snapshot(context),
         # The same managed-substrate stand-in the sealed tests use: no visible writes, and it
         # names the revision it is pinned at (F5). The wrapper's forwarding is proven separately.
-        _VerifySubstrate(executor=_inband_executor(writes_visible=False, revision=_REVISION), port=None),
+        _VerifySubstrate(
+            executor=_inband_executor(writes_visible=False, revision=_REVISION),
+            port=None,
+            inventory=lambda _slug: {
+                "revision_id": _REVISION,
+                "entries": collect_acceptance_inventory(root_for_inventory),
+            },
+        ),
         attempt=1,
         repair_round=0,
     )
@@ -4631,7 +4703,8 @@ def test_a_failing_sealed_nodeid_blocks_the_v2_stage(tmp_path: Path) -> None:
     assert attempt is not None and attempt.blocking is True
     assert attempt.claims[0].outcome == "failed"
     assert verification.blocking is True
-    assert verification.errors, "a blocking attempt must explain itself in the legacy gate"
+    assert verification.errors == (), "a classified assertion failure is determinate, not a harness error"
+    assert verification.plan_command_results[0].outcome is CommandOutcome.FAIL
 
 
 # ── F10 item 4: the artifact and the eval block carry the attempt ───────────
@@ -4760,6 +4833,7 @@ def test_the_eval_block_renders_claims_with_untrusted_bounded_detail(tmp_path: P
 
 def test_the_coder_stage_writes_the_attempt_it_measured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """F10 item 4 wiring: the attempt reaches the artifact, not just the admission record."""
+    monkeypatch.setattr(workflow, "_v2_custody_ready", lambda: True)  # downstream component only
     attempt = _v2_attempt()
     monkeypatch.setattr(
         workflow,
@@ -4781,3 +4855,137 @@ def test_the_coder_stage_writes_the_attempt_it_measured(tmp_path: Path, monkeypa
     entry = json.loads(Path(context.artifact_paths.verification).read_text(encoding="utf-8"))["attempts"][0]
     assert entry["route"] == "v2"
     assert entry["claims"][0]["outcome"] == "passed"
+
+
+@pytest.mark.parametrize("mode", ["observe", "enforce"])
+@pytest.mark.parametrize("route", ["linear", "adaptive"])
+def test_v2_coder_is_blocked_before_dispatch_without_authority_custody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, route: str
+) -> None:
+    """An extant local seal and a previous attempt cannot substitute for custody."""
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from tests.test_ai_native_acceptance_collection import _mint, _tree
+
+    SealStore(tmp_path).store(_mint(_tree(tmp_path)))
+    context = _v2_context(tmp_path, run_id=f"custody-{route}-{mode}", mode=mode, fence=False)
+    assert context.admission is not None
+    context.admission.last_attempt = _v2_attempt()
+    calls: list[str] = []
+
+    def stage(*_args: Any, **kwargs: Any) -> int:
+        calls.append(kwargs["role"])
+        return 0
+
+    monkeypatch.setattr(workflow, "_sealed_stage_verification", lambda *_a, **_kw: pytest.fail("verifier reached"))
+    if route == "linear":
+        code = _run_linear(context, ["coder", "eval"], run_stage_fn=stage)
+    else:
+        code = _run_adaptive(context, ["coder", "eval"], max_repairs=1, max_replans=0, run_stage_fn=stage)
+    assert code == 2 and calls == []
+    assert context.admission.last_attempt is None
+    assert context.admission.admitted is False
+    state = load_flow_state(context.artifact_paths.flow_state)
+    assert state.status == "FAILED" and state.blocked_reason == "admission/acceptance-custody-unavailable"
+    assert not context.artifact_paths.verification.exists()
+
+
+@pytest.mark.parametrize("mode", ["observe", "enforce"])
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("assert True", "pass"),
+        ("assert False", "assertion"),
+        ("import pytest; pytest.skip('not ready')", "skip"),
+        ("raise RuntimeError('unexpected')", "exception"),
+    ],
+)
+def test_sealed_actual_receipt_routes_assertions_and_uncertainty_distinctly(
+    tmp_path: Path, mode: str, body: str, expected: str
+) -> None:
+    from fa.inner_loop.acceptance_closure import collect_acceptance_inventory
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from fa.inner_loop.workflow_controller import _VerifySubstrate
+    from tests.test_ai_native_acceptance_collection import _REVISION, _mint, _tree
+    from tests.test_slice_verification_runner import _inband_executor
+
+    root = _tree(tmp_path)
+    (root / "tests" / "test_publish.py").write_text(f"def test_publish():\n    {body}\n", encoding="utf-8")
+    bundle = _mint(root)
+    SealStore(tmp_path).store(bundle)
+    context = _v2_context(tmp_path, run_id=f"typed-{mode}-{expected}", mode=mode, fence=False)
+    substrate = _VerifySubstrate(
+        executor=_inband_executor(writes_visible=False, revision=_REVISION),
+        port=None,
+        inventory=lambda _slug: {"revision_id": _REVISION, "entries": collect_acceptance_inventory(root)},
+    )
+    verification, attempt = workflow._sealed_stage_verification(
+        context, _admitted_snapshot(context), substrate, attempt=1, repair_round=0
+    )
+    if expected in {"pass", "assertion"}:
+        assert attempt is not None and not verification.errors
+        assert attempt.claims[0].outcome == ("passed" if expected == "pass" else "failed")
+        assert verification.blocking == (expected == "assertion")
+    else:
+        assert attempt is None and verification.blocking
+        assert verification.errors == (
+            "sealed-verification/collection-skipped"
+            if expected == "skip"
+            else "sealed-verification/collection-call-error",
+        )
+    route = _effective_controller_route(
+        _eval_report("typed"), verification, gate_mode=mode, eval_requested=True, verification_required=True
+    )
+    assert route == (
+        "blocked"
+        if expected in {"skip", "exception"}
+        else "return_to_coder"
+        if expected == "assertion" and mode == "enforce"
+        else "complete"
+    )
+
+
+@pytest.mark.parametrize("kind", ["skipped", "error", "mutation-error"])
+@pytest.mark.parametrize("mode", ["observe", "enforce"])
+def test_sealed_attempt_uncertain_claim_never_becomes_advisory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, mode: str
+) -> None:
+    from dataclasses import replace
+
+    from fa.inner_loop.acceptance_closure import collect_acceptance_inventory
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from fa.inner_loop.verification_attempt import MutationEvidence
+    from fa.inner_loop.workflow_controller import _VerifySubstrate
+    from tests.test_ai_native_acceptance_collection import _REVISION, _mint, _tree
+    from tests.test_slice_verification_runner import _inband_executor
+
+    root = _tree(tmp_path)
+    (root / "tests/test_publish.py").write_text("def test_publish():\n    assert False\n", encoding="utf-8")
+    SealStore(tmp_path).store(_mint(root))
+    context = _v2_context(tmp_path, run_id=f"uncertain-{kind}-{mode}", mode=mode, fence=False)
+    substrate = _VerifySubstrate(
+        executor=_inband_executor(writes_visible=False, revision=_REVISION),
+        port=None,
+        inventory=lambda _slug: {"revision_id": _REVISION, "entries": collect_acceptance_inventory(root)},
+    )
+    original = workflow.sealed_attempt
+
+    def uncertain(*args: Any, **kwargs: Any) -> Any:
+        attempt = original(*args, **kwargs)
+        claim = attempt.claims[0]
+        if kind == "mutation-error":
+            claim = replace(claim, mutation=MutationEvidence(operator="test", target="test", verdict="error"))
+        else:
+            claim = replace(claim, outcome=kind)
+        return replace(attempt, claims=(claim,))
+
+    monkeypatch.setattr(workflow, "sealed_attempt", uncertain)
+    verification, attempt = workflow._sealed_stage_verification(
+        context, _admitted_snapshot(context), substrate, attempt=1, repair_round=0
+    )
+    assert attempt is not None and attempt.blocking and verification.errors
+    assert (
+        _effective_controller_route(
+            _eval_report("uncertain"), verification, gate_mode=mode, eval_requested=True, verification_required=True
+        )
+        == "blocked"
+    )

@@ -631,3 +631,823 @@ def test_completed_releases_retire_descriptors_and_heavy_maps_without_gc_or_fd_r
         finally:
             os.close(sentinel)
         assert (site.revision(ids) / "data/untracked.txt").read_text() == "untracked"
+
+
+def test_acceptance_inventory_names_exact_pinned_subtree_not_host(site: Site) -> None:
+    root = site.source / "worklogs" / "demo" / "acceptance"
+    (root / "tests").mkdir(parents=True)
+    (root / "pytest.ini").write_text("[pytest]\n")
+    (root / "tests" / "test_a.py").write_text("old\n")
+    (root / "tests" / "link.py").symlink_to("test_a.py")
+    (site.source / "worklogs" / "demo" / "acceptance-other").mkdir()
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        grant = ok(lambda: pin(owner, ids))
+        (root / "tests" / "test_a.py").write_text("new\n")
+        (root / "tests" / "extra.py").write_text("new\n")
+        result = owner.inventory_acceptance(
+            PEER, ACTOR, view_ref=ref(grant), capability=grant.capability, project_slug="demo", deadline=until()
+        )
+        assert result["revision_id"] == ids["revision_id"]
+        assert result["tree_sha256"] == grant.input_tree_sha256
+        assert result["entries"] == [
+            {"path": "pytest.ini", "type": "file", "size": 9, "sha256": hashlib.sha256(b"[pytest]\n").hexdigest()},
+            {"path": "tests", "type": "directory", "size": 0, "sha256": None},
+            {"path": "tests/link.py", "type": "symlink", "size": 9, "sha256": hashlib.sha256(b"test_a.py").hexdigest()},
+            {"path": "tests/test_a.py", "type": "file", "size": 4, "sha256": hashlib.sha256(b"old\n").hexdigest()},
+        ]
+
+
+def test_acceptance_inventory_requires_authorized_live_reader(site: Site) -> None:
+    (site.source / "worklogs" / "demo" / "acceptance").mkdir(parents=True)
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        grant = ok(lambda: pin(owner, ids))
+
+        def invoke(**kwargs: Any) -> dict[str, Any]:
+            return owner.inventory_acceptance(
+                kwargs.get("peer", PEER),
+                kwargs.get("namespace", ACTOR),
+                view_ref=ref(grant),
+                capability=kwargs.get("capability", grant.capability),
+                project_slug=kwargs.get("slug", "demo"),
+                deadline=until(),
+            )
+
+        for arguments in ({"capability": "f" * 64}, {"namespace": OTHER}, {"slug": "../demo"}, {"slug": "missing"}):
+            with pytest.raises(SupervisorError) as error:
+                invoke(**arguments)
+            assert error.value.code in {"UNAUTHORIZED", "INPUT_POLICY"}
+        assert ok(lambda: release(owner, grant)) == {"released": True}
+        with pytest.raises(SupervisorError) as error:
+            invoke()
+        assert error.value.code in {"UNAUTHORIZED", "VIEW_CLOSED"}
+
+
+def test_acceptance_inventory_refuses_over_limit_instead_of_truncating(site: Site) -> None:
+    root = site.source / "worklogs" / "demo" / "acceptance"
+    root.mkdir(parents=True)
+    for i in range(4097):
+        (root / f"f{i:04}").write_bytes(b"")
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        grant = ok(lambda: pin(owner, ids))
+        with pytest.raises(SupervisorError) as error:
+            owner.inventory_acceptance(
+                PEER, ACTOR, view_ref=ref(grant), capability=grant.capability, project_slug="demo", deadline=until()
+            )
+        assert error.value.code == "INPUT_POLICY"
+
+
+def _register_acceptance_fixture(site: Site, owner: WorkspaceAuthority) -> dict[str, str]:
+    """Synthetic origin for component checks; real BOOTSTRAP edge is tested separately."""
+    ids = site.register(owner)
+    binding = owner._binding(ids["workspace_id"])
+    for slug in ("demo", "seals"):
+        owner._record_acceptance_origin(
+            binding,
+            {
+                "target_relative": f"worklogs/{slug}",
+                "workspace_id": ids["workspace_id"],
+                "operation_id": "op-" + "a" * 32,
+                "next_revision": ids["revision_id"],
+            },
+        )
+    return ids
+
+
+def _acceptance_store_case(site: Site) -> tuple[Any, Any]:
+    """Build a real registered revision and a controller-minted matching seal."""
+    from fa.inner_loop.plan_admission import PlanRef
+    from tests.test_ai_native_acceptance_collection import _PLAN_BYTES, _tree
+
+    root = _tree(site.source)
+    path = "worklogs/demo/increments/increment-01-demo.md"
+    plan = site.source / path
+    plan.parent.mkdir(parents=True)
+    plan.write_bytes(_PLAN_BYTES)
+    return root, PlanRef(path, "EXPLICIT", hashlib.sha256(_PLAN_BYTES).hexdigest())
+
+
+def test_authority_stores_acceptance_seal_in_private_project_scope(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        arguments = {
+            "capability": grant.capability,
+            "project_slug": "demo",
+            "plan_ref": plan_ref,
+            "seal_record": seal_bytes(bundle),
+            "deadline": until(),
+        }
+        assert owner.store_acceptance_seal(PEER, ACTOR, **arguments) == bundle.seal_sha256
+        assert owner.store_acceptance_seal(PEER, ACTOR, **arguments) == bundle.seal_sha256
+        private = site.state / "workspaces" / ids["workspace_id"] / "acceptance" / "demo"
+        assert SealStore(private).current() == bundle
+        assert private.stat().st_mode & 0o077 == 0
+        assert not (site.source / ".fa" / "seal-current.json").exists()
+        assert site.metadata(ids)["status"] == "OWNED"
+
+
+@pytest.mark.parametrize(
+    "tamper", ["grant", "revision", "plan", "closure", "extra", "link", "slug", "size", "mode", "supersede"]
+)
+def test_authority_refuses_unbound_acceptance_seal_without_writing(site: Site, tamper: str) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    if tamper == "extra":
+        (root / "extra.py").write_text("extra")
+    if tamper == "link":
+        (root / "link").symlink_to("pytest.ini")
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        if tamper == "extra":
+            (root / "extra.py").unlink()
+        if tamper == "link":
+            (root / "link").unlink()
+        bundle = _mint(root, revision_id="rev-" + "1" * 32 if tamper == "revision" else ids["revision_id"])
+        if tamper == "closure":
+            (root / "pytest.ini").write_text("[pytest]\n")
+            bundle = _mint(root, revision_id=ids["revision_id"])
+        if tamper == "size":
+            files = list(bundle.closure.files)
+            files[0] = replace(files[0], size=files[0].size + 1)
+            bundle = replace(bundle, closure=replace(bundle.closure, files=tuple(files)))
+        if tamper == "mode":
+            files = list(bundle.closure.files)
+            files[0] = replace(files[0], mode=0o777)
+            bundle = replace(bundle, closure=replace(bundle.closure, files=tuple(files)))
+        if tamper == "supersede":
+            bundle = replace(bundle, supersedes_sha256="a" * 64)
+        if tamper == "plan":
+            plan_ref = replace(plan_ref, sha256="0" * 64)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability="0" * 64 if tamper == "grant" else grant.capability,
+                project_slug="other" if tamper == "slug" else "demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == (
+            "UNAUTHORIZED" if tamper == "grant" else "STALE_REVISION" if tamper == "revision" else "INPUT_POLICY"
+        )
+        assert not (site.state / "workspaces" / ids["workspace_id"] / "acceptance").exists()
+
+
+def test_authority_seal_refuses_corrupt_predecessor_without_reconstruction(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        args = {
+            "capability": grant.capability,
+            "project_slug": "demo",
+            "plan_ref": plan_ref,
+            "seal_record": seal_bytes(bundle),
+            "deadline": until(),
+        }
+        owner.store_acceptance_seal(PEER, ACTOR, **args)
+        private = site.state / "workspaces" / ids["workspace_id"] / "acceptance" / "demo" / ".fa"
+        pointer_before = (private / "seal-current.json").read_bytes()
+        record = private / "seals" / f"{bundle.seal_sha256}.json"
+        record.unlink()
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(PEER, ACTOR, **args)
+        assert error.value.code == "DURABILITY_UNKNOWN"
+        assert not record.exists() and (private / "seal-current.json").read_bytes() == pointer_before
+        assert not owner.ready
+
+
+def test_authority_seal_refuses_while_write_view_unsettled(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_views import create, native_profile
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        create(owner, ids, grant)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == "WORKSPACE_BUSY"
+        assert not (site.state / "workspaces" / ids["workspace_id"] / "acceptance").exists()
+
+
+def test_authority_seal_does_not_follow_private_directory_symlink(site: Site, tmp_path: Path) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        private = site.state / "workspaces" / ids["workspace_id"] / "acceptance" / "demo"
+        private.mkdir(parents=True, mode=0o700)
+        private.parent.chmod(0o700)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (private / ".fa").symlink_to(outside, target_is_directory=True)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == "DURABILITY_UNKNOWN"
+        assert list(outside.iterdir()) == []
+
+
+def test_authority_keeps_two_projects_seal_pointers_independent(site: Site) -> None:
+    import shutil
+    from datetime import date
+
+    from fa.inner_loop.acceptance_bundle import mint_seal, seal_bytes
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from fa.inner_loop.plan_admission import PlanRef, bind_dispositions
+    from fa.inner_loop.plan_v2 import parse_plan
+    from tests.test_ai_native_acceptance_collection import _COLLECTED, _PLAN_BYTES, _mint
+    from tests.test_ai_native_plan_v2 import _ROADMAP, grant_declarations
+
+    root, first_ref = _acceptance_store_case(site)
+    other_root = site.source / "worklogs" / "seals" / "acceptance"
+    shutil.copytree(root, other_root)
+    other_plan = _PLAN_BYTES.replace(b"worklogs/demo/", b"worklogs/seals/")
+    other_path = "worklogs/seals/increments/increment-01-demo.md"
+    (site.source / other_path).parent.mkdir(parents=True)
+    (site.source / other_path).write_bytes(other_plan)
+    declarations = tuple(
+        replace(
+            item,
+            evidence=replace(item.evidence, target=item.evidence.target.replace("worklogs/demo/", "worklogs/seals/")),
+        )
+        for item in grant_declarations()
+    )
+    graph = bind_dispositions(
+        parse_plan(roadmap=_ROADMAP, increment=other_plan.decode()), declarations, today=date(2026, 11, 20)
+    )
+    other_ref = PlanRef(other_path, "EXPLICIT", hashlib.sha256(other_plan).hexdigest())
+    collected = {
+        key.replace("worklogs/demo/", "worklogs/seals/"): [
+            node.replace("worklogs/demo/", "worklogs/seals/") for node in values
+        ]
+        for key, values in _COLLECTED.items()
+    }
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        first = _mint(root, revision_id=ids["revision_id"])
+        second = mint_seal(
+            graph=graph,
+            plan_bytes=other_plan,
+            revision_id=ids["revision_id"],
+            sealed_root="worklogs/seals/acceptance",
+            acceptance_root=other_root,
+            collected=collected,
+        )
+        for slug, plan, bundle in (("demo", first_ref, first), ("seals", other_ref, second)):
+            assert (
+                owner.store_acceptance_seal(
+                    PEER,
+                    ACTOR,
+                    capability=grant.capability,
+                    project_slug=slug,
+                    plan_ref=plan,
+                    seal_record=seal_bytes(bundle),
+                    deadline=until(),
+                )
+                == bundle.seal_sha256
+            )
+        private = site.state / "workspaces" / ids["workspace_id"] / "acceptance"
+        assert SealStore(private / "demo").current() == first
+        assert SealStore(private / "seals").current() == second
+
+
+def test_authority_seal_readback_failure_is_uncertain_not_success(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fa.inner_loop.acceptance_bundle import AcceptanceBundleError, seal_bytes
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+
+        original_current = SealStore.current
+        calls = 0
+
+        def fail_readback(store: SealStore) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return original_current(store)
+            raise AcceptanceBundleError("seal-pointer-unreadable")
+
+        monkeypatch.setattr(SealStore, "current", fail_readback)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == "DURABILITY_UNKNOWN" and not owner.ready
+        pointer = site.state / "workspaces" / ids["workspace_id"] / "acceptance/demo/.fa/seal-current.json"
+        assert pointer.exists(), "a failed readback cannot be reported as an effect-free refusal"
+
+
+def test_authority_seal_survives_release_and_service_restart(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        owner.store_acceptance_seal(
+            PEER,
+            ACTOR,
+            capability=grant.capability,
+            project_slug="demo",
+            plan_ref=plan_ref,
+            seal_record=seal_bytes(bundle),
+            deadline=until(),
+        )
+        site.release(owner, ids, grant)
+    with site.owner() as recovered:
+        assert site.register(recovered) == ids
+        grant = site.claim(recovered, ids)
+        assert (
+            recovered.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+            == bundle.seal_sha256
+        )
+        private = site.state / "workspaces" / ids["workspace_id"] / "acceptance" / "demo"
+        assert SealStore(private).current() == bundle
+
+
+@pytest.mark.parametrize("remnant", ["record", "temporary-pointer", "unexpected-entry"])
+def test_authority_refuses_missing_pointer_with_evidence_of_prior_write(site: Site, remnant: str) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        args = {
+            "capability": grant.capability,
+            "project_slug": "demo",
+            "plan_ref": plan_ref,
+            "seal_record": seal_bytes(bundle),
+            "deadline": until(),
+        }
+        owner.store_acceptance_seal(PEER, ACTOR, **args)
+        private = site.state / "workspaces" / ids["workspace_id"] / "acceptance/demo/.fa"
+        pointer = private / "seal-current.json"
+        record = private / "seals" / f"{bundle.seal_sha256}.json"
+        pointer.unlink()
+        if remnant != "record":
+            record.unlink()
+            (private / (".seal-current-interrupted" if remnant == "temporary-pointer" else "unexpected")).write_bytes(
+                b"evidence"
+            )
+        before = {str(p.relative_to(private)): p.read_bytes() for p in private.rglob("*") if p.is_file()}
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(PEER, ACTOR, **args)
+        assert error.value.code == "DURABILITY_UNKNOWN"
+        assert not owner.ready and not pointer.exists()
+        assert {str(p.relative_to(private)): p.read_bytes() for p in private.rglob("*") if p.is_file()} == before
+
+
+def test_authority_refuses_remint_after_project_metadata_loss_and_restart(site: Site) -> None:
+    import shutil
+
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        owner.store_acceptance_seal(
+            PEER,
+            ACTOR,
+            capability=grant.capability,
+            project_slug="demo",
+            plan_ref=plan_ref,
+            seal_record=seal_bytes(bundle),
+            deadline=until(),
+        )
+        site.release(owner, ids, grant)
+    binding = site.state / "workspaces" / ids["workspace_id"]
+    assert (binding / "acceptance-started-demo").is_file()
+    shutil.rmtree(binding / "acceptance" / "demo")
+    with site.owner() as owner:
+        assert site.register(owner) == ids
+        grant = site.claim(owner, ids)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == "DURABILITY_UNKNOWN" and not owner.ready
+        private = binding / "acceptance" / "demo" / ".fa"
+        assert not (private / "seal-current.json").exists()
+        assert list((private / "seals").iterdir()) == []
+
+
+def test_authority_persists_mint_started_before_store_write(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fa.inner_loop.acceptance_bundle import AcceptanceBundleError, seal_bytes
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        marker = site.state / "workspaces" / ids["workspace_id"] / "acceptance-started-demo"
+
+        def interrupt(_store: SealStore, _bundle: Any) -> Any:
+            assert marker.is_file() and marker.stat().st_size == 0
+            raise AcceptanceBundleError("injected-before-write")
+
+        monkeypatch.setattr(SealStore, "store", interrupt)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == "DURABILITY_UNKNOWN" and not owner.ready
+        assert marker.is_file()
+        assert not (marker.parent / "acceptance/demo/.fa/seal-current.json").exists()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "content"])
+def test_authority_rejects_invalid_history_marker(site: Site, tmp_path: Path, kind: str) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        marker = site.state / "workspaces" / ids["workspace_id"] / "acceptance-started-demo"
+        outside = tmp_path / "outside-marker"
+        outside.write_bytes(b"safe")
+        outside.chmod(0o600)
+        if kind == "symlink":
+            marker.symlink_to(outside)
+        elif kind == "hardlink":
+            os.link(outside, marker)
+        else:
+            marker.write_bytes(b"invalid")
+            marker.chmod(0o600)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == "DURABILITY_UNKNOWN" and not owner.ready
+        assert outside.read_bytes() == b"safe"
+        assert not (marker.parent / "acceptance/demo/.fa/seal-current.json").exists()
+
+
+@pytest.mark.parametrize(
+    "tamper", ["test-id", "contract", "selector", "nodeid", "attested-contract", "invariant", "scope", "probe"]
+)
+def test_authority_rejects_self_consistent_seal_with_foreign_plan_semantics(site: Site, tamper: str) -> None:
+    from fa.inner_loop.acceptance_bundle import load_seal, seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        selector = bundle.selectors[0]
+        attestation = bundle.attestations[0]
+        if tamper == "test-id":
+            bundle = replace(bundle, selectors=(replace(selector, test_id="TEST-9.9"),))
+        elif tamper == "contract":
+            bundle = replace(bundle, selectors=(replace(selector, ct_id="CT-9.9"),))
+        elif tamper == "selector":
+            bundle = replace(
+                bundle, selectors=(replace(selector, selector=selector.selector.replace("test_publish", "test_extra")),)
+            )
+        elif tamper == "nodeid":
+            bundle = replace(
+                bundle, selectors=(replace(selector, nodeid=selector.nodeid.replace("test_publish", "test_extra")),)
+            )
+        elif tamper == "attested-contract":
+            foreign = "CT-9.9"
+            bundle = replace(
+                bundle,
+                attested=(foreign,),
+                pending=(foreign,) if bundle.pending else (),
+                attestations=(replace(attestation, contract_id=foreign),),
+            )
+        elif tamper == "invariant":
+            bundle = replace(bundle, attestations=(replace(attestation, invariant_id="INV-9"),))
+        elif tamper == "scope":
+            bundle = replace(bundle, attestations=(replace(attestation, scope_sha256="0" * 64),))
+        else:
+            bundle = replace(
+                bundle,
+                attestations=(
+                    replace(attestation, artifact="probe:worklogs/demo/acceptance/probes/missing.sh@host:w4-ubuntu"),
+                ),
+            )
+        raw = seal_bytes(bundle)
+        assert load_seal(raw).seal_sha256, "forgery must pass the record's own digest and shape checks"
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=raw,
+                deadline=until(),
+            )
+        assert error.value.code == "INPUT_POLICY"
+        binding = site.state / "workspaces" / ids["workspace_id"]
+        assert not (binding / "acceptance").exists()
+        assert not (binding / "acceptance-started-demo").exists()
+        assert owner.ready
+
+
+def test_authority_rejects_plan_consistent_selector_outside_sealed_closure(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import load_seal, seal_bytes
+    from tests.test_ai_native_acceptance_collection import _PLAN_BYTES, _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    old = "worklogs/demo/acceptance/tests/test_publish.py"
+    foreign = "tests/test_foreign.py"
+    raw_plan = _PLAN_BYTES.replace(old.encode(), foreign.encode())
+    assert raw_plan != _PLAN_BYTES
+    (site.source / plan_ref.workspace_relative_path).write_bytes(raw_plan)
+    plan_ref = replace(plan_ref, sha256=hashlib.sha256(raw_plan).hexdigest())
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        row = bundle.selectors[0]
+        forged = replace(
+            bundle,
+            plan_sha256=plan_ref.sha256,
+            selectors=(
+                replace(row, selector=row.selector.replace(old, foreign), nodeid=row.nodeid.replace(old, foreign)),
+            ),
+        )
+        raw = seal_bytes(forged)
+        assert load_seal(raw).plan_sha256 == plan_ref.sha256
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=raw,
+                deadline=until(),
+            )
+        assert error.value.code == "INPUT_POLICY"
+        assert not (site.state / "workspaces" / ids["workspace_id"] / "acceptance").exists()
+
+
+def test_authority_applies_canonical_closure_rules_to_revision(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import load_seal, seal_bytes
+    from fa.inner_loop.acceptance_closure import ClosureFile, closure_digest
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+    # Construct a revision containing a prohibited nested conftest, and a record
+    # whose hashes and sizes nevertheless match every actual file.
+    raw_conftest = b"# hidden fixture policy\n"
+    (root / "tests/conftest.py").write_bytes(raw_conftest)
+    # Register the modified source as a fresh independent workspace.
+    fresh = Site(state=site.state.parent / "fresh-state", roots=site.roots, source=site.source)
+    fresh.state.mkdir(mode=0o700)
+    with fresh.owner() as owner:
+        ids = _register_acceptance_fixture(fresh, owner)
+        grant = fresh.claim(owner, ids)
+        files = tuple(
+            sorted(
+                (
+                    *bundle.closure.files,
+                    ClosureFile(
+                        "tests/conftest.py",
+                        hashlib.sha256(raw_conftest).hexdigest(),
+                        len(raw_conftest),
+                        bundle.closure.files[0].mode,
+                    ),
+                ),
+                key=lambda item: item.path,
+            )
+        )
+        closure = replace(
+            bundle.closure,
+            files=files,
+            total_bytes=sum(item.size for item in files),
+            digest=closure_digest((item.path, item.sha256) for item in files),
+        )
+        forged = replace(bundle, revision_id=ids["revision_id"], closure=closure)
+        raw = seal_bytes(forged)
+        assert load_seal(raw).closure.digest == closure.digest
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=raw,
+                deadline=until(),
+            )
+        assert error.value.code == "INPUT_POLICY"
+        assert not (fresh.state / "workspaces" / ids["workspace_id"] / "acceptance").exists()
+
+
+def test_real_bootstrap_origin_allows_seal_but_lost_state_forbids_remint(site: Site, tmp_path: Path) -> None:
+    import shutil
+
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from fa.inner_loop.plan_admission import PlanRef
+    from tests.test_ai_native_acceptance_collection import _PLAN_BYTES, _mint, _tree
+
+    staging = tmp_path / "author"
+    root = _tree(staging)
+    plan_path = "worklogs/demo/increments/increment-01-demo.md"
+    files = {
+        f"worklogs/demo/acceptance/{p.relative_to(root).as_posix()}": p.read_bytes()
+        for p in root.rglob("*")
+        if p.is_file()
+    }
+    files[plan_path] = _PLAN_BYTES
+    plan_ref = PlanRef(plan_path, "EXPLICIT", hashlib.sha256(_PLAN_BYTES).hexdigest())
+    with site.owner() as owner:
+        ids = site.register(owner)
+        grant = site.claim(owner, ids)
+        prepared = owner.store_bundle(
+            PEER,
+            ACTOR,
+            capability=grant.capability,
+            project_slug="demo",
+            increment_slug="demo",
+            files=files,
+            expected_base_revision=ids["revision_id"],
+            operation_id="op-" + "1" * 32,
+            deadline=until(),
+        )
+        installed = owner.install_project(
+            PEER,
+            ACTOR,
+            capability=grant.capability,
+            validated_bundle_id=prepared["validated_bundle_id"],
+            project_slug="demo",
+            deadline=until(),
+        )
+        origin = site.state / "workspaces" / ids["workspace_id"] / "acceptance-origin-demo.json"
+        record = json.loads(origin.read_bytes())
+        assert (record["workspace_id"], record["revision_id"], record["operation_id"]) == (
+            ids["workspace_id"],
+            installed["revision_id"],
+            installed["operation_id"],
+        )
+        bundle = _mint(site.source / "worklogs/demo/acceptance", revision_id=installed["revision_id"])
+        assert (
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+            == bundle.seal_sha256
+        )
+        site.release(owner, ids, grant)
+    shutil.rmtree(site.state)
+    with site.owner() as restored:
+        ids = site.register(restored)
+        grant = site.claim(restored, ids)
+        bundle = _mint(site.source / "worklogs/demo/acceptance", revision_id=ids["revision_id"])
+        with pytest.raises(SupervisorError) as error:
+            restored.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == "INPUT_POLICY"
+        binding = site.state / "workspaces" / ids["workspace_id"]
+        assert not (binding / "acceptance").exists()
+        assert not (binding / "acceptance-started-demo").exists()
+
+
+@pytest.mark.parametrize("damage", ["missing", "wrong-workspace", "symlink", "oversize"])
+def test_authority_refuses_invalid_bootstrap_origin_without_seal_writes(site: Site, damage: str) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        path = site.state / "workspaces" / ids["workspace_id"] / "acceptance-origin-demo.json"
+        if damage == "missing":
+            path.unlink()
+        elif damage == "symlink":
+            path.unlink()
+            path.symlink_to(site.source / "base.txt")
+        elif damage == "oversize":
+            path.write_bytes(b"x" * 1025)
+        else:
+            record = json.loads(path.read_bytes())
+            record["workspace_id"] = "ws-" + "0" * 32
+            path.write_text(json.dumps(record))
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code in ("INPUT_POLICY", "CORRUPT_STATE")
+        assert not (path.parent / "acceptance").exists()
+        assert not (path.parent / "acceptance-started-demo").exists()

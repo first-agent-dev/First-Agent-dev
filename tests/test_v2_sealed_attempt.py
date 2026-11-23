@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from fa.inner_loop import acceptance_collection
 from fa.inner_loop.acceptance_bundle import AcceptanceBundle
 from fa.inner_loop.acceptance_collection import (
     AcceptanceCollectionError,
@@ -183,6 +184,24 @@ def test_an_outcome_the_seal_does_not_map_never_becomes_a_claim(tmp_path: Path) 
 
     assert len(attempt.claims) == len(bundle.selectors)
     assert _EXTRA_NODEID not in {claim.nodeid for claim in attempt.claims}
+
+
+def test_projection_refuses_same_count_substitution_of_a_sealed_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = _bundle(tmp_path)
+    verification = _verification(bundle, outcomes={_NODEID: True})
+    real = acceptance_collection.ClaimEvidence
+
+    def substituted(**kwargs: object) -> object:
+        claim = real(**kwargs)  # type: ignore[arg-type]
+        return replace(claim, test_id="TEST-9.9")
+
+    monkeypatch.setattr(acceptance_collection, "ClaimEvidence", substituted)
+    assert (
+        _rule(lambda: sealed_attempt(bundle, verification, identity=_identity(bundle)))
+        == "attempt-claims-seal-mismatch"
+    )
 
 
 # -- the identity the attempt claims to describe ---------------------------

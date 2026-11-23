@@ -62,18 +62,28 @@ _AUTHORED_BODY = (
 _ACCEPTANCE_MODULE = "def test_initial():\n    assert True\n"
 
 
-def _patch_sealed_cell(monkeypatch: pytest.MonkeyPatch, revision: str) -> None:
-    """Give admission a sealed cell that can actually run the collection (N1).
+_REAL_PINNED_VERIFY_SUBSTRATE = workflow_controller._pinned_verify_substrate
 
-    The managed provider these route tests use has no test runner inside its cells, so an
-    admission that is *supposed* to succeed would report ``collection-error`` for a reason that
-    has nothing to do with the route. The stand-in keeps the whole code path -- collect, mint,
-    store -- and replaces only the substrate, exactly as the sealed-stage tests do.
+
+def _patch_sealed_cell(monkeypatch: pytest.MonkeyPatch, revision: str) -> None:
+    """Keep the real authority pin/inventory, substituting only local pytest execution.
+
+    The live current revision is used after a repair publishes a new revision;
+    the argument is retained because existing call sites mark where the seam is set.
     """
-    substrate = workflow_controller._VerifySubstrate(
-        executor=_inband_executor(writes_visible=False, revision=revision), port=None
-    )
-    monkeypatch.setattr(workflow_controller, "_pinned_verify_substrate", _yield(substrate))
+    del revision
+
+    @contextmanager
+    def local_runner(ctx: Any) -> Any:
+        with _REAL_PINNED_VERIFY_SUBSTRATE(ctx) as substrate:
+            assert substrate is not None and ctx.managed_execution is not None
+            yield workflow_controller._VerifySubstrate(
+                executor=_inband_executor(writes_visible=False, revision=ctx.managed_execution.current_revision_id),
+                port=substrate.port,
+                inventory=substrate.inventory,
+            )
+
+    monkeypatch.setattr(workflow_controller, "_pinned_verify_substrate", local_runner)
 
 
 def _seed_acceptance(port: object, slug: str) -> None:
@@ -107,9 +117,10 @@ def _requiring_pair() -> tuple[str, str]:
         "  TEST-ID: TEST-1.1 | CT: CT-1.1 | "
         "SELECTOR: worklogs/waiver-project/acceptance/tests/test_initial.py::test_initial\n"
     )
-    increment = files["worklogs/waiver-project/increments/increment-01-initial-plan.md"].replace(
-        "slices: 0", "slices: 1"
-    ) + body
+    increment = (
+        files["worklogs/waiver-project/increments/increment-01-initial-plan.md"].replace("slices: 0", "slices: 1")
+        + body
+    )
     return files["worklogs/waiver-project/roadmap.md"], increment
 
 
@@ -194,6 +205,7 @@ def test_a_plan_cannot_own_its_own_waiver() -> None:
 
     graded = contract_evidence(graph)
     assert EvidenceMode.ATTESTED not in graded.values()
+
 
 def test_admission_refuses_documents_whose_front_matter_disagrees() -> None:
     """D-V2-9.3 is a *check inside admission*, not advice in a docstring.
@@ -616,9 +628,7 @@ def test_the_authoring_stage_publishes_and_admits_the_project(
             "## Intent\n\n## Out of scope\n",
             "## Intent\n\nBuild the demo slice cleanly.\n\n## Out of scope\n\nEverything outside SLICE1.\n",
         ),
-        f"increments/increment-01-{INITIAL_INCREMENT_SLUG}.md": increment_scaffold.replace(
-            "slices: 0", "slices: 1"
-        )
+        f"increments/increment-01-{INITIAL_INCREMENT_SLUG}.md": increment_scaffold.replace("slices: 0", "slices: 1")
         + _AUTHORED_BODY.format(slug=slug),
     }
 
@@ -720,8 +730,7 @@ def test_admission_calls_the_metadata_check_it_documents(tmp_path: Path) -> None
     # than the one in the directory it lives in. Both documents still parse, so the
     # only rule that can refuse this pair is the metadata cross-check.
     increment = (
-        scaffold[increment_path].replace("slices: 0", "slices: 1")
-        + _AUTHORED_BODY.format(slug="meta-project")
+        scaffold[increment_path].replace("slices: 0", "slices: 1") + _AUTHORED_BODY.format(slug="meta-project")
     ).replace("Roadmap-ID: RM-meta-project", "Roadmap-ID: RM-other-project")
     documents = {
         "worklogs/meta-project/roadmap.md": scaffold["worklogs/meta-project/roadmap.md"],
@@ -815,9 +824,7 @@ def test_rejected_create_leaves_no_project_and_no_reader_sees_bytes(site: Site, 
         base_rev = managed.current_revision_id
         wrote: dict[str, str] = {}
 
-        def build_registry(
-            workspace_io: WorkspacePort | None, _executor: object, _lease: object
-        ) -> ToolRegistry:
+        def build_registry(workspace_io: WorkspacePort | None, _executor: object, _lease: object) -> ToolRegistry:
             # The stage's port *is* the registry this drive needs: the drive only calls the
             # two document methods, and the seam declares a `ToolRegistry` because that is
             # what a real stage builds. Casting at the seam keeps the drive fully typed.
@@ -869,9 +876,7 @@ def test_rejected_create_leaves_no_project_and_no_reader_sees_bytes(site: Site, 
                 probe.port.read_file(roadmap_path)
 
     # 3. The canonical tree has no project either -- the refusal was not a partial install.
-    assert not any(
-        (root / "worklogs" / slug).exists() for root in (site.source, *site.roots.iterdir())
-    )
+    assert not any((root / "worklogs" / slug).exists() for root in (site.source, *site.roots.iterdir()))
 
 
 def _rejected_ctx(case_site: Site, child_ctx: Any, yaml_path: Path, managed: Any) -> Any:
@@ -880,9 +885,7 @@ def _rejected_ctx(case_site: Site, child_ctx: Any, yaml_path: Path, managed: Any
         run_id=child_ctx.run_id,
         base_task="ct-2.9",
         per_role_task={},
-        artifact_paths=workflow_controller.workflow_artifact_paths(
-            child_ctx.run_id, base_dir=child_ctx.run_log_dir
-        ),
+        artifact_paths=workflow_controller.workflow_artifact_paths(child_ctx.run_id, base_dir=child_ctx.run_log_dir),
         config=yaml_path,
         workspace=case_site.source,
         max_turns=1,
@@ -924,9 +927,7 @@ def test_a_create_new_repair_may_write_only_the_paths_a_refusal_can_be_fixed_in(
         authoring_root=root,
         repair_allowlist=_repair_allowlist(root),
     )
-    writer = build_registry_for_role("planner", tmp_path, planner_dispatch=dispatch).lookup(
-        "fs_write_file"
-    )
+    writer = build_registry_for_role("planner", tmp_path, planner_dispatch=dispatch).lookup("fs_write_file")
 
     def write(relative: str) -> str | None:
         result = writer.handler({"path": relative, "content": "changed\n"})
@@ -946,6 +947,8 @@ def test_a_create_new_repair_may_write_only_the_paths_a_refusal_can_be_fixed_in(
     assert write(f"{root}/notes/README.md") == "path_denied"
     assert write("worklogs/other-project/roadmap.md") == "path_denied"
     assert (tmp_path / root / "ledger.md").read_text(encoding="utf-8") == "original\n"
+
+
 def test_the_repair_task_names_the_rule_and_every_path_it_may_write() -> None:
     """P4-3: "invalid metadata" is not an actionable instruction; the rule is.
 
@@ -1002,9 +1005,7 @@ def test_a_repair_allowlist_outside_the_authoring_root_is_refused_at_constructio
         )
     with pytest.raises(PlannerDispatchError):
         # An empty scope is a writer that can write nothing.
-        PlannerDispatch(
-            PlannerDispatchKind.CREATE_NEW_PROJECT, "repair-run", authoring_root=root, repair_allowlist=()
-        )
+        PlannerDispatch(PlannerDispatchKind.CREATE_NEW_PROJECT, "repair-run", authoring_root=root, repair_allowlist=())
     with pytest.raises(PlannerDispatchError):
         # ...and the narrowing does not belong on any other kind.
         PlannerDispatch(
@@ -1229,9 +1230,7 @@ def test_the_bound_repair_path_runs_both_stages_and_binds_the_result(
             )
             return 0 if outcome is not None and outcome.exit_code == 0 else 2
 
-        ctx = _replace(
-            _stage_ctx(case_site, child_ctx, yaml_path, managed, slug), replans_allowed=1
-        )
+        ctx = _replace(_stage_ctx(case_site, child_ctx, yaml_path, managed, slug), replans_allowed=1)
         bound, blocked = workflow_controller._bind_authored_project(
             ctx,
             progress=workflow_controller.WorkflowProgress("WORKFLOW"),
@@ -1281,9 +1280,7 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(
     roadmap_path = f"worklogs/{slug}/roadmap.md"
     increment_path = f"worklogs/{slug}/increments/increment-01-initial-plan.md"
     good_roadmap = scaffold[roadmap_path]
-    good_increment = scaffold[increment_path].replace("slices: 0", "slices: 1") + _AUTHORED_BODY.format(
-        slug=slug
-    )
+    good_increment = scaffold[increment_path].replace("slices: 0", "slices: 1") + _AUTHORED_BODY.format(slug=slug)
     # Metadata-clean, grammar-broken: the parser wants an INVARIANTS section, and nothing in
     # the front matter is wrong, so this refusal can only come from the parse.
     broken_increment = _re.sub(r"## INVARIANTS.*?(?=\n## |\Z)", "", good_increment, flags=_re.S)
@@ -1297,9 +1294,7 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(
         yaml_path,
     ):
 
-        def build_registry(
-            workspace_io: WorkspacePort | None, _executor: object, _lease: object
-        ) -> ToolRegistry:
+        def build_registry(workspace_io: WorkspacePort | None, _executor: object, _lease: object) -> ToolRegistry:
             return cast("ToolRegistry", workspace_io)
 
         def rewrite(port: WorkspacePort, path: str, content: str) -> None:
@@ -1495,9 +1490,7 @@ def _stage_ctx(case_site: Any, child_ctx: Any, yaml_path: Path, managed: Any, sl
         run_id=child_ctx.run_id,
         base_task="ct-2.8",
         per_role_task={},
-        artifact_paths=workflow_controller.workflow_artifact_paths(
-            child_ctx.run_id, base_dir=child_ctx.run_log_dir
-        ),
+        artifact_paths=workflow_controller.workflow_artifact_paths(child_ctx.run_id, base_dir=child_ctx.run_log_dir),
         config=yaml_path,
         workspace=case_site.source,
         max_turns=2,
@@ -1606,9 +1599,7 @@ def test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarati
                 }
             ]
         )
-        bound, granted_refusal = workflow_controller._admit_published_project(
-            replace(ctx, dispositions=declaration)
-        )
+        bound, granted_refusal = workflow_controller._admit_published_project(replace(ctx, dispositions=declaration))
 
         assert granted_refusal is None
         assert bound.admission is not None and bound.admission.snapshot.graph is not None
@@ -1616,9 +1607,7 @@ def test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarati
         assert waiver.owner == "W4"
 
 
-def test_create_over_existing_directory_is_project_exists_and_unchanged(
-    site: Site, tmp_path: Path
-) -> None:
+def test_create_over_existing_directory_is_project_exists_and_unchanged(site: Site, tmp_path: Path) -> None:
     """CT-2.7 (D-V2-9.2): a create onto an existing project refuses, and nothing is lost.
 
     The guard has two independent halves and either one failing is a data-loss bug, so
@@ -1675,6 +1664,7 @@ def test_create_over_existing_directory_is_project_exists_and_unchanged(
         child_ctx,
         _yaml,
     ):
+
         def _stage(dispatch: object, drive: object) -> tuple[object, bool]:
             return _cli._run_cli_stage(
                 args=_argparse.Namespace(_managed_execution=managed),
@@ -1800,9 +1790,7 @@ def test_create_new_stage_scaffolds_then_planner_writes_only_inside_slug() -> No
         assert denied.error is not None and denied.error.code == "path_denied", path
 
 
-def _admit_in(
-    case_site: Site, child_ctx: Any, managed: Any, yaml_path: Path, slug: str
-) -> tuple[Any, Any]:
+def _admit_in(case_site: Site, child_ctx: Any, managed: Any, yaml_path: Path, slug: str) -> tuple[Any, Any]:
     """Run admission over the revision the stage published, in a real context.
 
     A real `WorkflowContext` and not a double: `_admit_published_project` returns a
@@ -1815,9 +1803,7 @@ def _admit_in(
         run_id=child_ctx.run_id,
         base_task="ct-2.8",
         per_role_task={},
-        artifact_paths=workflow_controller.workflow_artifact_paths(
-            child_ctx.run_id, base_dir=child_ctx.run_log_dir
-        ),
+        artifact_paths=workflow_controller.workflow_artifact_paths(child_ctx.run_id, base_dir=child_ctx.run_log_dir),
         config=yaml_path,
         workspace=case_site.source,
         max_turns=2,

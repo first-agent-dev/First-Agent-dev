@@ -1552,3 +1552,33 @@ def test_one_shot_cancel_does_not_depend_on_the_interactive_episode_map(one_shot
             stream.release.set()
         thread.join(5)
     assert_cancelled_command_outcome(failures)
+
+
+def test_corrupt_read_projection_never_reaches_backend_docker_or_worker(
+    backend: Backend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real backend→authority EDGE: a changed materialized copy admits no cell effects."""
+    reader = ok(
+        lambda: backend.authority.pin_reader(
+            PEER,
+            ACTOR,
+            workspace_id=backend.view.workspace_id,
+            revision_id=backend.view.base_revision,
+            plan_ref=None,
+            formal_evidence=False,
+            deadline=until(),
+        )
+    )
+    req = reader_exec_request(reader, "bc" * 16, "printf must-not-run")
+    claim(backend.authority, req)
+    original = backend.authority._materialize_input
+
+    def corrupt(data: int, stage: int, tree: dict[str, Any], profile: Any, deadline: float) -> None:
+        original(data, stage, tree, profile, deadline)
+        (Path(f"/proc/self/fd/{stage}") / "source/untracked.txt").write_text("different")
+
+    monkeypatch.setattr(backend.authority, "_materialize_input", corrupt)
+    denied("CORRUPT_STATE", lambda: backend.owner().execute(PEER, req, deadline=until()))
+    assert backend.peer.seen == []
+    assert backend.worker.runs == 0
+    assert backend.authority.execution_trusted(reader.view_ref) is None

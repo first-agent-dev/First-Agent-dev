@@ -40,6 +40,7 @@ class Operation(StrEnum):
     PTY_CONTROL = "pty_control"
     HANDOFF = "handoff"
     PREPARE_BUNDLE = "prepare_bundle"
+    INVENTORY_ACCEPTANCE = "inventory_acceptance"
     LIST_PROJECT_ARTIFACTS = "list_project_artifacts"
     DIFF_REVISIONS = "diff_revisions"
     LIST_PROJECTS = "list_projects"

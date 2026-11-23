@@ -59,7 +59,7 @@ def workspace(tmp_path: Path) -> Path:
     plugin_package.mkdir(parents=True)
     (tmp_path / "src" / "fa" / "__init__.py").write_text("", encoding="utf-8")
     (plugin_package / "__init__.py").write_text("", encoding="utf-8")
-    for plugin_name in ("overlay_pytest_plugin.py", "junit_nodeid_plugin.py"):
+    for plugin_name in ("overlay_pytest_plugin.py", "junit_nodeid_plugin.py", "junit_properties.py"):
         plugin_source = REPO_ROOT / "src" / "fa" / "inner_loop" / plugin_name
         (plugin_package / plugin_name).write_text(plugin_source.read_text(encoding="utf-8"), encoding="utf-8")
     (tmp_path / "tests").mkdir()

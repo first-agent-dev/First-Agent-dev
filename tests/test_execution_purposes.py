@@ -16,6 +16,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from fa.execution.supervisor import SupervisorError
 from fa.execution.types import Access, ExecutionContractError, GrantReply, ViewPurpose
 from fa.execution.workspace import WorkspaceAuthority, sealed_project_paths
@@ -883,3 +885,192 @@ def test_the_protected_set_is_derived_from_the_plan_not_declared_by_the_caller(s
     assert sealed_project_paths(f"{_SEALED_PROJECT}/acceptance/tests/test_initial.py") == (_SEALED_PROJECT,)
     # The legacy single-file route protects its own path and never protects nothing.
     assert sealed_project_paths("plan.md") == ("plan.md",)
+
+
+@pytest.mark.parametrize("change", ["modify", "add", "delete", "mode", "directory", "none"])
+def test_plan_bound_acceptance_changes_cannot_cross_service_seal(site: Site, change: str) -> None:
+    """Real STOP→SEAL→PUBLISH with a shell-shaped write bypassing file-tool checks."""
+    from uuid import uuid4
+
+    from fa.execution.service import SupervisorService
+    from fa.execution.types import Operation
+    from tests.test_execution_service import _config, _error, _registered, _writer, exchange
+
+    _seed_sealed_project(site)
+    plan_ref = read_plan_snapshot(site.source, Path(_SEALED_PLAN)).ref
+    canonical = site.source / _SEALED_PROJECT / "acceptance/tests/test_initial.py"
+    original = canonical.read_bytes()
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        writer, revision = _writer(service, workspace_id, request_id="2" * 32)
+        opened = exchange(
+            service,
+            Operation.CREATE_VIEW,
+            {
+                "workspace_id": workspace_id,
+                "base_revision": revision,
+                "access": "WRITE",
+                "purpose": "PROJECT",
+                "candidate_scope": None,
+                "plan_ref": {
+                    "workspace_relative_path": plan_ref.workspace_relative_path,
+                    "source_kind": plan_ref.source_kind,
+                    "sha256": plan_ref.sha256,
+                },
+            },
+            request_id="3" * 32,
+            capability=writer,
+        )
+        assert opened["status"] == "OK", opened
+        view, cap = opened["result"]["view_ref"], opened["result"]["capability"]
+        source = site.state / "workspaces" / workspace_id / "views" / view["view_id"] / "source"
+        target = source / _SEALED_PROJECT / "acceptance/tests/test_initial.py"
+        if change == "modify":
+            target.write_text("changed\n")
+        elif change == "add":
+            target.with_name("new.py").write_text("new\n")
+        elif change == "delete":
+            target.unlink()
+        elif change == "mode":
+            target.chmod(target.stat().st_mode ^ 0o100)
+        elif change == "directory":
+            (target.parent / "empty").mkdir()
+        (source / "src").mkdir(exist_ok=True)
+        (source / "src" / "feature.py").write_text("FEATURE = 1\n")
+        stopped = exchange(service, Operation.STOP_VIEW, {}, request_id=uuid4().hex, view_ref=view, capability=cap)
+        assert stopped["status"] == "OK", stopped
+        sealed = exchange(service, Operation.SEAL, {}, request_id=uuid4().hex, view_ref=view, capability=cap)
+        if change != "none":
+            assert _error(sealed) == "PATH_DENIED"
+            assert canonical.read_bytes() == original
+            assert not (site.source / "src" / "feature.py").exists()
+        else:
+            assert sealed["status"] == "OK", sealed
+            published = exchange(
+                service,
+                Operation.PUBLISH,
+                {
+                    "sealed_manifest_id": sealed["result"]["sealed_manifest_id"],
+                    "expected_base_revision": revision,
+                },
+                request_id=uuid4().hex,
+                view_ref=view,
+                capability=cap,
+            )
+            assert published["status"] == "OK", published
+            assert canonical.read_bytes() == original
+            assert (site.source / "src" / "feature.py").read_text() == "FEATURE = 1\n"
+
+
+def test_authoring_without_a_bound_plan_can_publish_acceptance(site: Site) -> None:
+    """A fresh authoring view may create tests before a plan has been admitted."""
+    from uuid import uuid4
+
+    from fa.execution.service import SupervisorService
+    from fa.execution.types import Operation
+    from tests.test_execution_service import _config, _registered, _writer, exchange
+
+    _seed_sealed_project(site)
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        writer, revision = _writer(service, workspace_id, request_id="2" * 32)
+        opened = exchange(
+            service,
+            Operation.CREATE_VIEW,
+            {
+                "workspace_id": workspace_id,
+                "base_revision": revision,
+                "access": "WRITE",
+                "purpose": "PROJECT",
+                "candidate_scope": None,
+                "plan_ref": None,
+            },
+            request_id="3" * 32,
+            capability=writer,
+        )
+        assert opened["status"] == "OK", opened
+        view, cap = opened["result"]["view_ref"], opened["result"]["capability"]
+        write = exchange(
+            service,
+            Operation.WRITE_FILE,
+            {
+                "path": _SEALED_PROJECT + "/acceptance/tests/created.py",
+                "content": "created\n",
+                "expected_sha256": None,
+            },
+            request_id=uuid4().hex,
+            view_ref=view,
+            capability=cap,
+        )
+        assert write["status"] == "OK", write
+        stopped = exchange(service, Operation.STOP_VIEW, {}, request_id=uuid4().hex, view_ref=view, capability=cap)
+        assert stopped["status"] == "OK", stopped
+        sealed = exchange(service, Operation.SEAL, {}, request_id=uuid4().hex, view_ref=view, capability=cap)
+        assert sealed["status"] == "OK", sealed
+        published = exchange(
+            service,
+            Operation.PUBLISH,
+            {
+                "sealed_manifest_id": sealed["result"]["sealed_manifest_id"],
+                "expected_base_revision": revision,
+            },
+            request_id=uuid4().hex,
+            view_ref=view,
+            capability=cap,
+        )
+        assert published["status"] == "OK", published
+        assert (site.source / _SEALED_PROJECT / "acceptance/tests/created.py").read_text() == "created\n"
+
+
+def test_acceptance_boundary_refuses_omitted_base_entry() -> None:
+    """A forged replay manifest cannot hide a deletion by omitting its tombstone."""
+    from fa.execution.publication import _validate_acceptance_boundary
+
+    root = _SEALED_PROJECT + "/acceptance"
+    entry = {
+        "path": root,
+        "deleted": False,
+        "type": "directory",
+        "mode": 0o755,
+        "size": 0,
+        "sha256": None,
+        "link_target": None,
+    }
+    missing = {**entry, "path": root + "/tests"}
+    denied(
+        "PATH_DENIED",
+        lambda: _validate_acceptance_boundary([entry], {root: entry, missing["path"]: missing}, _SEALED_PLAN),
+    )
+
+
+@pytest.mark.parametrize("phase", ["publish", "replay"])
+@pytest.mark.parametrize("tamper", ["substitute", "omit"])
+def test_acceptance_fence_rechecked_on_publish_and_replay(site: Site, phase: str, tamper: str) -> None:
+    """C3: a self-consistent forged manifest cannot bypass the stored-tree boundary."""
+    from fa.execution.publication import MANIFEST_NAME, _tree_hash
+    from tests.test_workspace_publication import _current, _manifest, _publish, _seal, _stop
+
+    with v2_setup(site) as (owner, ids, lease, plan_ref):
+        grant = create(owner, ids, lease, purpose=ViewPurpose.PROJECT, access=Access.WRITE, plan_ref=plan_ref)
+        canonical = site.source / _SEALED_PROJECT / "acceptance/tests/test_initial.py"
+        original = canonical.read_bytes()
+        _stop(owner, grant)
+        sealed = _seal(owner, grant)
+        if phase == "replay":
+            published = _publish(owner, grant, sealed)
+            expected_revision = published.revision_id
+        else:
+            expected_revision = ref(grant).base_revision
+        manifest = _manifest(site, grant)
+        path = _SEALED_PROJECT + "/acceptance/tests/test_initial.py"
+        if tamper == "omit":
+            manifest["entries"] = [entry for entry in manifest["entries"] if entry["path"] != path]
+        else:
+            entry = next(entry for entry in manifest["entries"] if entry["path"] == path)
+            entry["sha256"] = hashlib.sha256(b"forged").hexdigest()
+            entry["size"] = len(b"forged")
+        manifest["tree_sha256"] = _tree_hash(manifest["entries"])
+        (views_root(owner, grant) / MANIFEST_NAME).write_text(json.dumps(manifest))
+        denied("PATH_DENIED", lambda: _publish(owner, grant, sealed))
+        assert canonical.read_bytes() == original
+        assert _current(site, ids)["revision_id"] == expected_revision

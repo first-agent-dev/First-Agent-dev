@@ -1,35 +1,30 @@
-"""Where a minted acceptance seal lives, and the rules that keep custody honest (D-V2-5).
+"""Legacy workspace-local seal storage; not authority-private custody.
 
-The seal is the artifact that says which bytes the oracle is. Three properties make the
-storage as load-bearing as the mint:
-
-* **Revisions never walk it.** D-V2-5's C1 is not tidiness: a seal written as a plain file in
-  the tracked tree makes "the project at revision R" and "the bytes on disk" stop meaning the
-  same thing at exactly the artifact that is supposed to prove custody. The store therefore
-  lives under ``.fa/``, which every canonical walk excludes at any depth
-  (``workspace.py:_PROTECTED_COMPONENTS``) and which no file tool may address
-  (``view_io.py:_BLOCKED_COMPONENTS``).
-* **Every seal ever minted stays readable.** Option A-1 appends an immutable per-seal file named by
-  the digest it carries and swings one pointer, so ``supersedes_sha256`` stays a walkable
-  chain instead of an overwritten claim.
-* **A torn or missing record is a hard error, never a re-mint.** Re-minting over a corrupt
-  record would launder the corruption into evidence; the rules below refuse instead.
-
-The store is deliberately a plain filesystem object: the run already holds the workspace's
-single writer grant, which is the lock D-V2-5 §2 asks for, so no second locking scheme is
-introduced for two small writes.
+Records are content-addressed and a pointer names the seal in force. Reads are
+bounded and reject linked or non-regular final files, but workspace ancestors are
+not an authority boundary. PLAN-V2 coder dispatch remains blocked until storage
+and read-only projections are managed by WorkspaceAuthority.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from .acceptance_bundle import AcceptanceBundle, AcceptanceBundleError, load_seal, seal_bytes, write_seal
+from .acceptance_bundle import (
+    MAX_SEAL_BYTES,
+    AcceptanceBundle,
+    AcceptanceBundleError,
+    load_seal,
+    seal_bytes,
+    write_seal,
+)
 
 __all__ = [
     "SEAL_POINTER",
@@ -44,6 +39,37 @@ SEAL_STORE_ROOT: Final = ".fa/seals"
 SEAL_POINTER: Final = ".fa/seal-current.json"
 
 _POINTER_SCHEMA: Final = 1
+_DIGEST = re.compile(r"\A[0-9a-f]{64}\Z")
+_MAX_POINTER_BYTES = 4096
+
+
+def _read_bounded_file(path: Path, limit: int) -> bytes:
+    """Read at most limit + 1 bytes from a non-linked regular file, never a FIFO."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise OSError("invalid file")
+        chunks: list[bytes] = []
+        remaining = limit + 1
+        while remaining:
+            chunk = os.read(fd, min(remaining, 65536))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def _unique_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate pointer field")
+        result[key] = value
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,8 +108,11 @@ class SealStore:
         # audit chain would show a rung that was never in force.
         previous = self._pointer()
         if previous == bundle.seal_sha256:
+            self.current()  # Do not reconstruct a missing or torn pointed record.
             self._write_once(record, raw, bundle)
             return bundle
+        if previous is not None:
+            self.current()  # A corrupt predecessor cannot authorize a pointer move.
         if previous is not None and bundle.supersedes_sha256 != previous:
             raise AcceptanceBundleError("seal-supersede-required")
         self._write_once(record, raw, bundle)
@@ -97,16 +126,19 @@ class SealStore:
             raise AcceptanceBundleError("seal-pointer-missing")
         path = self._record_path(digest)
         try:
-            raw = path.read_bytes()
+            raw = _read_bounded_file(path, MAX_SEAL_BYTES)
         except OSError:
             # A pointer naming a record that is not there is corruption, not absence: the
             # alternative -- treating it as "no seal yet" -- would let a lost record read as
             # a workspace that was never sealed (D-V2-5 §4).
             raise AcceptanceBundleError("seal-record-missing") from None
         try:
-            return load_seal(raw)
+            bundle = load_seal(raw)
         except AcceptanceBundleError as error:
             raise AcceptanceBundleError(error.rule) from None
+        if bundle.seal_sha256 != digest:
+            raise AcceptanceBundleError("seal-record-mismatch")
+        return bundle
 
     def supersede(self, bundle: AcceptanceBundle, *, supersedes_sha256: str) -> AcceptanceBundle:
         """Store a replacement whose chain names its predecessor.
@@ -121,7 +153,7 @@ class SealStore:
         return self.store(bundle)
 
     def _record_path(self, seal_sha256: str) -> Path:
-        if not isinstance(seal_sha256, str) or len(seal_sha256) != 64:
+        if not isinstance(seal_sha256, str) or _DIGEST.fullmatch(seal_sha256) is None:
             raise AcceptanceBundleError("seal-invalid")
         return self.directory / f"{seal_sha256}.json"
 
@@ -132,7 +164,7 @@ class SealStore:
         except OSError:
             raise AcceptanceBundleError("seal-store-unwritable") from None
         try:
-            existing = path.read_bytes()
+            existing = _read_bounded_file(path, MAX_SEAL_BYTES)
         except FileNotFoundError:
             existing = None
         except OSError:
@@ -157,19 +189,24 @@ class SealStore:
 
     def _pointer(self) -> str | None:
         try:
-            raw = self.pointer_path.read_bytes()
+            raw = _read_bounded_file(self.pointer_path, _MAX_POINTER_BYTES)
         except FileNotFoundError:
             return None
         except OSError:
             raise AcceptanceBundleError("seal-pointer-unreadable") from None
+        if len(raw) > _MAX_POINTER_BYTES:
+            raise AcceptanceBundleError("seal-pointer-invalid")
         try:
-            payload = json.loads(raw.decode("utf-8"))
+            payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_keys)
         except (UnicodeError, ValueError):
             raise AcceptanceBundleError("seal-pointer-invalid") from None
-        digest = payload.get("seal_sha256") if isinstance(payload, dict) else None
-        if not isinstance(digest, str) or len(digest) != 64:
+        if not isinstance(payload, dict) or set(payload) != {"schema_version", "seal_sha256"}:
             raise AcceptanceBundleError("seal-pointer-invalid")
-        if payload.get("schema_version") != _POINTER_SCHEMA:
+        digest = payload["seal_sha256"]
+        version = payload["schema_version"]
+        if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
+            raise AcceptanceBundleError("seal-pointer-invalid")
+        if type(version) is not int or version != _POINTER_SCHEMA:
             raise AcceptanceBundleError("seal-pointer-invalid")
         return digest
 

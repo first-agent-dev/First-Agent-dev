@@ -13316,3 +13316,961 @@ ledger keeps rejecting, so the omission is written down here instead of being in
 **What remains owed for this branch, then, is one thing:** a pytest recording for the current head
 (`gate_tracker.py record ... --reuse pytest=/tmp/head-suite.log` once that run finishes). The other four gates are
 closed on `23d5d03`, which retires the non-pytest half of the debt E623 and E628 recorded.
+
+### E630 — DECIDED: rolling-wave mutation obligation and late site binding (2026-11-23)
+
+**Operator direction.** Each executable FUNCTIONAL CT requires one mutation check; its TEST-ID is explicitly
+named even when it is the only test. Planner owns INV, optional SCN, behavior, meaningful seams and sealed
+acceptance; coder retains routine implementation freedom. A genuinely known contractual site can be planned; a
+new implementation can use a bounded coder-proposed site after publication. Harness binds it to the seal, CT,
+TEST-ID/nodeid and candidate revision and owns verification, not the coder. The proposal is untrusted; the
+result proves sensitivity to the named mutation, not semantic completeness. See the V2 plan SLICE3 D-V2-13 for
+target grammar, two cases, failure policy, open dependencies, ordered work and test/kill obligations.
+
+**Changed in this entry's documentation:** Q-V2-SLICE3-5 no longer recommends mandatory `path::symbol` as
+identity; Q-V2-SLICE3-6 selects the managed in-band direction without asserting a particular scratch lifecycle.
+The previous brief is marked historical. Existing D-V2-4's bounded test-change proposal is an analogy, not a
+landed mutation-proposal channel; no code or runner has been added. Preserve Q-V2-SLICE3-4 history and F9 during
+transition. G-RW (fresh pre-mint collection and active-slice scope) and real proposal-transport design are
+implementation gates, not solved by this decision. No test or host verification is claimed by this entry.
+
+**Provenance:** operator discussion in this Arena session; source audit of `plan_v2`, `acceptance_collection`,
+`acceptance_bundle`, `verification_attempt`, `kill_attribution`, `slice_verification`, `workflow_controller` and
+`acceptance_defect`. E630 here is distinct from the same-numbered entry in an externally supplied branch report.
+
+### E631 — source-grounded adversarial review of D-V2-13 (2026-11-23)
+
+**Changed:** the SLICE3 plan now names the seal/graph and seal/binding seams, multi-test projection,
+V2 diagnostics, determinate versus indeterminate routing, receipt identity, TARGET-ID consumer migration,
+and exact production caller/negative tests. It selects the existing terminal coder outcome as the proposed
+bounded handoff, with a fail-closed viability gate; specifies separate managed receipts and requires test-process
+provenance. G-RW now has a diagnostic first and a separately gated post-implementation success test;
+Q-V2-ROLLING-1 records the unresolved scope authority. V2 ownership auditing remains gated by the existing
+status authority question. Historical statements about V2 production wiring and mode A are corrected or labelled.
+E630's transport/scratch wording was the state at that decision, not the current detailed design.
+
+**Evidence and limits:** `acceptance_bundle._bind_graph_to_bytes` checks textual containment rather than full
+semantics. A stdlib-only isolated import bypassing this sandbox's incompatible package initializer used admitted
+fixture graphs: the original and graphs with changed selector or FUNCTIONAL class were accepted against the
+original bytes by that helper. This does not establish a reachable production exploit. Source reading also shows
+`_sealed_stage_verification` projects all blocking attempts into `errors`, which the route treats as indeterminate;
+`_check_v2` rejects multiple claims per CT; `affected_scope` returns target IDs; the JUnit projection does not
+prove assertion type; and collection runs pytest before mint. Future-producer import failure and transport behavior
+in each supported topology remain hypotheses requiring the named production-path experiments.
+
+**Checks in this documentation-only review:** `git diff --check` and `python scripts/check_doc_links.py` passed
+(393 Markdown files, no broken links); `python scripts/check_execution_e2e_coverage.py` passed for planned mappings
+only. `./scripts/arena-env-build.sh --check` reported the project `.venv` missing. System Python 3.11 has no
+pytest and cannot import `typing.override`; no product test, managed execution, mutation proof, host witness or
+no-new-red comparison was run. The prior historical gate records are not new results.
+
+### E632 — rolling-wave clarification and implementation readiness (2026-11-23)
+
+The operator clarified rolling wave: a broad roadmap, detailed nearest increment and its slices, later increments
+outlined. E631's inference of an active-slice scope decision from that term was wrong; `Q-V2-ROLLING-1` is
+withdrawn. The plan now requires no I02 details or acceptance tests while I01 remains unfinished and does not
+change full custody/pre-code/verification of the admitted increment. A future producer import during pre-code
+collection is a separate current-increment technical hypothesis; diagnosis and negative control are retained, not a
+new scoped verification policy or a proven failure.
+
+Readiness: STEP9, STEP9A and STEP9B remain unticked in the controlling I03 increment. Historical records show
+partial mechanisms and later V2 wiring, not proof of their current aggregate closure. `Q-V2-SEQUENCE-1` records the
+potential ownership/order conflict between the STEP9A exit and new-slice B1a/B4, with options and no silent
+reordering. The independent STEP9B review and Q-V2-STATUS-1 authority gate remain required for their dependent
+scope. No production/test implementation or host proof is claimed by this documentation correction.
+
+**Environment/readiness checks:** `./scripts/arena-env-build.sh` completed with `ENVIRONMENT_READY` and
+CPython 3.13.16; `--check` passed. The existing targeted baseline
+`.venv/bin/python -m pytest tests/test_ai_native_acceptance_bundle.py tests/test_ai_native_acceptance_defect.py tests/test_v2_verification_attempt.py -q`
+reported **178 passed**. This exercises existing behavior only: the newly planned negative tests, mutation
+checks, comprehensive gates and host witnesses were not run and are not implied by this result.
+
+**Live ledger E2E:** the W4 plan now requires an actual authorized append, durable re-read, preservation and
+negative controls, plus producer/EDGE local kills and worklog evidence. Q-V2-LEDGER-1 records the unresolved
+post-admission append authority (planner ledger described as append-only but admitted bytes immutable); it does
+not assert a new writer, change custody or imply a live-host result.
+
+### E633 — correction of SLICE6 STEP9 state and next-slice ownership (2026-11-23)
+
+**Correction:** E632 incorrectly stated STEP9 was unticked. The controlling I03 SLICE6 STEP9 is `[x]`;
+E556/E558 record its Arena-local closure. This does not close STEP9A, STEP9B, W3, other W3 tasks, or W4.
+The linked V2 plan's current-state summary and sequence now reflect this; historical E632 remains unchanged.
+The contemporaneous source audit confirms `_seal_published_project` calls `mint_seal` and the coder stage calls
+`_sealed_stage_verification`; the current code still has no definition/caller of `run_kill_checks`. Historical
+claims of no seal caller in E564 are not current facts.
+
+**Next candidate, not started:** STEP9A seal-to-plan graph semantic binding at the existing
+`acceptance_bundle._bind_graph_to_bytes` / `mint_seal` / `acceptance_defect.correct` seam, with graph-field
+negative controls and producer plus caller/EDGE mutation tests. D-V2-13 B1a assigns that work, but the open
+Q-V2-SEQUENCE-1 explicitly blocks B1a–B6 pending an ownership/order decision. Operator confirmation is requested
+before moving this task under STEP9A or otherwise changing the gate. No code, tests, mutation or host work is
+claimed by this entry.
+
+### E634 — STEP9A: seal binds the authored increment graph (2026-11-23)
+
+**Direction:** operator asked to resolve dependencies actively rather than stop for ownership ceremony, while
+maintaining gates. Q-V2-SEQUENCE-1 is resolved on that basis; STEP9A/STEP9B/W3/W4 are not ticked. The previous
+E633 request for confirmation is superseded by that direction. The future live ledger append E2E remains planned
+and its post-seal authority Q-V2-LEDGER-1 remains open for that dependent scope.
+
+**Change:** extracted the existing increment parsing and admission into `plan_v2._parse_increment`, called by
+`parse_plan` after its real roadmap validation. `acceptance_bundle._bind_graph_to_bytes` reparses the exact UTF-8
+increment bytes and compares the complete authored graph, excluding only caller-granted owner/evidence/date
+fields (which are not plan text and are bound by the existing admission path). Malformed input and graph mismatch
+fail with `seal-plan-graph-mismatch`; both `mint_seal` and `acceptance_defect.correct` reach the same gate. This is
+not a new seal, schema, authority or claim that standalone `mint_seal` authenticates grant provenance.
+
+**Tests:** eleven field-substitution cases exercise the actual mint; a defect-correction case and a controller
+admission caller case assert no admission or stored seal on a substituted graph. Four existing fixture scenarios
+were corrected to pair their graph with its actual document, retaining their original negative oracles:
+`tests/test_ai_native_acceptance_bundle.py`, `test_ai_native_acceptance_defect.py`,
+`test_ai_native_acceptance_collection.py`, and `test_ai_native_kill_attribution.py`. The 10-file targeted bank
+reported **455 passed** after the final edit. Ruff check/format on the seven touched Python files, scoped mypy
+(two source files, `--follow-imports=silent`), documentation links, planned E2E coverage and `git diff --check`
+passed. No full-suite or host run is claimed.
+
+**Mutation evidence:** manually and temporarily replaced authored-graph comparison with `if False`: all 11 field
+cases failed (producer KILLED). Separately removed the `_bind_graph_to_bytes` call from `mint_seal`: the actual
+controller admission/refusal test failed (EDGE KILLED), and the defect-correction test failed (correction edge
+KILLED). Source restored after every experiment. These prove this change's guard and two caller edges only; they do
+not prove selector-to-seal binding, managed kill execution, complete STEP9A or a host witness.
+
+### E635 — STEP9A component: bind mutation target to the sealed selector (2026-11-23)
+
+**Change:** `kill_attribution.bindings` now requires plan bytes, validates the in-memory seal's canonical digest,
+checks the plan digest and full authored graph via the existing seal seam, and joins target CT/TEST to the seal's
+exact CT/selector/nodeid. `run_node_oracle` requires the graph and plan bytes, re-derives an identical declared
+binding before running, and `oracle_argv` refuses a foreign seal, sealed revision, closure, test digest, CT or
+nodeid. These are component protections, not a claim that the current V2 workflow invokes this module; the code
+has no production caller yet. Run/candidate identities, baseline/mutant receipt joins and assertion-phase
+classification remain unimplemented, and no full B1a/B4 or STEP9A closure is claimed.
+
+**Tests:** C0/C3 negatives cover altered plan/graph, internally consistent seal rows with foreign CT/selector/nodeid,
+missing sealed TEST-ID, forged target, foreign sealed revision/closure/test digest and the no-command refusal; a
+single parametrized nodeid remains valid. The broader 10-file bank passed **474 tests**; touched-file Ruff
+check/format and scoped mypy passed. TEST-EDITS: `tests/test_ai_native_kill_attribution.py` now supplies the
+mandatory plan bytes; the no-target fixture uses its actual matching plan and the foreign-graph case asserts the
+new earlier refusal. The target-unsealed refusal remains separately tested against a crafted seal.
+
+**Mutation:** temporarily removing the sealed-row CT comparison failed its test (producer KILLED); removing the
+`run_node_oracle` re-derivation failed the forged-target negative (component EDGE KILLED); removing the argv binding
+check failed the stale-revision negative (component EDGE KILLED). An earlier mutant deleting a redundant guard in
+`run_node_oracle` survived because the subsequent full binding re-derivation also refused it; the redundant guard was
+removed and the independent argv guard then tested. All temporary mutants were restored. The product-level caller
+EDGE is still owed when managed composition exists; no fake C1 or host evidence substitutes for it.
+
+### E636 — STEP9A component: exact call-phase assertion classification (2026-11-23)
+
+**Change:** the explicit JUnit pytest plugin records whether the actual call report passed, skipped, raised an
+`AssertionError`, or failed otherwise. The shared parser gains an invocation-bound strict kill projection and an
+in-band adapter with the existing one-block rules; general acceptance/V1 parsing remains unchanged.
+`kill_attribution.run_node_oracle` issues a fresh run nonce, requires strict metadata, and refuses contradictory
+`CommandOutcome`/exit/JUnit evidence. Because pytest is a dev dependency, protocol constants moved to a small
+`junit_properties.py` imported by the runtime; the pytest plugin imports pytest only in the pytest process. A
+subprocess import probe with pytest deliberately unavailable passed. No V2 production kill runner was added.
+
+**Verification:** real pytest subprocess cases prove assertion, ordinary exception, setup, teardown, pass and skip
+classification; an oracle subprocess exercises the actual command/plugin/parser path; nonce, duplicate/missing
+metadata, truncated/duplicate in-band blocks and status mismatch are negative controls. A 13-file local bank
+passed **738 tests**, using the runbook's `.venv/bin` PATH; scoped Ruff/format and scoped mypy passed. An earlier
+bank without that PATH had 5 failures (733 passed): three reran green with PATH, two revealed that the existing
+`test_mutation_overlay.py` fixture copied the plugin without its new constants dependency. The fixture now copies
+that dependency without changing the assertions, and all five reran green. TEST-EDITS:
+`tests/test_ai_native_kill_attribution.py` adds real and synthetic evidence cases; `tests/test_mutation_overlay.py`
+adds only the plugin dependency to the fixture.
+
+**Targeted mutation:** marking every call exception as assertion was killed by real `ValueError` pytest case;
+turning off strict parser metadata was killed by the same case; dropping exit/JUnit consistency was killed by the
+status-mismatch case; routing in-band reports through the old unbound parser was killed by the stale-nonce case.
+Temporary edits were restored. These are producer/component edges, not the missing production workflow EDGE.
+
+**Remaining:** `NodeRun` does not yet carry authority-backed candidate/revision/phase receipt identity, there is no
+managed baseline+mutant `run_kill_checks` composition or proof of actual mutated import, and these changes do not
+make coder-controlled test output an independent trust anchor. STEP9A and W3 remain open; host test is not run.
+
+
+### E637 — multi-test sealed projection component (2026-11-23)
+
+**Change:** V2 attempts now count distinct claimed CTs, retain every unique TEST-ID/nodeid, require pending
+to be a subset of attested, and reject duplicate identities and unknown declared target TEST-IDs. The seal
+projection compares exact claim keys with its bundle. Existing required mutation records must have exactly
+one mutation per required CT; this does not implement selection of the target TEST-ID or enable production
+mutation. Legacy routing and attribution-only declared targets are unchanged. Historical entity tests allowing
+pending without attestation were corrected to match the pre-existing seal invariant, not rewritten as history.
+
+**Evidence:** real admission/mint → managed-test-double in-band pytest → controller → attempt and payload tests
+cover two selectors on one CT, both passing and the second failing. Same-count substitution, duplicates, pending
+and mutation cardinality have negative cases. A 12-file bank passed **596 tests**; after the strengthened negative
+case, the three projection test files passed **71 tests**. Scoped Ruff/format, mypy and diff whitespace checks
+passed. One initial larger bank invocation used a nonexistent test filename and collected nothing; corrected.
+
+**Mutation:** pending-subset, mutation cardinality, declared target TEST-ID, projection same-count substitution,
+and controller consumption of all claim outcomes: five targeted mutants killed, originals restored. Initially
+the pending mutant survived because the negative case also violated totality; the test was strengthened to hold
+totality constant, then killed it. The substitution mutation uses an injected faulty claim producer and is not an
+independent authenticity proof. The controller edge is baseline projection, not the still-missing managed kill
+EDGE. STEP9A/9B, authority-backed receipt/provenance, selected-TEST-ID mutation binding, observe/enforce routing
+and live host E2E remain open.
+
+
+### E638 — B1 pre-code diagnostic and scoped blocker (2026-11-23)
+
+**Fixture and command:** `PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest
+tests/test_v2_seal_store_and_mint.py::test_precode_collection_diagnostic_with_outlined_successor -q` invokes
+`_admit_published_project` → `_seal_published_project` → `collect_sealed_tree` using actual in-band pytest,
+with a document port and executor double (host subprocess, not an authority-managed cell). The current I01
+contains one executable test and an attested CT; the roadmap also contains an outlined I02, with no I02 plan
+or tests. The collector builds `python -m pytest` for the closure, not `--collect-only`.
+
+**Observed:** a syntactically valid test that runs and fails its assertion at T0 still resolves its selector
+and mints a seal; a test importing `future_product_not_yet_implemented` at module scope yields
+`bootstrap-acceptance-unsealed` / `collection-report-invalid`, no admitted context and no seal pointer, hence
+no sealed input for coder. The first assertion expected `selector-uncollected`; the actual diagnostic was
+`collection-report-invalid` and the test was corrected to record it. This demonstrates this authoring pattern
+blocks locally, not that every valid pre-code test must block, nor that a managed host run was observed.
+`parse_plan` consumes only the supplied increment plus roadmap marker; this diagnostic does not prove the full
+project lifecycle or I02 acceptance. Scoped question **Q-V2-PRECODE-1** records options; do not bypass custody
+or guess a policy.
+
+**Transport source audit, preliminary:** `_run_stage` allocates a fresh sink for each role, sends it to
+`run_stage_fn`, captures the managed revision immediately before and after the call, and currently consumes
+`final_text` for eval, not coder. `_cmd_run` passes the settled stage outcome to `_finish_cli_run`, which appends
+to the sink, still prints final text and returns `_run_exit_code` including release failure. `_run_cli_stage`
+uses a managed view in both direct and nested cases (PROJECT versus MUTATION for coder), and calls `lease.finish`
+before returning; this is source evidence of a plausible channel, not proof of successful stage/release/identity
+join or a tested direct+nested transport. The complete B1 transport audit and any end-to-end proof remain owed.
+
+**Checks:** full `tests/test_v2_seal_store_and_mint.py` **25 passed**; scoped Ruff/format and `git diff --check`
+passed. Collector invalid-report guard producer mutant and admission→seal caller EDGE mutant killed by the
+diagnostic, with temporary edits restored. An initial producer mutation targeted an earlier identical parser guard
+and survived; re-grounding to `collect_sealed_tree` killed the owning guard. No production semantics changed.
+STEP9A, STEP9B and B1 remain open; host not run.
+
+
+### E639 — STEP9A pre-code direction selected (2026-11-23)
+
+Operator selected full pinned pre-code run with honest outcome classification and immutable closure;
+scenario-appropriate known-bad/no-op witnesses may support sensitivity, but cannot substitute for production
+entry/effect or post-code mutation. A local subprocess audit found lazy missing import, call-time `ValueError`
+and skip all currently allow seal via boolean projection: this is a defect, not evidence of a complete gate.
+Future fresh-project fixture must test whether the contract is viable without foreknowledge of internal seams;
+if not, develop an explicit producer-absent-state replan with later mandatory checks. No collect-only
+substitution, fake proof or host success is authorized. STEP9A and STEP9B remain open.
+
+
+### E640 — STEP9A pre-code classification component (2026-11-23)
+
+**Change:** `collect_sealed_tree` keeps the full pytest invocation but uses the existing JUnit plugin and one-block
+in-band parser with a per-run nonce. The shared parser distinguishes assertion failures from other call exceptions
+for this consumer; skip and non-assertion call failures refuse before mint, setup/collection/report errors remain
+invalid, and pytest exit/outcome must agree with the report. Assertion-red remains acceptable as a collection
+result, **not** a claim that a scenario-specific sensitivity witness was proved. Other verification paths retain
+their prior parser behavior. Nonce binds the report to this invocation; it is not an independent authority against
+a compromised runner/test process.
+
+**Tests:** real pytest subprocess under controller admission exercises assertion-red, ValueError, absent lazy import,
+skip and broken setup, asserting refusal and no seal/admission where appropriate. A real-report receipt mutation
+checks nonce and contradictory exit; existing foreign-nodeid fixture was updated to carry the new metadata without
+weakening its outside-closure oracle. Focused four-file bank **212 passed**; 12-file bank **605 passed**. Scoped
+Ruff/format, mypy and `git diff --check` passed. TEST-EDITS: added cases and updated that synthetic receipt.
+
+**Mutation:** five targeted mutants killed: bypass non-assertion refusal, bypass skip refusal, bypass exit
+consistency, misclassify other exception at parser, and replace the controller-reached strict parser call with the
+old boolean projection. Originals restored. This caller EDGE proves admission→collector classification using a
+subprocess executor double, not an actual managed-cell witness.
+
+**Open:** pin/revision and receipt-authority proof for pre-code execution, closure drift between execution/mint,
+persistent per-node pre-code evidence and actual applicable no-op/known-bad witness association, direct+nested
+composition and STEP9A's remaining custody/TEST-DEFECT/exact mutation production edges. Fresh-project fixture and
+possible producer-absent replan remain future obligations (E639). No STEP9A/9B or host closure claimed.
+
+
+### E641 — STEP9A pre-code revision and collection-to-mint join (2026-11-23)
+
+**Change:** the real admission caller snapshots the published revision and supplies it to the existing collector,
+which rejects a different/unnamed executor revision before the command. The collector returns the closure digest
+measured before the run; before storing the minted bundle the controller compares its digest and current revision
+with that run input. Revision/digest mismatches leave no admission or stored seal and are not planner-content
+repair candidates. This is an equality/join guard, not proof that a purported executor or the controller's tree is
+authoritative, nor protection against transient in-run modifications restored before the comparison.
+
+**Testing:** foreign executor revision is refused before command and post-run test-source drift is refused after
+mint but before store. Initial run found the subprocess test double creates `__pycache__` in the closure, producing
+six honest digest mismatches; the harness command now sets `PYTHONDONTWRITEBYTECODE=1` and the targeted two-file
+bank passes **71 tests**. The broader 12-file bank passes **607 tests**. Scoped Ruff/format/mypy and whitespace
+checks pass. Temporary mutants bypassing revision producer, caller's revision argument, digest join and nonrepairable
+classification all killed; originals restored. TEST-EDITS add two controller cases with no-seal and no-repair
+assertions. The managed executor is still a local subprocess double in those cases, not a real host cell.
+
+**Remaining:** authority-backed pin/receipt identity, source snapshot correspondence, protection throughout the
+run and post-join race, persistent per-test pre-code outcomes and witness binding; see E640. Exact managed kill,
+TEST-DEFECT real workflow edges, STEP9B independent review and host E2E remain open.
+
+
+### E642 — STEP9A pinned reader settlement fail-closed (2026-11-23)
+
+**Finding/change:** `_pinned_verify_substrate` formerly only logged `stop_view=False`, allowing a
+seemingly successful result after the authority did not confirm reader terminality. It now suspends both local
+reader capabilities and raises `ExecutionUnavailableError` after the one stop attempt. The pre-code admission
+caller maps execution failures to `bootstrap-unavailable` without seal/admission; coder verification replaces
+the provisional V2 attempt with an error, clears `last_attempt`, and does not persist the provisional green
+claims. Existing error routing blocks indeterminate evidence in observe and enforce. This does not retry or
+assert that the authority actually released an unresolved reader.
+
+**Evidence:** real pinned-context control uses a client subclass whose stop returns false; tests assert one
+stop, suspended port/executor and raised error. Controller admission test uses a controlled context failure
+after actual in-band pytest, asserting no seal. Actual `_run_stage`/artifact test injects a provisional V2
+attempt before the context exit failure and asserts blocking, no claims, cleared prior attempt and blocked
+observe/enforce route; the stage verifier and terminal context are fault-injected, not a real managed-cell run.
+`tests/test_verify_substrate.py` + `test_v2_seal_store_and_mint.py` + `test_ai_native_acceptance_collection.py`:
+**80 passed**; selected V2 gate bank **6 passed / 577 deselected**. A full `test_verify_gate_live.py` run reached
+the 74% progress mark then hit the 180-second command timeout; it is **not** a pass. A subsequent run split
+the 583 collected nodeids into two disjoint batches: **292 passed + 291 passed**. Scoped Ruff/format, mypy and diff check passed. Five targeted mutants killed: ignoring failed stop, leaving port or reader active,
+retaining provisional attempt, and allowing the admission exception to escape rather than returning structured
+unavailability. All originals restored.
+
+**Open:** source closure vs pinned authority view, in-process transient drift and receipt binding, witness
+sensitivity/evidence, managed mutation and TEST-DEFECT workflow edges, independent STEP9B review and host E2E.
+No STEP or host closure claimed.
+
+### E643 — managed shell marker propagation review (2026-11-23)
+
+**Finding/change:** the managed adapter prefixed markers as assignments to the first shell
+command. For compound pre-code commands that first command is a builtin or shell assignment;
+subsequent pytest did not inherit the run nonce. Export only the allowlisted, quoted markers
+through the shell before executing the original command. This is not authority custody proof.
+
+**Evidence:** real shell checks inheritance, metacharacter safety and exclusion of non-marker
+environment. A managed adapter plus subprocess-cell double runs actual pytest and collector and
+checks outcomes and closure: 4 targeted tests passed. Producer regression and adapter caller
+EDGE mutants killed, originals restored. Scoped Ruff/format/mypy and diff check passed. The
+combined 269-test run had 268 passes and one failure in the separate service-backed
+`test_managed_verify_and_kill_check_run_against_pinned_service_revision_not_stale_host`:
+`ExecutionUncertainError` during baseline; isolated retry also failed. Cause not yet established;
+not a passing host/service proof. STEP9A and independent STEP9B remain open.
+
+### E644 — STEP9A adversarial review and correction scope (2026-11-23)
+
+**Review scope:** current diff of admission, plan/seal binding, pre-code collection, JUnit
+classification, kill binding, attempts, managed adapter and controller settlement/routing,
+plus the TEST-DEFECT component against STEP9A/E530 and D-V2-13/B1–B6. This is not the
+independent STEP9B review and does not close any step.
+
+**Fixed:** TEST-DEFECT correction accepted manually constructed reports without revalidating
+their revision, selector, invariant and assertion, and assumed other CTs could not be
+affected by a changed shared fixture/helper. Correction now revalidates the report against
+the old seal and the graph already bound to plan bytes, and conservatively marks every
+acceptance test and kill target for re-proof. This component has no production workflow
+caller yet; UPHELD does not independently bind a report and must not be wired as a trust
+boundary without validating it in the caller.
+
+**E643 service failure resolved:** its leading `export` triggered PTY stateful-command
+classification, so the in-band `exit` killed the receipt-producing shell. A leading shell
+no-op forces the PTY subshell while preserving quoted allowlisted exports. Replacing this
+with the previous prefix passes the old service test but loses nonce; removing the no-op
+reproduces `execution_unknown`. Real service-backed test now passes. It is a local Docker
+peer/service double, not a live host or V2 pre-code custody proof.
+
+**Verification:** combined 8-module bank **435 passed**, including real service-backed
+legacy baseline/mutation and new actual-pytest managed-adapter double. Scoped Ruff/format,
+mypy and diff check pass. Four targeted mutants killed: correction scope producer,
+correction caller, forged report revision guard, and PTY no-op EDGE; originals restored.
+E643 producer/caller mutants remain separately recorded.
+
+**Unclosed review findings, ordered by risk/dependency:**
+1. **Critical, custody:** host filesystem closure hash and executor's named revision are
+   not proof that authority view contains those exact bytes or is immune to transient
+   writes/ABA. Receipt nonce/JUnit properties are in-band metadata, not an independent
+   trust anchor. Fail-closed checks added so far do not prove custody. Resolve at existing
+   authority/pinned-view seam or use the ratified immutable-payload fallback.
+2. **High, incomplete product path:** exact managed mutation, selected TEST-ID and
+   baseline/mutant receipt joins are not wired; attribution components are constructible
+   records and cannot establish PROVEN. Current V2 grammar records nonexecuted declared
+   kills, not the mandatory FUNCTIONAL mutation gate. B2–B4 and production-path tests remain.
+3. **High, TEST-DEFECT:** standalone functions do not implement coder→planner→reseal→
+   re-verification, durable prior evidence, or validated UPHELD workflow. Conservative
+   affected scope is a component safeguard, not lifecycle integration.
+4. **High, failure routing:** `_sealed_stage_verification` adds any blocking attempt to
+   `PlanVerification.errors`; `_verification_is_indeterminate` then blocks both modes,
+   even for determinate test failure intended advisory in observe. Generic current
+   nodeid parser also collapses skip to false, so simply removing that error would
+   risk making indeterminate outcomes advisory; B5 needs typed outcomes and actual
+   linear/adaptive route tests together.
+5. **High, pre-code proof:** full local pytest classification does not establish claimed
+   witness sensitivity or producer-absent fresh-project viability; actual managed
+   pre-code production root and live-host E2E remain unproved. Preserve explicit scoped
+   replan if the fresh-project fixture cannot execute before producer code.
+
+No fabricated host success, full mutation proof, STEP9A closure or independent STEP9B
+review is claimed. Continue in plan dependency order.
+
+### E645 — priority gap closure plan and TEST-DEFECT decision validation (2026-11-23)
+
+**Plan:** E644 gaps are now explicit unchecked STEP9A work items in V2 with custody first,
+pre-code proof, B2–B4 exact mutation, TEST-DEFECT workflow, B5 typed routing and W4 live
+ledger append/negative/replay witnesses. They preserve E530 ordering and do not close STEP9B.
+Authority source audit found READ source revision materialization and read-only mount, but
+`WorkspacePort` lacks recursive acceptance inventory; comparing only host-known paths is
+insufficient for completeness. No custody proof is claimed.
+
+**Code:** existing `uphold` and `correct` now share a report validation seam. It checks the
+canonical old seal, exact plan digest and graph, then revalidates all report fields. `uphold`
+requires explicit bundle/graph/plan; there are no production callers yet. Both branches refuse
+forged in-memory seals/reports; neither changes bytes on uphold. This is a component step, not
+the end-to-end planner workflow or authority custody.
+
+**TEST-EDITS:** `tests/test_ai_native_acceptance_defect.py` updated for explicit decision
+inputs and added forged report/graph/seal cases. Three-module bank **243 passed**; scoped Ruff,
+format, mypy and diff check pass. Three targeted mutants killed: report revision validation
+producer, uphold caller EDGE and correct caller EDGE; originals restored. Host cases planned,
+not executed.
+
+### E646 — pinned authority acceptance inventory component (2026-11-23)
+
+**Change:** `WorkspaceAuthority.inventory_acceptance` reads complete subtree metadata from
+the existing `_reader_io` capability-bound pinned manifest, not the host or test process.
+It reports revision and authority tree digest plus sorted paths/types/sizes/hashes, including
+symlink and directory rows, for the exact acceptance prefix. Missing/non-directory root,
+invalid slug, foreign/released capability, >4096 entries or >1 MiB encoded metadata refuse;
+no truncation. Authority's normal revision exclusions still apply. No bytes or link target
+are returned. This is an **unwired component**, not a production custody gate.
+
+**Evidence:** C0/C3 real authority tests demonstrate pinned old bytes despite host edits,
+exact prefix, symlink metadata, foreign grant/namespace, invalid/missing root, released view,
+and over-limit refusal. Combined reader/workspace/service bank **191 passed**. Scoped Ruff,
+format, mypy and diff check pass. Three targeted mutants killed: prefix producer, over-limit
+refusal and authorization caller EDGE; originals restored. TEST-EDITS: added authority
+inventory cases to `tests/test_execution_readers.py`.
+
+**Open:** wire operation/negotiation, bounded schema and consumer; complete semantic
+comparison including extra files/dirs/symlinks and invalid closure, authority receipt tree join,
+controller mint/verification edges, coder read-only shell projection and publication fence,
+C1 service/controller and approved-host E2E. The metadata does not attest a live process's
+imports, establish equality with a seal or prove mode A. E645 remains unchecked.
+
+### E647 — negotiated acceptance inventory transport and regression check (2026-11-23)
+
+**Change:** `inventory_acceptance` is a version-2 read-only feature/operation, with closed
+payload/result schema, capability-bound READ/PROJECT authorization, authority-backed service
+route, and negotiated client. The client refuses unsupported/uncertain service, wrong view
+or grant, and mismatched returned revision or tree digest; no host fallback. Bounded owner
+result fits the existing normal wire frame; no journal reservation is made. This is a
+transport seam, not the admission/seal comparison or a complete mode-A custody proof.
+
+**Evidence:** real socketpair dispatcher/service/authority test checks pinned inventory
+despite host drift, exact digest/entries, foreign capability and absence of reservation.
+Real UDS `ExecutionClient`→service test checks feature negotiation and grant tree mismatch.
+Codec test checks V2-only and closed reply; existing V1 operation census updated for the
+new V2-only operation. Five-module protocol/service/client/dispatch/readers bank **416 passed**;
+initial run had 20 V1-census failures before the enum fixture was updated, not credited as
+a pass. Regression bank for prior TEST-DEFECT, seal, collection, kill binding, controller
+admission, marker/runner and verify substrate fixes **398 passed**. Scoped Ruff/format/mypy
+and diff check pass. Two targeted mutants killed: service caller returning a valid false
+inventory and client tree-identity guard; originals restored. TEST-EDITS: V1 census and
+new protocol/service/client-path tests. No live host or end-to-end custody result claimed.
+
+**Open:** controller must consume and semantically compare complete inventory against the
+closure including extra entries, all file hashes/types, and the execution receipt's pinned
+tree; enforce coder read-only shell projection and publication fence; prove service→actual
+pre-code run→seal and post-coder verification. Existing pre-code witness sensitivity,
+mandatory exact managed mutation, TEST-DEFECT workflow and B5 observe/enforce routing are
+still unresolved; passing component regression tests does not close those findings.
+
+### E648 — pinned inventory joins at admission and verifier (2026-11-23)
+
+**Change:** the existing pinned substrate now exposes authority inventory through the same
+view/grant as the executor. The controller compares revision and full sorted inventory to
+a no-follow host closure walk including empty directories, before and after pre-code execution
+and candidate verification. Admission mints while the pin remains open, checks inventory
+again after mint and joins its file sizes/hashes to the minted bundle, before storing. Missing
+inventory and mismatch fail closed and cannot enter planner-content repair. Verifier discards
+provisional output on mismatch or inventory/transport failure. Suppress Python bytecode in
+the verifier in-band command, matching the managed READ environment and preventing the
+local pytest stand-in from adding cache files to the tested tree.
+
+**Evidence:** real service/authority/UDS inventory→actual controller admission tests
+cover matching revision and host file deletion with no execution/seal. The pytest executor
+in those tests is a local subprocess double, and the pinned context is injected; this is not
+a managed cell or live host end-to-end test. Controller tests also reject foreign revision,
+extra/missing/changed files, extra empty directory, symlink metadata, unavailable inventory,
+drift during mint and drift after verification; mismatch before run proves zero execution.
+Eight-module preliminary bank **374 passed**, final ten-module bank **482 passed**; full
+`test_verify_gate_live.py` **583 passed**. Scoped Ruff/format/mypy and diff checks pass.
+Four targeted mutants killed: inventory comparison producer, pre-code caller EDGE (real
+authority/service), verifier pre-command EDGE, and post-mint inventory EDGE; originals restored.
+Initial targeted run had 6 failures: 5 caused by pytest-generated bytecode in local doubles,
+1 expected diagnostic changed because the new earlier guard detects drift. After correction
+targeted run **43 passed**. TEST-EDITS: controller admission and gate fixtures/tests.
+
+**Limitations:** these are equality checks at measured boundaries, not proof against
+transient ABA, not a guarantee that a mutable host path remains identical during a command
+or after settlement, and not a replacement for authority-owned immutable payload/projection.
+No real managed V2 pre-code receipt/authority join, coder shell read-only mount, publication
+fence, full witness sensitivity, exact mutation, TEST-DEFECT workflow, typed routing, STEP9A
+or independent STEP9B closure is claimed. W4 host/ledger E2E remains planned and unexecuted.
+
+### E649 — plan-bound acceptance publication fence (2026-11-23)
+
+**Change:** the common authority sealed-tree validator now compares an existing
+`worklogs/<slug>/acceptance` subtree with the base revision for an ordinary seal
+bound to that project's increment path. It rejects changed facts, additions,
+tombstones and omitted base paths. The same validator runs at seal and when
+publication re-reads the manifest. No-plan authoring remains able to publish tests;
+source changes with unchanged acceptance remain publishable. This is deliberately
+not a grant of authority to change tests: correction requires a separate reseal path.
+
+**Evidence:** service-backed CREATE_VIEW → STOP_VIEW → SEAL → PUBLISH tests simulate
+shell bypass by modifying the actual view source, covering changed, added, deleted,
+mode-changed and new empty-directory entries, and a positive unchanged-acceptance
+publication. A no-plan authoring publication succeeds; a C0 forged omission test
+rejects a missing base entry. Publication/purpose/view/client-stage bank **188 passed**.
+Targeted removal of the validator call (EDGE), removal of changed-entry comparison
+(producer), and omission check each caused the intended assertion failure; originals
+restored. One initial producer mutation survived because its text replacement did not
+match the formatted code; corrected mutation was verified applied and killed. Scoped
+Ruff, format, mypy and diff checks were run; see final turn report for final reruns.
+
+**Limitations:** this is a subtree fence for plan-bound existing acceptance, not a
+complete closure or role-specific authorization, not a shell read-only projection,
+and not an immutable payload or ABA proof. Plan paths and existing root determine its
+scope, not a controller-minted bundle; other closure paths and future TEST-DEFECT
+reseal need explicit treatment. No production managed cell or W4 live host proof.
+STEP9A and independent STEP9B remain open; E648's broader limitation remains valid.
+
+### E650 — candidate in-band pytest classification (2026-11-23)
+
+**Change:** candidate sealed collection now generates an invocation nonce and uses the
+existing invocation-bound, call-phase classifier already used for pre-code. Only passed
+calls and assertion failures project to the legacy bool carrier; skipped calls, other
+exceptions, setup/teardown/report errors, missing or stale nonce, and contradictions
+between pytest exit/outcome and report are refused. The managed adapter exports the nonce
+through the existing allowlisted in-band mechanism. The ordinary host collector was not
+changed. This is an interim fail-closed classification, not typed evidence end-to-end or
+B5's observe/enforce routing. The nonce is not an independent trust anchor against code
+inside pytest, and this does not close custody or mutation provenance.
+
+**Evidence:** real pytest with managed adapter and a local shell cell double covers pass,
+assertion, skip, ValueError and NotImplementedError; an actual setup failure is refused.
+Real pytest receipts altered for stale nonce, inconsistent exit/outcome (both directions)
+and duplicated reports are refused. Producer removal of the other-exception guard,
+removal of the candidate nonce handoff EDGE, and removal of status coherence each caused
+the intended test to fail; originals restored. Test-edits are in
+`tests/test_ai_native_acceptance_collection.py`. Eight-module regression bank **348 passed** (latest standalone collection bank **51 passed**).
+`test_verify_gate_live.py` **583 passed** in two disjoint batches (292 and 291). A combined
+nine-module run reached the 180s timeout and is not credited as a pass. No actual managed
+cell, live host, typed route completion or exact mutation verdict is claimed.
+
+### E651 — authority publication/replay fence negative proof (2026-11-23)
+
+**Evidence-only strengthening of E649:** tests now alter an already sealed manifest at the
+real authority boundary, recompute its internally valid tree hash, then invoke ordinary
+publication or PUBLISHED replay. Both a substituted accepted-file digest and an omitted
+base entry are refused with `PATH_DENIED`; canonical bytes and current revision remain
+unchanged. All four matrix cases pass. Removing the manifest validator call from the
+publication read path makes both targeted first-publication and replay tests fail their
+expected denial (a later `CORRUPT_STATE` is not credited as this fence). Originals restored.
+Publication/purpose/view/client-stage bank **192 passed**. This tests validator invocation,
+not a live shell mount, a full bundle-scoped closure, a correction reseal, or an ABA defense.
+STEP9A and STEP9B remain open.
+
+### E652 — READ execution copy bound to revision (2026-11-23)
+
+**Source finding and change:** `_materialize_input` compared the source revision while
+copying, but `_seal_readonly_source` previously accepted a newly computed digest of the
+materialized projection without comparing the projection's actual entries against that
+revision. It now snapshots the finished READ projection and requires exact equality with
+the authority revision manifest after normalizing only the intended removal of write bits
+from regular files and directories (symlink mode stays unchanged). A mismatch refuses
+`CORRUPT_STATE` before an execution scope is returned. On a failed seal the private staging
+tree may already be read-only: cleanup now uses the existing projection cleanup, including
+no-follow directory descriptors and a symlink exclusion before chmod. It must not change a
+symlink's external target. Successful clean retry is tested, rather than assuming cleanup.
+
+**Evidence:** real authority admission and effect tests inject modified bytes and an extra
+file immediately after materialization, assert refusal, no retained projection/operation,
+no active gate, unchanged canonical and pin bytes, empty pending, and successful clean retry.
+A faithful revision with symlink and restrictive modes dispatches a bounded effect; a
+foreign symlink cleanup test checks external mode is unchanged. The initial three targeted
+tests failed: failure cleanup attempted `rmtree` on a read-only directory and the positive
+fixture omitted `src`; both corrected. Final expanded authority/backend/docker/readers/
+workspace/service/views/publication bank **538 passed**. Producer removal of comparison,
+caller removal of `_seal_readonly_source`, and symlink-following cleanup mutation each
+failed the intended positive/negative assertions; originals restored. Scoped static checks
+are recorded in the final turn report. TEST-EDITS: `tests/test_execution_admission.py`.
+
+**Limitations:** this joins a service-owned READ execution copy to its revision at creation,
+with existing digest rechecks before effect, not a proof against privileged transient ABA
+or a guarantee about imports during the command. It is not coder mode-A read-only mount,
+full bundle-scoped custody, immutable-payload fallback, or live-host evidence.
+
+### E653 — backend admission boundary for READ copy corruption (2026-11-23)
+
+**Evidence-only:** real `CellBackend.execute` → authority admission with a local literal
+Docker HTTP peer refuses a corrupted READ projection before any create/start/attach request
+or worker RUN, while the existing positive one-shot test reaches the peer with a read-only
+workspace mount. Bypassing the projection comparison makes the negative backend oracle fail
+with `BACKEND_UNAVAILABLE` after attempting Docker instead of the expected `CORRUPT_STATE`;
+that later failure is not credited as a safe refusal. The eight-module bank above includes
+both tests. Docker daemon/container and W4 host were not exercised. STEP9A remains open.
+
+### E654 — pointer identity and predecessor integrity (2026-11-23)
+
+The workspace-local seal store now requires bounded, closed pointer JSON, a canonical
+lowercase hex digest, and exact equality between that digest and the loaded record. It
+validates the pointed predecessor before idempotent replay or supersession; missing,
+torn and substituted records refuse rather than being silently repaired. Admission and
+verifier tests cover the refusal in observe and enforce modes. Seal-store/mint bank
+**56 passed**; four targeted identity, replay, supersession and hex mutants killed.
+This is integrity hardening only: `.fa` is not authority-private custody, and it does
+not prevent ABA. See E656 for the unresolved system-level exposure.
+
+### E655 — bounded acceptance closure enumeration (2026-11-23)
+
+The shared walk counts at most 4096 entries (including empty directories), using bounded
+`scandir` iteration before sorting instead of unbounded `listdir`. It refuses an over-budget
+file before reading its bytes and refuses the 513th file before reading it. Existing
+file and aggregate rules remain; the entry rule is `too-many-entries`. Both closure and
+inventory callers get no partial result. Tests instrument actual reads and admission refusal
+before pytest/seal. Removing byte enforcement killed both producer and admission EDGE
+oracles; removing entry enforcement killed the empty-directory oracle. Six-module regression
+bank **244 passed**; scoped Ruff, format, mypy and diff checks pass. This limits memory
+consumption, not filesystem races or authority custody.
+
+### E656 — unresolved custody pre-dispatch exposure (2026-11-23)
+
+D-V2-5 requires authority-private metadata and mode-A protection. Current store is in the
+host workspace, and coder WRITE shell has a read-write workspace mount: inventory joins
+and publication fences do not establish custody during execution. Consequently V2 must
+not be represented as safe or STEP9A complete. A preliminary fail-closed dispatch guard
+was attempted but its first targeted run raised `NameError` due to an incorrect V2 context
+helper; that incomplete guard was removed, and no dispatch protection is claimed. Next:
+implement and prove authority-owned custody/read-only projection or the planned immutable
+payload fallback, including a properly tested interim pre-dispatch refusal if needed; then
+managed attribution, TEST-DEFECT, typed routing and live host proof. STEP9A and independent
+STEP9B remain open.
+
+### E657 — strong mode A ratified; temporary pre-dispatch refusal (2026-11-23)
+
+The operator ratified authority-private seal + revision-backed **actual read-only** coder
+projection as the primary route, with isolated immutable-payload fallback if that cannot be
+proved. This supersedes D-V2-6's shell-detection-only allowance; publication/drift checks
+remain defense in depth. The existing W4 live-host ordering is unchanged. Clarification of
+E656: `.fa` is excluded from snapshots, so a writable managed cell mount is not itself proof
+that the cell can reach the canonical workspace's `.fa`. The storage nevertheless lacks the
+required authority-private ownership, and acceptance bytes in the WRITE view are writable.
+
+Until real custody is in place, the common `_run_stage` coder gate refuses an admitted V2
+snapshot before coder dispatch, reports `admission/acceptance-custody-unavailable`, and
+clears the previous attempt. There is no runtime/config override; legacy stages remain on
+their previous path. C1 tests exercise both linear and adaptive routes in observe/enforce,
+with a real local seal and stale attempt, asserting no coder/eval/verification execution.
+Four older stage tests explicitly monkeypatch the guard solely to continue exercising their
+underlying components; those do not prove a production bypass or custody. Both final
+producer (`_v2_custody_ready` true) and caller EDGE (remove guard call) mutants make all
+four new cases fail; originals restored. `tests/test_verify_gate_live.py` **587 passed**
+in disjoint 294/293 batches before the lint-only helper extraction; the final extraction
+was rerun on **11** targeted stage tests. Additional custody/collection/defect bank **160
+passed**. Scoped Ruff, format, mypy, diff and 394-link checks pass. TEST-EDITS:
+`tests/test_verify_gate_live.py` (production refusal + explicit component-only seam).
+
+This is a temporary safety fence, not implementation of authority-private storage,
+read-only shell projection, immutable fallback, managed attribution or STEP9A. Next work
+must replace the hardcoded refusal only when the real authority-bound proof exists. W4 host
+proof remains open; the operator did not authorize or require an early deployment.
+
+### E658 — bootstrap regression fixture restored to authority inventory (2026-11-23)
+
+Expanded regression exposed **40 passed / 5 failed** in `test_ai_native_bootstrap.py`:
+its old local-pytest substrate double omitted the authority inventory required by E648,
+so admission correctly refused `acceptance-inventory-unavailable`. The fixture now retains
+the real `_pinned_verify_substrate`, service/authority pin and inventory, replacing only
+pytest execution with the local subprocess adapter. The adapter takes the revision at pin
+time, including after a repair publication, instead of an earlier stale argument. Repeated
+fixture setup uses the original context manager rather than stacking pins. The four-module
+bootstrap/seal/collection/defect bank now reports **205 passed**. Removing inventory from
+this fixture kills the real authoring→admission case with the expected refusal; originals
+restored. Scoped static and document link checks pass. This fixes test plumbing, not the
+production store or projection; it does not demonstrate Docker/host execution.
+
+### E659 — bounded and no-follow seal metadata reads (2026-11-23)
+
+Before the authority-private migration, the existing `SealStore` read records with
+unbounded `Path.read_bytes()` and followed final symlinks; a substituted FIFO could block.
+Pointer, record and replay reads now use bounded no-follow/nonblocking descriptors,
+require a regular single-link file, and close the descriptor on every path. At most
+`MAX_SEAL_BYTES+1` record bytes or 4097 pointer bytes are read; existing malformed,
+missing and unreadable refusals remain fail-closed. C3 covers pointer/record symlink,
+FIFO, hardlink and oversize; measured record reads enforce the byte ceiling; C1 joins a
+symlinked record to verifier refusal before command in observe and enforce. Removing
+NOFOLLOW kills both verifier cases, removing nlink validation kills both hardlink cases,
+and increasing the read ceiling kills the measured read test. Originals restored.
+The six-module regression bank including E660 is **373 passed**; scoped Ruff/format/mypy,
+`git diff --check` and doc links pass. TEST-EDITS: `tests/test_v2_seal_store_and_mint.py`.
+
+This is a preparation on the existing legacy store, **not** private authority storage,
+ancestor-safe directory traversal, authority identity/locking, read-only coder projection,
+ABA protection, or proof B. The V2 dispatch refusal remains. The old docstring asserting
+that workspace-local `.fa` was custody has been corrected; no move to private state is
+claimed. The requested authority seam and controller migration remain open.
+
+### E660 — stale foreign-nodeid JUnit fixture repaired (2026-11-23)
+
+The first six-module run had **372 passed / 1 failed**: a pre-E650 synthetic receipt
+lacked the nonce and call-phase metadata, so it was refused as invalid before the intended
+foreign-nodeid check. The fixture now uses the current invocation nonce and passed call
+phase without changing production validation. Removing `_key_nodeids` membership makes the
+test fail with `sealed-test-missing`, not the required `collection-nodeid-outside-closure`;
+original restored. Final combined bank **373 passed**. TEST-EDITS:
+`tests/test_ai_native_acceptance_bundle.py`. This is not a live-host claim.
+
+### E661 — internal authority-private candidate storage seam (2026-11-23)
+
+INV-04/06/07; CT-3.2/3.3 preparation, **not B1 completion**. `WorkspaceAuthority`
+now provides an internal OWNER-only, mutex-serialized candidate store under private
+workspace/project metadata. It requires the current revision, no unsettled view or
+publication intent, re-snapshots the revision, and compares the project plan digest and
+full acceptance file size/hash inventory and closure digest. Canonical records are stored
+through the existing `SealStore` using descriptor-relative, no-follow private directory
+construction and read-back. Same-record replay and a clean authority restart were tested;
+different projects retain independent pointers. Until planner correction authorization is
+wired, supplied supersession is refused. Storage/read-back uncertainty invalidates the
+authority rather than claiming an effect-free failure. TEST-EDITS:
+`tests/test_execution_readers.py`.
+
+C0/C3 positive and refusal cases include wrong grant/revision/plan/slug/closure/size,
+extra or linked entries, unsettled write view, linked private directory, malformed prior
+metadata, supersession and read-back failure. Producer mutants removing the inventory
+size comparison and supersession prohibition were killed by their respective tests;
+EDGE mutants removing the tree-validation call (three refusals) and unsettled-view fence
+(one refusal) were killed. A size-comparison mutant survived the extra-file test because
+closure digest independently detects that change; the specific size-tamper test killed
+it. Originals restored. Final execution regression bank **432 passed**; seal/bootstrap/
+collection/defect bank **216 passed**. Scoped Ruff/format/mypy, `git diff --check` and
+arena env check passed.
+
+This is not a consumer or service API and cannot authorize coder dispatch: it does not
+prove collection provenance or semantic mapping, does not implement correction lifecycle,
+does not protect against loss of the whole authority metadata followed by silent remint,
+and does not create a read-only coder projection or prevent transient ABA. `/proc/self/fd`
+reuse and durability assumptions require deployment-specific review and host proof. E657's
+guard stays active. Recovery, provenance, projection (or mandatory C fallback), typed
+routing, independent STEP9B and W4 remain open; no live-host or complete C1 claim.
+
+### E662 — missing private pointer with surviving history fails closed (2026-11-23)
+
+INV-04/07, CT-3.2/3.3: E661 previously delegated absent-pointer handling to the
+legacy store, which would treat an orphaned private record as a first mint. Before
+any candidate write, the authority now checks the current pointer under its workspace
+mutex. If it is absent, the already-opened private store must have an empty `seals`
+directory and no other `.fa` entry besides that directory; surviving records, pointer
+temporaries and unexpected entries make history ambiguous and invalidate the authority
+with `DURABILITY_UNKNOWN`. Corrupt existing pointers/records also remain refusals. This
+intentionally rejects even an interrupted first mint with surviving artifacts: absent a
+separate proven intent, it cannot distinguish that case from loss of a previous pointer.
+It does not reconstruct state or delete evidence. TEST-EDITS: `tests/test_execution_readers.py`.
+
+C0/C3 cover all three remnant cases, no pointer creation, exact preserved file bytes and
+unready authority; existing first-mint, replay, restart and project isolation still pass.
+A pre-existing read-back fault fixture was adjusted to fail on the post-write read, not
+on the newly added pre-check (first targeted run 18 passed/1 failed before correction;
+final targeted run 19 passed). Deleting the record-remnant producer check killed its case;
+deleting the helper call killed all three remnant cases; originals restored. Final related
+execution bank **435 passed**, seal/bootstrap/collection/defect bank **216 passed**;
+scoped Ruff/format/mypy and `git diff --check` pass. `arena-env-build.sh --check` reports
+ENVIRONMENT_CHECK_OK, CPython 3.13.16; tests use `.venv` and put `.venv/bin` in PATH.
+
+This is C0/C3 for an internal seam, not a live caller C1. Loss of the **entire** private
+project metadata remains indistinguishable from first use; no silent-remint recovery proof
+is claimed. Provenance, correction authorization, transport/integration and actual mode-A
+read-only protection (or fallback C) remain open. E657 remains in force; no W4 proof.
+
+### E663 — durable started marker outside project seal metadata (2026-11-23)
+
+INV-04/07, CT-3.2/3.3 preparation. Under the authority mutex, after E662's
+history check and before a candidate store write, the authority durably creates a
+private `acceptance-started-<slug>` file directly in the workspace binding, fsyncs
+it and the binding directory, and validates any existing marker as a private,
+regular, single-link, empty file. The slug is also constrained to the existing
+48-character protocol limit. If a marker already existed but the pointer is absent,
+store refuses rather than remint; a clean first store, exact replay and existing
+pre-marker pointer are supported. The marker is project-scoped; it is deliberately
+outside that project's removable seal directory. A failed first write may therefore
+require explicit recovery rather than unsafe retry.
+
+C0/C3 tests exercise project-directory loss after a clean authority restart, no new
+pointer/record, injected failure before store with marker already present, symlink,
+hardlink and nonempty marker refusal, and old project-isolation/replay tests.
+Removing the marker call killed the pre-write ordering test; removing the existing
+marker/absent pointer refusal killed the metadata-loss/restart test. Originals
+restored. Related execution bank **440 passed**; scoped Ruff/format/mypy and diff
+checks passed. TEST-EDITS: `tests/test_execution_readers.py`.
+
+The marker detects loss of the project seal directory while the independent binding
+marker survives, not deletion/rollback of both or restoration of an older workspace
+binding. Without a rollback-resistant external authority, such total state loss is
+indistinguishable from first use. No recovery or live-host durability proof is claimed;
+this remains an unconsumed internal seam. E657 guard stays active.
+
+### E664 — assertion-red versus indeterminate sealed routing (2026-11-23)
+
+INV-08/11, CT-3.6 and B5 preparation. The controller previously put every blocking
+sealed attempt in `errors`, making a strictly classified assertion failure
+indeterminate and blocking observe. The existing sealed runner rejects skip and
+non-assertion exceptions, verifies invocation/phase and receipt exit consistency;
+the controller now treats a blocking result as determinate only if its command is
+FAIL, at least one sealed claim is failed, all claims are passed/failed without
+mutation, and the attempt has no errors. The command remains in the verification
+and still blocks enforce. Any skipped/error claim, attempt error, mutation-bearing
+claim or ambiguous receipt remains a non-waivable error. This narrow rule must be
+revisited when managed mutations are integrated, not interpreted as B5 completion.
+
+Real local pytest/in-band receipt cases for pass, assertion, skip and runtime error
+exercise both observe and enforce; injected uncertain claim/mutation cases verify
+fail-closed handling. Removing the determinate handling killed both assertion mode
+cases; removing the all-claims/no-mutation condition killed both mutation-uncertainty
+cases. Originals restored. `test_verify_gate_live.py` collected **601** and passed in
+separate batches **300 + 301**; related seal/collection/bootstrap/defect/attempt bank
+**264 passed**; scoped Ruff/format/mypy and diff checks passed. TEST-EDITS:
+`tests/test_verify_gate_live.py`.
+
+The component uses real local pytest behind the existing local in-band executor,
+not a live Docker host or authority-to-controller C1. The E657 guard remains active;
+full linear/adaptive production-path matrix, custody, exact managed mutation and B5
+are still open. No STEP9A or I03 closure is claimed.
+
+### E665 — authority candidate semantics rechecked against revision plan (2026-11-23)
+
+INV-04/06/07, CT-3.2/3.3/3.6: `store_acceptance_seal` previously checked a
+candidate's plan digest and acceptance inventory but accepted self-consistent foreign
+TEST/CT/selector rows and attestation scope. Under the same lock and before metadata
+writes it now reads the actual revision plan through bounded no-follow descriptors,
+checks its digest, parses the existing V2 increment grammar, compares the exact
+TEST/CT/selector set and contract count, verifies the declared nodeid matches its
+selector and lies in the sealed closure, and checks untested/attested contract
+membership plus authored invariant/reason/route/scope and host-probe closure membership.
+The normal authority first-mint/replay/isolation cases still pass. TEST-EDITS:
+`tests/test_execution_readers.py`.
+
+C0/C3 use canonical digest-valid forged records for foreign TEST, CT, selector,
+nodeid, attested contract, invariant, scope and missing probe, plus a plan-consistent
+selector outside the closure; all refuse with `INPUT_POLICY`, no seal directory or
+started marker. Removing the row/contract comparison killed its contract test;
+removing attestation scope comparison killed scope; removing the authority caller
+edge killed all nine semantic refusal cases. Originals restored. This closes only
+local consistency, not source provenance: selector/nodeid matching against the
+candidate's own rows is not an independent pytest collection receipt, and checking
+an attestation's shape/scope is not proving its grant. The seam is not wired to a
+service/controller consumer and cannot justify lifting E657.
+
+### E666 — reapply canonical closure policy to authority revision (2026-11-23)
+
+INV-04/07, CT-3.2/3.3: hashing the candidate inventory alone did not reapply the
+closure walker's path/fixture/config/size rules or its fixed file mode. The authority
+now calls the existing bounded `collect_acceptance_closure` against the actual pinned
+revision, using descriptor-relative no-follow ancestors, and requires equality with
+the complete candidate closure before starting storage. C0/C3 use a digest-valid
+record whose revision has a prohibited nested conftest and one with a forged mode;
+both refuse without private seal effects. Removing closure equality killed the mode
+case; removing the authority call killed both negatives. Originals restored.
+
+Final related execution bank **451 passed**, six-module seal/closure/bootstrap/defect
+bank **373 passed**; scoped Ruff/format/mypy and diff checks pass. TEST-EDITS:
+`tests/test_execution_readers.py`. The closure walk checks local revision bytes and
+policy, not standing immutability against privileged ABA, real mode-A mounts, grant or
+collection provenance, recovery from total authority rollback, service wiring, or a
+live-host witness. Both E665/E666 are C0/C3/internal edge proof only; STEP9A, B1,
+B5 and E657 remain open.
+
+### E667 — stop: whole authority-state loss silently permits new candidate (2026-11-23)
+
+Re-grounded STEP9A, E645 ordering, D-V2-5 recovery audit, E657 and E663–E666 against
+`WorkspaceAuthority.__enter__`, `register_existing`, `_register`, and
+`store_acceptance_seal`. A real local authority diagnostic created and sealed a project,
+released the writer, deleted the protected state root in a temporary directory, opened a
+new authority over the unchanged canonical root and registered it again. The authority
+issued a different workspace id and revision and accepted a different candidate seal;
+all three comparisons and successful remint were explicitly printed true. This is not a
+live-host test, service/controller route, or coder-dispatch bypass; E657 still blocks V2.
+
+The earlier D-V2-5 audit's E9 explicitly allowed re-mint after a backup without the seal;
+the later operator requirement forbids silent remint when prior history cannot be proved
+absent. E663's marker protects against losing only the project seal directory, not the
+binding/state root or a coherent rollback. Freshly recreated authority metadata cannot
+alone distinguish first registration from lost history. Filed **Q-V2-CUSTODY-RECOVERY-1**
+in the V2 plan with trust-boundary alternatives, fail-closed recommendation and W4
+witness obligations. No production code changed or product test/mutation credit claimed
+in this diagnostic; dependent custody integration and removal of E657 are blocked until
+the recovery/rollback authority is selected. Q-V2-LEDGER-1 remains independent and open.
+
+### E668 — practical recovery and state-surface audit (2026-11-23)
+
+Operator asked whether E667 is a realistic workflow fault and how existing blackboard,
+SQLite and event bus relate to authority. Source audit, not a host inspection:
+
+- Ordinary supervisor restart with preserved state is not E667: `_load` reads the protected
+  workspace metadata and current revision, verifies it, recovers in-flight intents, and
+  quarantines an `OWNED` workspace. E667 deliberately removed the **whole** protected state
+  root, then used `register_existing`; it is a concrete local negative diagnostic, not
+  evidence that this happens during ordinary coding, normal restart or on the deployed host.
+  No incident rate or probability is known.
+- Realistic exceptional paths include migration/reinstallation with a different/empty
+  supervisor state root, operator cleanup or incomplete restoration. In particular,
+  `scripts/backup-fa.sh` currently names `/srv/first-agent/state`, routing and secrets, but
+  does **not** name the spec's `/var/lib/first-agent-execution/` or `/srv/first-agent/sessions`.
+  The spec's path is a planned supervisor deployment, not proof of an actual installation or
+  an exhaustive audit of the operator's backups. A controller-state-only restore paired with
+  a surviving canonical project could therefore lack authority history. Host layout, whether
+  separate backups exist, SQLite-consistent snapshotting and restore procedures require W4
+  verification; no backup or restore was performed here.
+- `SessionDatabase` is one SQLite authority per logical session, not per workspace: its
+  event_log, blackboard and session_meta are under the controller's FA state; a run binding
+  records session/run/time, not the supervisor workspace ID or seal-history checkpoint. The
+  session manifest names a workspace path; `ManagedExecution` holds authority workspace id,
+  grant and current revision, while nested admission can persist a managed binding in a
+  run-scoped artifact. `verification.json` can carry seal/revision identity, but is not an
+  independent project-wide seal lifecycle authority and may not exist before verification.
+  Multiple sessions may refer to one supervisor workspace. No current atomic transaction joins
+  these controller records to the authority pointer/metadata.
+- Blackboard is session.db's optional content-hashed, conflict/query interface, not a separate
+  durable authority or unforgeable execution-boundary proof; the existing workflow handoff
+  write can be best-effort. `EventBus` is an in-process output-listener fan-out whose listener
+  exceptions are logged and swallowed, not the SQLite event log and not durable delivery.
+  JSONL is a best-effort mirror. These surfaces can aid observability/reconciliation but cannot
+  simply be assumed a cross-session seal registry or independent trust anchor.
+
+Calibration: Q-V2-CUSTODY-RECOVERY-1's external rollback-resistant registry is **one option,
+not a proven MVP necessity**. First evaluate a minimal fail-closed, authority-owned lifecycle:
+explicit fresh provisioning / existing-project distinction, durable first-mint intent/history,
+consistent backup/restore and operational refusal when proof is absent. It must also explain
+how missing *all* authority metadata is distinguished from a genuinely new workspace without
+trusting an agent-controlled flag. A coherent restoration of every relevant state to the same
+older point is a stronger anti-rollback requirement; no local marker/SQLite database can detect
+it without a surviving independent newer checkpoint. Whether that belongs to MVP remains an
+operator decision, not a reason to assert the simple loss scenario is normal. Do not silently
+relax the operator's no-remint requirement or claim Q closure; E657 stays active. Q-V2-LEDGER-1
+remains separately scoped. W4 must exercise the eventually selected actual backup/restore and
+ledger-append workflow; no host result is claimed.
+
+
+### E669 — operator resolution of custody recovery scope (2026-11-23)
+
+Operator accepted E668's minimal recommendation: distinguish authority-proven fresh
+provisioning from existing project with unprovable history; fail closed, no silent
+remint. Require coordinated project/session/supervisor backup and W4 restore witness.
+Detecting a coherent rollback of all states is outside MVP; no external anti-rollback
+registry is required. Historical D-V2-5 E9's automatic re-mint is superseded.
+Q-V2-CUSTODY-RECOVERY-1 is resolved as a direction, not implemented; E657 remains.
+
+### E670 — authority BOOTSTRAP origin component (2026-11-23; partial STEP9A)
+
+Authority records workspace/project/operation/revision origin after install forward completion
+and before clearing BOOTSTRAP intent; forward recovery records the same origin. Internal seal
+store requires this private bounded record, refusing missing or invalid proof before seal
+metadata creation. Component tests use synthetic origins except a real install→seal→state
+loss→re-registration refusal test; a post-install origin-write failure exercises recovery.
+Missing/mismatched/symlink/oversize proofs refuse. Reader/publication bank: 201 passed.
+Origin workspace binding producer, mint gate EDGE and recovery EDGE mutants killed/restored.
+This is not a complete lifecycle: pre-existing projects cannot mint without a yet-unspecified
+authorized recovery path, consistent backup/restore is not implemented, and the projection,
+trusted collection provenance, service/controller integration and W4 witness remain open.
+E657 stays in force; no STEP9A closure or live-host claim.

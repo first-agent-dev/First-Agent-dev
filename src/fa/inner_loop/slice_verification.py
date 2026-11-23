@@ -58,7 +58,12 @@ from fa.execution.client import (
 )
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.protocol import MAX_TEXT_BYTES
-from fa.inner_loop.junit_nodeid_plugin import JUNIT_NODEID_PROPERTY, JUNIT_RUN_ID_ENV, JUNIT_RUN_ID_PROPERTY
+from fa.inner_loop.junit_properties import (
+    JUNIT_CALL_OUTCOME_PROPERTY,
+    JUNIT_NODEID_PROPERTY,
+    JUNIT_RUN_ID_ENV,
+    JUNIT_RUN_ID_PROPERTY,
+)
 from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 from fa.inner_loop.tools.workspace_port import PORT_READ_MAX_BYTES, WorkspacePort, WorkspacePortError
@@ -93,8 +98,10 @@ __all__ = [
     "capture_test_nodeids",
     "inband_junit_command",
     "mutation_overlay",
+    "parse_inband_kill_node_outcomes",
     "parse_inband_nodeids",
     "parse_kill_directives",
+    "parse_kill_node_outcomes",
     "parse_node_outcomes",
     "parse_nodeid_report",
     "run_commands",
@@ -574,7 +581,9 @@ def _with_markers(command: str, env: Mapping[str, str]) -> str:
     one of them carries text the model can influence.
     """
     markers = [f"{name}={shlex.quote(env[name])}" for name in sorted(_MANAGED_ENV_MARKERS) if name in env]
-    return command if not markers else " ".join(markers) + " " + command
+    # PTY treats a leading export as stateful and executes it in the persistent
+    # shell. The in-band wrapper ends with exit, so force a subshell instead.
+    return command if not markers else ":; export " + " ".join(markers) + "; " + command
 
 
 def _managed_unavailable_result(command: str, *, reason: str, elapsed_s: float) -> CommandResult:
@@ -714,6 +723,7 @@ class _JUnitOutcome(enum.StrEnum):
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
+    OTHER = "other"
 
 
 @dataclass(frozen=True, slots=True)
@@ -739,7 +749,7 @@ def _junit_property(testcase: ElementTree.Element, name: str) -> str | None:
 
 
 def _junit_testcase(
-    testcase: ElementTree.Element, *, run_id: str | None
+    testcase: ElementTree.Element, *, run_id: str | None, require_call_outcome: bool = False, allow_other: bool = False
 ) -> tuple[tuple[str, _JUnitOutcome] | None, str]:
     nodeid = _junit_property(testcase, JUNIT_NODEID_PROPERTY)
     if nodeid is None:
@@ -754,6 +764,13 @@ def _junit_testcase(
     outcome = _JUnitOutcome.PASSED
     if states:
         outcome = _JUnitOutcome.FAILED if states[0] == "failure" else _JUnitOutcome.SKIPPED
+    if require_call_outcome and outcome is not _JUnitOutcome.SKIPPED:
+        expected = "assertion" if outcome is _JUnitOutcome.FAILED else "passed"
+        observed = _junit_property(testcase, JUNIT_CALL_OUTCOME_PROPERTY)
+        if allow_other and outcome is _JUnitOutcome.FAILED and observed == "other":
+            outcome = _JUnitOutcome.OTHER
+        elif observed != expected:
+            return None, f"JUnit testcase {nodeid!r} lacks a matching call-phase outcome"
     return (nodeid, outcome), ""
 
 
@@ -797,7 +814,9 @@ def _parse_junit_report(path: Path, *, run_id: str | None = None) -> tuple[_JUni
     return _parse_junit_bytes(xml_bytes, run_id=run_id)
 
 
-def _parse_junit_bytes(xml_bytes: bytes, *, run_id: str | None = None) -> tuple[_JUnitReport | None, str]:
+def _parse_junit_bytes(
+    xml_bytes: bytes, *, run_id: str | None = None, require_call_outcome: bool = False, allow_other: bool = False
+) -> tuple[_JUnitReport | None, str]:
     """The same parser, over bytes the caller already holds.
 
     Split out for Q142 option A: on a managed run the report arrives inside the exec
@@ -817,7 +836,9 @@ def _parse_junit_bytes(xml_bytes: bytes, *, run_id: str | None = None) -> tuple[
 
     outcomes: dict[str, _JUnitOutcome] = {}
     for testcase in root.iter("testcase"):
-        row, detail = _junit_testcase(testcase, run_id=run_id)
+        row, detail = _junit_testcase(
+            testcase, run_id=run_id, require_call_outcome=require_call_outcome, allow_other=allow_other
+        )
         if row is None:
             return None, detail
         nodeid, outcome = row
@@ -888,6 +909,39 @@ def parse_node_outcomes(report_bytes: bytes) -> tuple[dict[str, str] | None, str
     the three states, so it gets its own projection over the same parser.
     """
     report, detail = _parse_junit_bytes(report_bytes)
+    if report is None:
+        return None, detail
+    return {nodeid: outcome.value for nodeid, outcome in report.outcomes.items()}, ""
+
+
+def parse_kill_node_outcomes(report_bytes: bytes, *, run_id: str) -> tuple[dict[str, str] | None, str]:
+    """Classify only invocation-bound, call-phase assertion failures as kills."""
+    if not isinstance(run_id, str) or not run_id:
+        return None, "kill invocation identity is missing"
+    report, detail = _parse_junit_bytes(report_bytes, run_id=run_id, require_call_outcome=True)
+    if report is None:
+        return None, detail
+    return {nodeid: outcome.value for nodeid, outcome in report.outcomes.items()}, ""
+
+
+def parse_inband_kill_node_outcomes(stdout: str, *, run_id: str) -> tuple[dict[str, str] | None, str]:
+    """Read one complete invocation-bound kill report from the managed receipt."""
+    if not isinstance(stdout, str):
+        return None, "in-band stdout is not text"
+    carried, detail = _junit_block(stdout)
+    if carried is None:
+        return None, detail
+    return parse_kill_node_outcomes(carried, run_id=run_id)
+
+
+def parse_inband_precode_outcomes(stdout: str, *, run_id: str) -> tuple[dict[str, str] | None, str]:
+    """Classify pre-code calls without treating other exceptions as assertion failures."""
+    if not isinstance(stdout, str) or not isinstance(run_id, str) or not run_id:
+        return None, "pre-code invocation identity is missing"
+    carried, detail = _junit_block(stdout)
+    if carried is None:
+        return None, detail
+    report, detail = _parse_junit_bytes(carried, run_id=run_id, require_call_outcome=True, allow_other=True)
     if report is None:
         return None, detail
     return {nodeid: outcome.value for nodeid, outcome in report.outcomes.items()}, ""

@@ -238,7 +238,7 @@ def test_v2_health_negotiates_project_artifact_and_revision_diff_features(site: 
                 view_profile_id=native_profile().profile_id,
                 read_only_profile_id=read_only_profile().profile_id,
             ),
-            "features": ["diff_revisions", "list_project_artifacts", "list_projects"],
+            "features": ["diff_revisions", "inventory_acceptance", "list_project_artifacts", "list_projects"],
         }
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
 
@@ -1574,3 +1574,77 @@ def test_pty_control_is_composed_and_refuses_without_a_live_episode(site: Site, 
         assert _error(interrupted) == "EXECUTION_UNKNOWN"
         record = service.authority.journal.lookup("op-" + "4" * 32, ACTOR)
         assert record is not None and record["state"] == "UNKNOWN"
+
+
+def test_acceptance_inventory_wire_uses_authorized_pinned_revision(site: Site) -> None:
+    root = site.source / "worklogs" / "demo-project" / "acceptance"
+    root.mkdir(parents=True)
+    (root / "pytest.ini").write_text("[pytest]\n")
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        pinned = exchange(
+            service,
+            Operation.PIN_READER,
+            {"workspace_id": workspace_id, "revision_id": revision, "plan_ref": None},
+            request_id="3" * 32,
+        )
+        assert pinned["status"] == "OK"
+        (root / "pytest.ini").write_text("[changed]\n")
+        args = {
+            "view_ref": pinned["result"]["view_ref"],
+            "capability": pinned["result"]["capability"],
+            "protocol_version": 2,
+        }
+        reply = exchange(
+            service, Operation.INVENTORY_ACCEPTANCE, {"project_slug": "demo-project"}, request_id="4" * 32, **args
+        )
+        assert reply["status"] == "OK", reply
+        assert reply["result"] == {
+            "revision_id": revision,
+            "tree_sha256": pinned["result"]["input_tree_sha256"],
+            "entries": [
+                {"path": "pytest.ini", "type": "file", "size": 9, "sha256": hashlib.sha256(b"[pytest]\n").hexdigest()}
+            ],
+        }
+        assert service.authority.journal.lookup("op-" + "4" * 32, ACTOR) is None
+        denied = exchange(
+            service,
+            Operation.INVENTORY_ACCEPTANCE,
+            {"project_slug": "demo-project"},
+            request_id="5" * 32,
+            **{**args, "capability": "f" * 64},
+        )
+        assert _error(denied) == "UNAUTHORIZED"
+
+
+def test_client_inventory_reaches_real_service_and_checks_grant_identity(site: Site) -> None:
+    root = site.source / "worklogs" / "demo" / "acceptance"
+    root.mkdir(parents=True)
+    (root / "pytest.ini").write_text("[pytest]\n")
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        client = ExecutionClient(service.socket_path, server_uid=os.getuid(), rpc_timeout_ms=2000)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            grant = client.pin_reader(
+                SimpleNamespace(namespace=ACTOR, workspace_id=workspace_id), revision, deadline=until()
+            )
+            assert grant.view_ref is not None
+            got = client.inventory_acceptance(
+                ACTOR, view=grant.view_ref, grant=grant, project_slug="demo", deadline=until()
+            )
+            assert got["revision_id"] == revision and got["tree_sha256"] == grant.input_tree_sha256
+            assert got["entries"][0]["sha256"] == hashlib.sha256(b"[pytest]\n").hexdigest()
+            forged = replace(grant, input_tree_sha256="f" * 64)
+            with pytest.raises(ExecutionContractError):
+                client.inventory_acceptance(
+                    ACTOR, view=grant.view_ref, grant=forged, project_slug="demo", deadline=until()
+                )
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()

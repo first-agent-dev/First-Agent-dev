@@ -49,6 +49,7 @@ NODEID_PLUGIN = "fa.inner_loop.junit_nodeid_plugin"
 #: Budgets (Q-V2-ACC-1). Per-file mirrors the renderer's 4 MiB text bound; the
 #: aggregate is 4x that; paths and depth reuse the authority's existing limits.
 MAX_ACCEPTANCE_FILES = 512
+MAX_ACCEPTANCE_ENTRIES = 4096  # The authority inventory uses the same subtree bound.
 MAX_ACCEPTANCE_FILE_BYTES = 4 * 1024**2
 MAX_ACCEPTANCE_BYTES = 16 * 1024**2
 MAX_ACCEPTANCE_PATH_CHARS = 4096
@@ -136,7 +137,7 @@ def _validate_entry_name(relative: str, *, is_dir: bool) -> None:
         raise AcceptanceClosureError("path-invalid")
 
 
-def _read_regular_file(directory_fd: int, name: str) -> bytes:
+def _read_regular_file(directory_fd: int, name: str, *, remaining_bytes: int) -> bytes:
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
     try:
         fd = os.open(name, flags, dir_fd=directory_fd)
@@ -150,6 +151,8 @@ def _read_regular_file(directory_fd: int, name: str) -> bytes:
         remaining = metadata.st_size
         if remaining > MAX_ACCEPTANCE_FILE_BYTES:
             raise AcceptanceClosureError("file-too-large")
+        if remaining > remaining_bytes:
+            raise AcceptanceClosureError("closure-too-large")
         while remaining:
             chunk = os.read(fd, min(remaining, 1024**2))
             if not chunk:
@@ -163,19 +166,29 @@ def _read_regular_file(directory_fd: int, name: str) -> bytes:
         os.close(fd)
 
 
-def _walk(root: Path) -> list[tuple[str, bytes]]:
+def _walk(root: Path, *, directories: list[str] | None = None) -> list[tuple[str, bytes]]:
     """Collect ``(relative path, bytes)`` from a real directory tree, safely."""
     collected: list[tuple[str, bytes]] = []
+    entry_count = 0
+    total_bytes = 0
     try:
         root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError:
         raise AcceptanceClosureError("root-unreadable") from None
 
     def _descend(directory_fd: int, prefix: str, depth: int) -> None:
+        nonlocal entry_count, total_bytes
         if depth > MAX_ACCEPTANCE_DEPTH:
             raise AcceptanceClosureError("path-too-deep")
         try:
-            names = sorted(os.listdir(directory_fd))
+            names: list[str] = []
+            with os.scandir(directory_fd) as scan:
+                for entry in scan:
+                    entry_count += 1
+                    if entry_count > MAX_ACCEPTANCE_ENTRIES:
+                        raise AcceptanceClosureError("too-many-entries")
+                    names.append(entry.name)
+            names.sort()
         except OSError:
             raise AcceptanceClosureError("root-unreadable") from None
         for name in names:
@@ -188,6 +201,8 @@ def _walk(root: Path) -> list[tuple[str, bytes]]:
                 raise AcceptanceClosureError("symlink-refused")
             if stat.S_ISDIR(metadata.st_mode):
                 _validate_entry_name(relative, is_dir=True)
+                if directories is not None:
+                    directories.append(relative)
                 try:
                     child = os.open(
                         name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd
@@ -202,15 +217,34 @@ def _walk(root: Path) -> list[tuple[str, bytes]]:
             if not stat.S_ISREG(metadata.st_mode):
                 raise AcceptanceClosureError("unreadable-file")
             _validate_entry_name(relative, is_dir=False)
-            collected.append((relative, _read_regular_file(directory_fd, name)))
-            if len(collected) > MAX_ACCEPTANCE_FILES:
+            if len(collected) >= MAX_ACCEPTANCE_FILES:
                 raise AcceptanceClosureError("too-many-files")
+            raw = _read_regular_file(directory_fd, name, remaining_bytes=MAX_ACCEPTANCE_BYTES - total_bytes)
+            total_bytes += len(raw)
+            collected.append((relative, raw))
 
     try:
         _descend(root_fd, "", 1)
     finally:
         os.close(root_fd)
     return collected
+
+
+def collect_acceptance_inventory(root: Path) -> list[dict[str, object]]:
+    """Walk complete host closure membership, including empty directories."""
+    if not isinstance(root, Path):
+        raise AcceptanceClosureError("root-invalid")
+    directories: list[str] = []
+    files = _walk(root, directories=directories)
+    entries: list[dict[str, object]] = [
+        {"path": path, "type": "directory", "size": 0, "sha256": None} for path in directories
+    ]
+    entries.extend(
+        {"path": path, "type": "file", "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+        for path, raw in files
+    )
+    entries.sort(key=lambda entry: str(entry["path"]))
+    return entries
 
 
 def collect_acceptance_closure(root: Path) -> AcceptanceClosure:

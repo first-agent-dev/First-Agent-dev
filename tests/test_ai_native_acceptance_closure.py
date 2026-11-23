@@ -291,3 +291,39 @@ def test_the_payload_reader_needs_a_path_and_a_record(tmp_path: Path, root: Any)
     assert _rule(lambda: read_closure_payload(root, closure)) == "root-invalid"
     empty: Any = {}
     assert _rule(lambda: read_closure_payload(tmp_path / "acc", empty)) == "root-invalid"
+
+
+def test_walk_refuses_aggregate_limit_before_reading_excess_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.inner_loop import acceptance_closure as closure_module
+
+    root = tmp_path / "acc"
+    root.mkdir()
+    (root / "a").write_bytes(b"1234")
+    (root / "b").write_bytes(b"5678")
+    monkeypatch.setattr(closure_module, "MAX_ACCEPTANCE_BYTES", 6)
+    real_read = closure_module.os.read
+    returned: list[int] = []
+
+    def recording(fd: int, count: int) -> bytes:
+        chunk = real_read(fd, count)
+        returned.append(len(chunk))
+        return chunk
+
+    monkeypatch.setattr(closure_module.os, "read", recording)
+    assert _rule(lambda: closure_module.collect_acceptance_inventory(root)) == "closure-too-large"
+    assert sum(returned) == 4, "second file's bytes must not be read after the budget is exhausted"
+
+
+def test_walk_refuses_extra_empty_directories_before_returning_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.inner_loop import acceptance_closure as closure_module
+
+    root = _closure_root(tmp_path / "acc")
+    (root / "extra1").mkdir()
+    (root / "extra2").mkdir()
+    monkeypatch.setattr(closure_module, "MAX_ACCEPTANCE_ENTRIES", 3)
+    assert _rule(lambda: closure_module.collect_acceptance_inventory(root)) == "too-many-entries"
+    assert _rule(lambda: collect_acceptance_closure(root)) == "too-many-entries"

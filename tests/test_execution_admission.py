@@ -600,3 +600,83 @@ def test_failed_readonly_projection_install_leaves_no_stale_copy_and_allows_retr
         monkeypatch.undo()
         with ok(lambda: owner.admit(PEER, req, deadline=until())) as scope:
             assert (scope.inputs.source / "untracked.txt").read_text() == "untracked"
+
+
+@pytest.mark.parametrize("change", ["substitute", "add"])
+def test_read_projection_must_match_revision_after_materialization(
+    site: Site, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """C3/C1: a corrupted copy must not establish its own trusted digest or dispatch."""
+    with setup(site, reader=True) as (owner, grant):
+        request_value = request(grant)
+        claim(owner, request_value)
+        original = owner._materialize_input
+
+        def corrupt(data: int, stage: int, tree: dict[str, Any], profile: Any, deadline: float) -> None:
+            original(data, stage, tree, profile, deadline)
+            source = Path(f"/proc/self/fd/{stage}") / "source"
+            if change == "substitute":
+                (source / "untracked.txt").write_text("forged")
+            else:
+                (source / "added.txt").write_text("forged")
+
+        monkeypatch.setattr(owner, "_materialize_input", corrupt)
+        with pytest.raises(SupervisorError) as failure:
+            attempt_admit(owner, PEER, request_value, deadline=until())
+        assert failure.value.code == "CORRUPT_STATE"
+        assert not (record_path(site, grant).parent / "execution").exists()
+        assert not owner._gates[ref(grant).view_id].active
+        assert json.loads(record_path(site, grant).read_text())["operation_ids"] == []
+        assert (site.source / "untracked.txt").read_text() == "untracked"
+        assert ok(lambda: read(owner, grant))["content"] == "untracked"
+        assert list((site.state / "pending").iterdir()) == []
+        monkeypatch.undo()
+        retry = request(grant)
+        claim(owner, retry)
+        with ok(lambda: owner.admit(PEER, retry, deadline=until())) as scope:
+            assert (scope.inputs.source / "untracked.txt").read_text() == "untracked"
+
+
+def test_read_projection_accepts_revision_with_symlink_and_restrictive_modes(site: Site) -> None:
+    """A faithful copy remains usable; symlink modes are not regular-file chmod modes."""
+    (site.source / "linked.txt").symlink_to("untracked.txt")
+    (site.source / "untracked.txt").chmod(0o640)
+    (site.source / "src").mkdir()
+    (site.source / "src").chmod(0o750)
+    with setup(site, reader=True) as (owner, grant):
+        request_value = request(grant)
+        claim(owner, request_value)
+        with ok(lambda: owner.admit(PEER, request_value, deadline=until())) as scope:
+            assert (scope.inputs.source / "linked.txt").read_text() == "untracked"
+            assert (scope.inputs.source / "untracked.txt").stat().st_mode & 0o777 == 0o440
+            assert (scope.inputs.source / "src").stat().st_mode & 0o777 == 0o550
+            with scope.effect():
+                (scope.inputs.scratch / "effect").write_text("allowed")
+            assert (scope.inputs.scratch / "effect").read_text() == "allowed"
+
+
+def test_failed_projection_cleanup_does_not_chmod_external_symlink_target(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    external = site.state.parent / "outside"
+    external.mkdir(mode=0o555)
+    try:
+        with setup(site, reader=True) as (owner, grant):
+            req = request(grant)
+            claim(owner, req)
+            original = owner._materialize_input
+
+            def corrupt(data: int, stage: int, tree: dict[str, Any], profile: Any, deadline: float) -> None:
+                original(data, stage, tree, profile, deadline)
+                source = Path(f"/proc/self/fd/{stage}") / "source"
+                (source / "escape").symlink_to(external, target_is_directory=True)
+
+            monkeypatch.setattr(owner, "_materialize_input", corrupt)
+            with pytest.raises(SupervisorError) as failure:
+                attempt_admit(owner, PEER, req, deadline=until())
+            assert failure.value.code == "INPUT_POLICY"
+            assert external.stat().st_mode & 0o777 == 0o555
+            assert not (record_path(site, grant).parent / "execution").exists()
+            assert list((site.state / "pending").iterdir()) == []
+    finally:
+        external.chmod(0o700)

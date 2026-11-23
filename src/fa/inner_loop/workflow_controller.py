@@ -36,6 +36,7 @@ from fa.execution.primitives import ExecutionContractError
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, Operation, ViewPurpose
 from fa.inner_loop.acceptance_bundle import AcceptanceBundle, AcceptanceBundleError, mint_seal
+from fa.inner_loop.acceptance_closure import AcceptanceClosureError, collect_acceptance_inventory
 from fa.inner_loop.acceptance_collection import (
     AcceptanceCollectionError,
     collect_sealed_tree,
@@ -492,6 +493,22 @@ class _VerifySubstrate:
 
     executor: VerifyCommandExecutor
     port: WorkspacePort | None
+    inventory: Callable[[str], dict[str, Any]] | None = None
+
+
+def _require_acceptance_inventory(
+    substrate: _VerifySubstrate, *, slug: str, root: Path, revision_id: str
+) -> list[dict[str, object]]:
+    if substrate.inventory is None:
+        raise AcceptanceCollectionError("acceptance-inventory-unavailable")
+    try:
+        remote = substrate.inventory(slug)
+        local = collect_acceptance_inventory(root)
+    except AcceptanceClosureError as error:
+        raise AcceptanceCollectionError(f"closure-{error.rule}") from None
+    if remote.get("revision_id") != revision_id or remote.get("entries") != local:
+        raise AcceptanceCollectionError("acceptance-inventory-mismatch")
+    return local
 
 
 @contextmanager
@@ -556,13 +573,24 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
         plan_ref=plan_ref,
     )
     try:
-        yield _VerifySubstrate(executor=ManagedVerifyCommandExecutor(reader, root=ctx.workspace), port=port)
+
+        def inventory(slug: str) -> dict[str, Any]:
+            return managed.client.inventory_acceptance(
+                managed.binding.namespace, view=view, grant=grant, project_slug=slug, deadline=deadline
+            )
+
+        yield _VerifySubstrate(
+            executor=ManagedVerifyCommandExecutor(reader, root=ctx.workspace), port=port, inventory=inventory
+        )
     finally:
         # A pin that did not become terminal stays owned by this run; saying so is the
         # honest outcome, and the next run on the workspace will be refused until it is
         # settled rather than silently reading a view someone else may hold.
+        reader.suspend()
+        port.suspend()
         if not managed.client.stop_view(managed.binding.namespace, view=view, grant=grant, deadline=deadline):
             logger.error("verify read-only view did not become terminal (run=%s view=%s)", ctx.run_id, view.view_id)
+            raise ExecutionUnavailableError
 
 
 def _sealed_snapshot(ctx: WorkflowContext) -> PlanSnapshot | None:
@@ -578,6 +606,15 @@ def _sealed_snapshot(ctx: WorkflowContext) -> PlanSnapshot | None:
     return snapshot if snapshot.format == PLAN_V2 else None
 
 
+def _v2_custody_ready() -> bool:
+    """Temporary refusal until authority custody and read-only mode A are implemented.
+
+    No configuration or untrusted caller may override this gate. Replace it only
+    with an authority-bound capability and its end-to-end evidence.
+    """
+    return False
+
+
 def _record_stage_attempt(ctx: WorkflowContext, attempt: VerificationAttempt | None) -> None:
     """Keep the stage's attempt on the admission record for the artifact writer (F10 item 4).
 
@@ -586,6 +623,15 @@ def _record_stage_attempt(ctx: WorkflowContext, attempt: VerificationAttempt | N
     """
     if ctx.admission is not None:
         ctx.admission.last_attempt = attempt
+
+
+def _stage_custody_admitted(ctx: WorkflowContext) -> bool:
+    """Refuse a V2 coder before dispatch while independent custody is unavailable."""
+    if _sealed_snapshot(ctx) is None or _v2_custody_ready():
+        return True
+    _record_stage_attempt(ctx, None)
+    _admission_failed(ctx, "acceptance-custody-unavailable")
+    return False
 
 
 def _stage_acceptance_bundle(ctx: WorkflowContext) -> tuple[AcceptanceBundle | None, tuple[str, ...]]:
@@ -642,6 +688,10 @@ def _sealed_stage_verification(
     managed = ctx.managed_execution
     profile = None if managed is None else managed.read_only_profile
     try:
+        slug = bundle.sealed_root.split("/")[1]
+        before = _require_acceptance_inventory(
+            substrate, slug=slug, root=ctx.workspace / bundle.sealed_root, revision_id=candidate_revision_id
+        )
         verification = verify_sealed_acceptance(
             bundle,
             workspace=ctx.workspace,
@@ -654,7 +704,19 @@ def _sealed_stage_verification(
             deadline=ctx.deadline_mono,
             executor=executor,
         )
-    except (AcceptanceCollectionError, AcceptanceBundleError) as error:
+        after = _require_acceptance_inventory(
+            substrate, slug=slug, root=ctx.workspace / bundle.sealed_root, revision_id=candidate_revision_id
+        )
+        if before != after:
+            raise AcceptanceCollectionError("acceptance-inventory-mismatch")
+    except (
+        AcceptanceCollectionError,
+        AcceptanceBundleError,
+        ExecutionContractError,
+        ExecutionRejectedError,
+        ExecutionUnavailableError,
+        ExecutionUncertainError,
+    ) as error:
         rule = getattr(error, "rule", type(error).__name__)
         return PlanVerification(
             plan_command_results=(),
@@ -691,11 +753,22 @@ def _sealed_stage_verification(
             slice_verifications=(),
             errors=(*errors, f"sealed-attempt/{error.rule}"),
         ), None
-    # One command, attributed to the oracle that actually ran: the harness built it from the seal.
+    # Only the strictly classified assertion-red receipt is a determinate
+    # failure. Anything else that makes an attempt block remains uncertainty:
+    # observe must never waive a missing claim, error, skip or future mutation.
+    determinate_assertion = (
+        verification.command.outcome is CommandOutcome.FAIL
+        and not sealed.errors
+        and any(claim.outcome == "failed" for claim in sealed.claims)
+        and all(claim.outcome in {"passed", "failed"} and claim.mutation is None for claim in sealed.claims)
+    )
     plan_verification = PlanVerification(
         plan_command_results=(verification.command,),
         slice_verifications=(),
-        errors=(*errors, *(("sealed-attempt/" + sealed.first_reason,) if sealed.blocking else ())),
+        errors=(
+            *errors,
+            *(("sealed-attempt/" + sealed.first_reason,) if sealed.blocking and not determinate_assertion else ()),
+        ),
     )
     return plan_verification, sealed
 
@@ -1959,7 +2032,7 @@ def _run_stage(
     refusal = refusal or _deadline_refusal(ctx, role, progress)
     if refusal is not None:
         return refusal
-    if role == "coder" and not _admit_plan(ctx, progress, run_stage_fn):
+    if role == "coder" and (not _admit_plan(ctx, progress, run_stage_fn) or not _stage_custody_admitted(ctx)):
         return StageResult(role=role, exit_code=_admission_exit_code(ctx))
     progress = _admission_progress(ctx, progress)
 
@@ -2106,6 +2179,7 @@ def _run_stage(
                     )
         except Exception as error:  # Uncertainty is a recorded ERROR, never a pass.
             logger.exception("workflow verification failed unexpectedly (run=%s)", ctx.run_id)
+            sealed_attempt_for_stage = None
             verification = PlanVerification(
                 plan_command_results=(),
                 slice_verifications=(),
@@ -3641,7 +3715,10 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
         _admission_storage_failure(bound, error)
     # N1/D-V2-5: mint and store the seal now, so the coder stage has an oracle and the gate can
     # refuse a missing one instead of rewriting the plan to make absence legal.
-    refused = _seal_published_project(bound, snapshot)
+    try:
+        refused = _seal_published_project(bound, snapshot)
+    except (ExecutionContractError, ExecutionRejectedError, ExecutionUnavailableError, ExecutionUncertainError):
+        refused = PlanRefError("bootstrap-unavailable")
     if refused is not None:
         logger.warning("published project not sealed [%s/%s] (run=%s)", refused.rule, refused.detail, ctx.run_id)
         # The *bound* context is not handed back (every other refusal in this function returns
@@ -3661,6 +3738,10 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
 _UNREPAIRABLE_SEAL_RULES: frozenset[str] = frozenset(
     {
         "plan-graph-missing",
+        "verifier-revision-mismatch",
+        "collection-identity-mismatch",
+        "acceptance-inventory-mismatch",
+        "acceptance-inventory-unavailable",
         "seal-uncovered-contracts",
         "seal-attestation-unowned",
         "seal-attestation-artifact-missing",
@@ -3705,6 +3786,7 @@ def _seal_published_project(ctx: WorkflowContext, snapshot: PlanSnapshot) -> Pla
     if graph is None:
         # A PLAN-V2 snapshot with no graph cannot describe a contract, let alone seal one.
         return PlanRefError("bootstrap-acceptance-unsealed", detail="plan-graph-missing")
+    revision_id = managed.current_revision_id
     sealed_root = f"worklogs/{slug}/acceptance"
     acceptance_root = ctx.workspace / sealed_root
     with _pinned_verify_substrate(ctx) as substrate:
@@ -3713,34 +3795,51 @@ def _seal_published_project(ctx: WorkflowContext, snapshot: PlanSnapshot) -> Pla
             # coder just edited; that is an authority fact, so it is retryable and pre-seal.
             return PlanRefError("bootstrap-unavailable")
         try:
+            before = _require_acceptance_inventory(substrate, slug=slug, root=acceptance_root, revision_id=revision_id)
             collection = collect_sealed_tree(
                 acceptance_root,
                 sealed_root=sealed_root,
                 workspace=ctx.workspace,
                 deadline=ctx.deadline_mono,
                 executor=substrate.executor,
+                expected_revision_id=revision_id,
             )
+            after = _require_acceptance_inventory(substrate, slug=slug, root=acceptance_root, revision_id=revision_id)
+            if before != after:
+                raise AcceptanceCollectionError("acceptance-inventory-mismatch")
         except AcceptanceCollectionError as error:
             return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
         except AcceptanceBundleError as error:
             # ``sealed-root-invalid`` stays the seal's rule on the way in, by design.
             return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
-    try:
-        bundle = mint_seal(
-            graph=graph,
-            plan_bytes=snapshot.utf8_bytes,
-            revision_id=managed.current_revision_id,
-            sealed_root=sealed_root,
-            acceptance_root=acceptance_root,
-            collected=collection.nodeids,
-        )
-    except AcceptanceBundleError as error:
-        return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
-    except PlanV2Error as error:
-        # ``mint_seal`` resolves the plan's selectors against the collection, so a selector
-        # nothing collected surfaces here as the parser's own rule. It is content, and the
-        # repair prompt is the only place that can act on it (P4-3).
-        return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+        try:
+            bundle = mint_seal(
+                graph=graph,
+                plan_bytes=snapshot.utf8_bytes,
+                revision_id=revision_id,
+                sealed_root=sealed_root,
+                acceptance_root=acceptance_root,
+                collected=collection.nodeids,
+            )
+        except AcceptanceBundleError as error:
+            return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+        except PlanV2Error as error:
+            # ``mint_seal`` resolves the plan's selectors against the collection, so a selector
+            # nothing collected surfaces here as the parser's own rule. It is content, and the
+            # repair prompt is the only place that can act on it (P4-3).
+            return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+        try:
+            final = _require_acceptance_inventory(substrate, slug=slug, root=acceptance_root, revision_id=revision_id)
+            sealed_files = {entry.path: (entry.size, entry.sha256) for entry in bundle.closure.files}
+            inventory_files = {
+                entry["path"]: (entry["size"], entry["sha256"]) for entry in final if entry["type"] == "file"
+            }
+            if final != before or sealed_files != inventory_files:
+                raise AcceptanceCollectionError("acceptance-inventory-mismatch")
+        except AcceptanceCollectionError as error:
+            return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+    if managed.current_revision_id != revision_id or bundle.closure.digest != collection.closure_sha256:
+        return PlanRefError("bootstrap-acceptance-unsealed", detail="collection-identity-mismatch")
     try:
         SealStore(ctx.workspace).store(bundle)
     except AcceptanceBundleError as error:
