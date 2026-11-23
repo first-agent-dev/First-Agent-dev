@@ -13157,3 +13157,82 @@ its own. mypy 62 (0 new), ruff 0, ruff-format 0 new, authoring-check 0.
 `run_kill_checks` seam over the existing `_run_kill_check` → sealed projection into `VerificationAttempt` →
 controller branch that retires the fence → the two CT-3.6 properties (hostile fence runs nothing; partial identity
 refused at write).
+
+### E623 — GAP: E617–E622 are cited by the plan and the gate recordings, and were never written here (2026-11-22)
+
+**What a reader hits.** The plan names E617 (F10's measured defect), E618 (the sealed→attempt projection), E619 (the
+substrate names the revision — F5), E620 (the `PLAN-V2` controller branch), E621 (the artifact and eval block carry the
+attempt) and E622 (F1's closed mutation-verdict vocabulary), and five gate recordings open with "Recorded after E6xx".
+This ledger's highest entry was **E616**. So six evidence ids resolve to nothing, in the one artifact the planner is
+told to read at increment start — the class of drift E613 describes, applied to evidence rather than to gates.
+
+**Why it is recorded instead of back-filled.** Writing six `FACT` entries now would be a reconstruction from the plan's
+own prose and from commits, not from the verification that produced them, and a fabricated citation is worse than a
+missing one. What the ids described is recoverable without guessing, and is listed here so the chain can be followed:
+E617 ≡ the plan's "Measured defect (F10)" paragraph; E618–E621 ≡ the four "F10 item n landed" paragraphs;
+E622 ≡ the "F1 schema gap closed" paragraph; each paragraph states its own measurements and tests, and each gate
+recording named after an id carries the finding list of that commit.
+
+**Fix applied now.** The plan's paragraphs keep their ids (they are the record of what was verified); this entry is the
+resolution step they pointed at. From here, no new `E6xx` may be cited until the entry exists — the same rule the gate
+set got in E613.
+
+### E624 — DECIDED: Q-V2-SLICE3-4 = A, Q-V2-SLICE3-3 = A, and the mutation operator is prioritised (2026-11-22)
+
+Three operator decisions, taken on the two-option write-up in
+`notes/q-v2-slice3-3-4-options-and-plan-drift-review-2026-11-22.md`:
+
+* **Q-V2-SLICE3-4 = A (ratified, was implemented on the recorded recommendation).** A declared kill target is recorded
+  as declared-and-not-executed (`kill_declared`, `executed: false`); `kill_required` stays empty; `proven` speaks only
+  about the selector's execution. B (declare it required → `claim-mutation-missing`) is rejected because the authoring
+  prompt *requires* a `KILL-TARGETS` block: B blocks every project written to the instructions, permanently, until
+  `run_kill_checks` exists. The plan's CT-3.6 sentence that demanded B is rewritten to A in the same change.
+* **Q-V2-SLICE3-3 = A.** One vocabulary: `kill_attribution`'s verdicts are `SliceVerdict`'s own members, the constant is
+  derived, and both the record (`KillAttribution`) and the run (`NodeRun`) validate what they name. `NODE_OUTCOMES`
+  stays a separate axis, typed as its own `StrEnum`.
+* **The mutation operator ("option D" of Q-V2-SLICE3-4) is prioritised above the remaining S4/S5 work.** That makes
+  Q-V2-SLICE3-5 — the shape of `TARGET-ID` — the next gate rather than a backlog item, because a runner cannot be
+  written against a field that means "a site" to the prompt and "a label" to the fixtures.
+
+### E625 — Q-V2-SLICE3-3 landed: one axis, one spelling, and two constants become rules (2026-11-22)
+
+`kill_attribution.py`: `NodeOutcome` (`PASSED/FAILED/SKIPPED/MISSING/ERROR`) with `NODE_OUTCOMES` derived from it;
+`ATTRIBUTION_VERDICTS` derived from `SliceVerdict` (`{PROVEN, VACUOUS, ERROR}`) instead of an uppercase literal set;
+`KillAttribution.verdict` is a `SliceVerdict` and `__post_init__` refuses a verdict outside the set
+(`kill-attribution-invalid`) or a non-`PROVEN` verdict with no detail; `NodeRun.__post_init__` refuses an outcome
+outside the five (`kill-run-invalid`); `_classify`/`_verdict` speak the enums. The point is not tidiness: before this,
+`ATTRIBUTION_VERDICTS` was exported and read by nothing, so a hand-built record could name any string and a future
+writer would have stored it verbatim — F1's shape, one entity over.
+
+**Measured:** `tests/test_ai_native_kill_attribution.py` **35 passed** (was 32: three new oracles, one renamed), with
+the bind the old split could not state — `{v.value for v in ATTRIBUTION_VERDICTS} ⊆ MUTATION_VERDICTS`, so the day
+CT-3.4/3.5 wires attribution into the attempt there is no translation to forget. **Nine mutants, all killed:** the
+constant back to uppercase literals; the membership rule removed; the "non-`PROVEN` must explain itself" rule removed;
+`NodeRun` accepting any outcome; a failed mutation reading as `VACUOUS`; a failed report row reading as `SKIPPED`;
+`attribute` accepting a non-run; the outcome values lowercased; the baseline-pass precondition removed.
+
+**Environment caveat, stated because it is real:** the sandbox did not retain its python 3.13 virtualenv, so this
+change was verified on CPython **3.11** with a `typing.override` stand-in installed *outside* the repository (a `.pth`
+in the temporary venv). The code under test is the committed code; the interpreter is not the project's. The full
+suite, the `ruff-format` baseline recording and the pyrefly gate therefore remain **owed** for this change set (E623's
+gate-recording rule), and nothing here is claimed as host-verified.
+
+### E626 — the seal moved out of the tracked tree, and the ledger's own custody line is superseded (2026-11-22)
+
+**Supersedes the fact recorded in this ledger** as "The seal file (`acceptance.seal.json`) lives **beside**
+`worklogs/<slug>/acceptance/`, not inside it". That statement contradicted **D-V2-5** ("immutable per-seal files in
+private metadata plus one atomic pointer", "the seal never lives under `worklogs/`") and the code implemented it
+anyway, so the ledger recorded the drift as a decision. Today's code follows the plan: `acceptance_seal_store.SealStore`
+keeps immutable per-digest records under `.fa/seals/` and one atomically replaced pointer `.fa/seal-current.json`, and
+the create route mints and stores the seal after admission and before any coder (`workflow_controller._seal_published_project`,
+N1, `7b750f5`).
+
+**Why this matters beyond the file move:** the old location made "the project at revision R" and "the bytes on disk"
+stop meaning the same thing at the artifact whose job is to prove custody — every revision walk could carry the seal,
+and a re-seal would have been a plan edit. `.fa/` is the one location both canonical walks exclude and no file tool may
+address.
+
+**Also recorded here because no entry covers it:** the N1–N3 change set (`7b750f5`) shipped the store, the route mint,
+the stage reader, the scaffold's `acceptance/pytest.ini`, `kill_declared` (N2) and the sealed `attestations` in the
+artifact and eval block (N3), evidenced then by a 19-test bank, an affected bucket of 675, the full suite at 8411
+passed / 1 pre-existing red, the live bank at 581 passed, and 14/14 mutants.

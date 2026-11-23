@@ -635,8 +635,9 @@ is the controller wiring plus D-V2-5's pointer/recovery rules (E1–E9). Plan-se
 question to raise.
 
 **N2 — a declared kill target leaves no trace in a V2 attempt.** The controller passes `kill_required=()`
-unconditionally, and the reason is right for *execution* (V2 `KillTarget` carries attribution only, so nothing is
-runnable — F10 item 5). But the artifact then records `kill_required: []` even when the plan declares
+unconditionally, and the reason is right for *execution* (V2 `KillTarget` carries attribution only — and, corrected
+2026-11-22, *no operator*, while its `target_id` has no agreed shape either: the prompt teaches `path::symbol`, the
+fixtures use dotted ids — Q-V2-SLICE3-5; so nothing is runnable, F10 item 5). But the artifact then records `kill_required: []` even when the plan declares
 `KILL-TARGETS  KT-1 -> CT-1.1, TEST-1.1`. A reader cannot tell "no mutation was required" from "a mutation was
 declared and never ran" — F3's shape, one field over, and the exact reason F1 was called the worst defect. The
 record-only fix (carry the declared attribution: target id, contract, test, and say `executed: false`) is small;
@@ -751,3 +752,28 @@ new refusal rules. `ruff check`/`format --check` clean; `fa authoring-check` dia
 **Still open.** `Q-V2-SLICE3-4` needs the operator's confirmation of option A (the implementation follows the
 recorded recommendation). `Q-V2-SLICE3-3` (the duplicated uppercase verdict vocabulary in `kill_attribution`) stays
 open and untouched.
+
+## Q-V2-SLICE3-3 resolved = A: two spellings of one axis became one (2026-11-22)
+
+`kill_attribution.py` no longer keeps a second, uppercase verdict vocabulary. `NodeOutcome` (an `enum.StrEnum`:
+`PASSED/FAILED/SKIPPED/MISSING/ERROR`) types a *run*, `NODE_OUTCOMES` is derived from it, and
+`ATTRIBUTION_VERDICTS` is derived from `SliceVerdict` (`{PROVEN, VACUOUS, ERROR}`) instead of a literal set. The
+record validates what it names — `KillAttribution.verdict` must be a `SliceVerdict` inside that set
+(`kill-attribution-invalid`) and every non-`PROVEN` verdict must carry a detail — and `NodeRun` refuses an outcome
+outside the five (`kill-run-invalid`). Before this, `ATTRIBUTION_VERDICTS` was exported and read by nothing: the
+constant was a promise with no reader, which is F1's shape one entity over.
+
+The two axes stay separate on purpose: a run can be `MISSING` (no verdict counterpart) and a verdict can be `VACUOUS`
+(no single-run counterpart). What was removed is two spellings of the *same* axis — `"PROVEN"` beside
+`SliceVerdict.PROVEN` — which is what made a correct proof read as `mutation-invalid` (or, worse, compare `False`)
+the day CT-3.4/3.5 wires attribution into the attempt.
+
+**Measured:** bank 35 passed (was 32); nine mutants killed (constant back to uppercase literals, membership rule
+removed, unexplained-non-`PROVEN` rule removed, `NodeRun` accepting any outcome, a failed mutation reading as
+`VACUOUS`, a failed report row reading as `SKIPPED`, `attribute` accepting a non-run, outcome values lowercased,
+baseline-pass precondition removed). The bind that keeps a third spelling from appearing is a test:
+`{verdict.value for verdict in ATTRIBUTION_VERDICTS} <= MUTATION_VERDICTS`.
+
+**Environment caveat:** the sandbox lost its python 3.13 virtualenv, so this bank was executed on CPython 3.11 with a
+`typing.override` stand-in installed outside the repository. The committed code is what ran; the interpreter is not
+the project's. The full suite and the gate recordings are owed (ledger E625).
