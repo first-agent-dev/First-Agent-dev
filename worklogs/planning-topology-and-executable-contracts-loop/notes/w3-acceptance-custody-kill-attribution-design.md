@@ -129,3 +129,13 @@ writes: Q-V2-WRITE-SCOPE-1=A permits only the current project working surfaces i
 to existing nested source roots; mutation oracle confinement remains independent. The
 [V2 plan](i03-ai-native-workflow-refactor-plan-v2.md) E687 records the source audit,
 implementation and proof tasks; the policy is not yet implemented.
+
+## E695 — working question file and admitted decisions
+
+The operator places the V2 working ledger and open-questions in `notes/`; this does not
+make the notes directory immutable. In particular, editing working Q text cannot by itself
+change a previously admitted decision, unblock scope, or alter a ratified invariant.
+Trusted decision validation, pinning, re-admission, role authorization and old-evidence
+preservation remain implementation and proof tasks; file edits alone require no reseal.
+Root `roadmap.md` remains the target. No runtime migration or custody PASS is claimed;
+see the [V2 plan](i03-ai-native-workflow-refactor-plan-v2.md) E695.

@@ -14901,3 +14901,20 @@ review. E693 journal remains a tested local alternative, not selected. User acce
 principle is not an authorization to silently broaden scope, choose migration semantics,
 or change authoritative evidence. Detailed bounded proof/implementation sequence and
 remaining independent blockers are in V2 plan E694. No runtime, host or STEP9A PASS claimed.
+
+### E695 — working ledger and questions under notes (2026-11-23)
+
+Operator accepts `notes/ledger.md` and directs `notes/open-questions.md`; roadmap can move
+only if materially simpler. Root roadmap is retained: RO worklogs already covers it, and
+project discovery, collision, metadata and admission depend on the root location. V2 plan
+formerly specified root open-questions; E695 supersedes its target path, not past evidence
+or current runtime. Notes are writable; changes to Q text alone cannot change a trusted
+admitted decision or unblock scope. Pin/re-admission/authorization must be implemented and
+proved without treating all working edits as reseal events. Parent I03 documents remain.
+
+Local notes-mount diagnostic with real outside-namespace RootedViewIO succeeded for fresh
+ledger replacement/append and selected denials, and shows notes open-questions editable.
+Not Docker, production publication, full scope/closure or Q authority proof. TEST-EDITS:
+`tests/test_acceptance_mount_topology.py`, 283 passed in five-module bank; scoped
+Ruff/format/mypy passed; three diagnostic mutants killed/restored (parent RO, notes mount,
+question write). V2 plan E695 records limits and next steps; E657 and STEP9A remain open.

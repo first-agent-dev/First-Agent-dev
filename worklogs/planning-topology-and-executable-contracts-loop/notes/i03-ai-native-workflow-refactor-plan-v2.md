@@ -15,6 +15,20 @@ Rolling wave means a broad roadmap with the nearest increment and its slices det
 outlined; it does not require detailed I02 while I01 is unfinished. Collection of the current increment and
 proposal-transport proof remain technical checks, not implementation or host evidence. Existing user-facing semantics and other ratified decisions continue to apply.
 
+**Operator layout amendment E695 (2026-11-23; target, not implemented).** The canonical V2
+working paths are `worklogs/<slug>/notes/ledger.md` and
+`worklogs/<slug>/notes/open-questions.md`. The user accepts relocating the ledger and asks
+that open questions move to notes. Keep `worklogs/<slug>/roadmap.md` at the root: moving it
+into increments has no demonstrated mount benefit and changes discovery/collision contracts.
+This supersedes earlier *target* mentions of a root ledger or root open-questions in this
+plan (including CT-2.3, CT-2.8, CT-4.3 and D-V2-9), but does not rewrite historical evidence,
+change the current implementation, or migrate the I03 parent. The writable notes Q file is
+working material: a post-admission edit must not itself unblock scope, alter an admitted
+Q decision or rewrite a ratified invariant. A trusted pinned/re-admitted decision is required
+before semantic effects; design and prove its exact authorization, replay and history in the
+implementation slice. These requirements do not make the notes file read-only or require
+reseal merely to edit it. Maintain the independent plan/oracle custody and old evidence.
+
 ## 1. Intent, scope, and authority
 
 Deliver an AI-native, production-composed planning workflow for a fresh project: the chat role supplies a validated project slug through `invoke_workflow`; the planner authors semantic planning and acceptance content; trusted harness code owns scaffolding, fixed-path materialization, full-project validation, admission and seal; revision-safe V2 status ticks are a required target but remain gated by Q-V2-STATUS-1; coder can start only after the complete acceptance closure is sealed and can inspect it read-only (mode A); the managed verifier runs that same pinned closure. A successful vertical run must reach the real caller and produce an observable, reviewable host witness. Every refusal must be structured and leave no ambiguous success or accidental overwrite.
@@ -28,7 +42,7 @@ This is a linked semantic/acceptance authority for the new refactor slices, not 
 - `INV → CT → TEST-ID → selector`: one primary INV per CT; one INV may have multiple CTs; each TEST-ID belongs to exactly one CT and resolves to exactly one collected nodeid; one CT may have multiple TEST-IDs. Optional formal SCN expresses a scenario/path and links explicit `CT-ID[]`; TEST membership derives through CT→TEST.
 - Follow STEP9A custody: controller-minted versioned `AcceptanceBundle`; artifact C/workspace-revision strategy; mode A prevents writes through both file tools and shell (D-V2-6, amended by E657 / CT-3.3); immutable-payload storage fallback if the selected revision strategy cannot prove the required custody. No hash-only sidecar. Visibility mode B is unsupported in MVP and fails closed. Mode A is visible/read-only, not an independent or hidden oracle.
 - Exact kill attribution is one mutation target → one CT → one TEST-ID → one nodeid on the sealed revision. A mapped assertion failure alone proves a kill. A pass under mutation is VACUOUS; collection/setup/skip/timeout/crash/launch/JUnit failure or zero executions is ERROR, not PROVEN. Unrelated failures never prove the target. Custody/mapping integrity blocks in observe and enforce; determinate kill failures are advisory in observe and repair-blocking in enforce. TEST-DEFECT creates a new sealed revision and preserves the old evidence; invariant changes require replan.
-- No mandatory coder→planner/owner approval before implementation. Coder owns routine internal seam choices inside admitted behavior/safety/ownership constraints. Planner may resolve ordinary product-semantic questions best-effort in root `open-questions.md`; only dependent scope is held if unresolved. Changing a ratified invariant requires replan. Risk-gated independent review remains an open policy question, not an MVP gate.
+- No mandatory coder→planner/owner approval before implementation. Coder owns routine internal seam choices inside admitted behavior/safety/ownership constraints. Planner may resolve ordinary product-semantic questions best-effort in `notes/open-questions.md`; only dependent scope is held if unresolved. Changing a ratified invariant requires replan. Risk-gated independent review remains an open policy question, not an MVP gate.
 - The I03 one-off slice-count exception applies to these planned slices only; `_SLICE_CEILING = 7` remains unchanged for other increments.
 
 ### Out of scope / evidence boundary
@@ -59,14 +73,14 @@ The current `artifact-schema-and-grammar.md` is the V1 artifact contract; it is 
 | Path | Writer / authority | V2 role |
 |---|---|---|
 | `roadmap.md` | Harness writes fixed metadata/version; planner writes semantic body | Exactly one roadmap, explicit `Plan-Format: AI-NATIVE-PLAN-V2`, project slug and creation date. Any status/active-increment display is a deterministic authority projection under Q-V2-STATUS-1, not a post-seal planner edit. |
-| `ledger.md` | Harness initializes; agents maintain working content | Writable without re-admission/reseal; a working journal, not an authoritative PASS or admission input. Runtime evidence remains independently bound to its run, plan, seal and candidate. Nested MUTATION scope is amended by Q-V2-WRITE-SCOPE-1=A, implementation open. |
-| `open-questions.md` | Planner writes/resolves before admission; harness validates | Required root artifact; bounded Q records; no interactive ask dependency. Post-seal changes are a new plan revision and require re-admission/re-seal; otherwise the dependent scope stays blocked. |
+| `notes/ledger.md` | Harness initializes; agents maintain working content | Writable without re-admission/reseal; a working journal, not an authoritative PASS or admission input. Runtime evidence remains independently bound to its run, plan, seal and candidate. Nested MUTATION scope is amended by Q-V2-WRITE-SCOPE-1=A, implementation open. |
+| `notes/open-questions.md` | Planner writes/resolves working records; harness validates semantic decisions | Required working artifact with bounded Q records; no interactive ask dependency. File edits do not themselves modify the admitted decision or unblock scope: semantic effects require trusted validation and re-admission/re-seal. |
 | `increments/increment-01-initial-plan.md` | Harness writes fixed metadata; planner writes semantic plan; tick mutation is gated by Q-V2-STATUS-1 | `initial-plan` is harness-fixed, not a planner field. Explicit same `Plan-Format` marker; one active new-format increment. Contains invariants, optional scenarios, SLICE/CT/STEP declarations, acceptance selectors and kill-target mappings. Semantic bytes stay immutable after seal; any update requires new revision/re-admission/seal. |
 | `acceptance/tests/` plus all referenced `acceptance/` support/fixture/driver files | **Planner writes them directly** (D-V2-9), confined to `worklogs/<slug>/acceptance/` by the stage allowlist; immutable after seal | New, project-scoped acceptance root; selected to avoid mixing these sources with repository harness tests. V2 selectors are workspace-relative `worklogs/<project_slug>/acceptance/tests/<path>.py::nodeid`, formed by the planner under the scaffold's front matter (no renderer expands anything). The only paths written are beneath `worklogs/<slug>/acceptance/`; the closure's own `pytest.ini` is written by the scaffold **inside** that root and is bound by the seal's digest like every other closure file (Q-V2-ACC-1: keys are allowlisted, `acceptance_closure.py:266`), while the runner itself is a trusted existing workspace input, never planner-overwritten. The authority refuses absolute paths, `..`, dot components and symlinks at the write boundary (`view_io.py:226–234`, `_BLOCKED_COMPONENTS` `:28`); admission additionally refuses selectors resolving outside the closure. `TEST-ID` selectors are the sole source of nodeid membership; legacy slice-wide `TESTS:` lists are not accepted on this route. |
 
 This is a new fixed root, not a discovered production convention. It is chosen because the existing managed verifier accepts workspace-relative pytest paths and runs from workspace root (`slice_verification.py::capture_test_nodeids`, `:825–845`; `verify_plan`, `:2371–2408`), and the authority install path already constrains bundle files under `worklogs/<slug>` (`workspace.py::_install_file_record`, `:3637–3654`). SLICE3 C1 must actually collect/import/run a project test at this exact path through the managed runner; if it cannot, fail closed and replan before implementation rather than silently relocating paths or adding a runner. This suite is distinct from the repository's `tests/test_ai_native_*.py` harness tests that exercise the implementation.
 
-**Machine-checkable V2 grammar delta:** retain frontmatter ownership, roadmap/ledger/increment layout, `## SLICE<n>` sections, typed CT classes and STEP syntax from the canonical artifact contract, with the explicit V2 step-exit extension below. The exact version field is `Plan-Format: AI-NATIVE-PLAN-V2`, occurring exactly once in roadmap and once in each admitted increment; reject missing, duplicate, mismatched markers, extra active-increment ambiguity and mixed V1/V2 tokens. Inside an increment, strict `## INVARIANTS` entries use one heading `### INV-<n>` and exactly one each `TEXT: <criterion>` and `EVIDENCE: TEST_REQUIRED | NON_EXECUTABLE`. **There is no severity field (D-V2-10).** `KIND: HARD | SOFT` is removed: its single consumer exempted an invariant from having any evidence, so a label that reads as policy while obliging nothing was the mechanism by which an uncovered contract entered an admitted plan. The obligation is a property of the **graph**, not of a label: every contract is discharged exactly once — a `TEST_REQUIRED` contract needs a selector that resolves to exactly one collected nodeid, and a `NON_EXECUTABLE` contract needs a grant the **caller** supplied through the disposition pipeline. So `NON_EXECUTABLE` is legal for any contract, including a critical one, but only the caller can make it legal; a plan cannot grant itself an exemption, and no class of invitation ("soft") exists to reason from. `PRESERVATION` contracts are never dispositionable. Severity, if a real consumer ever needs it, arrives as a separate `SEVERITY` field with its own reader and test (SLICE4) — not as a resurrection of `KIND`. Optional strict `## SCENARIOS` entries use one heading `### SCN-<n>` and exactly one each `PATH: <scenario-path>`, `TRIGGER: <condition>`, `OUTCOME: <observable-result>`, `CT-ID[]: CT-<slice>.<n>[, ...]`; no implicit CT edges. Within each slice, the grammar is:
+**Machine-checkable V2 grammar delta:** retain frontmatter ownership and roadmap/increment layout, with the E695 ledger location, `## SLICE<n>` sections, typed CT classes and STEP syntax from the canonical artifact contract, with the explicit V2 step-exit extension below. The exact version field is `Plan-Format: AI-NATIVE-PLAN-V2`, occurring exactly once in roadmap and once in each admitted increment; reject missing, duplicate, mismatched markers, extra active-increment ambiguity and mixed V1/V2 tokens. Inside an increment, strict `## INVARIANTS` entries use one heading `### INV-<n>` and exactly one each `TEXT: <criterion>` and `EVIDENCE: TEST_REQUIRED | NON_EXECUTABLE`. **There is no severity field (D-V2-10).** `KIND: HARD | SOFT` is removed: its single consumer exempted an invariant from having any evidence, so a label that reads as policy while obliging nothing was the mechanism by which an uncovered contract entered an admitted plan. The obligation is a property of the **graph**, not of a label: every contract is discharged exactly once — a `TEST_REQUIRED` contract needs a selector that resolves to exactly one collected nodeid, and a `NON_EXECUTABLE` contract needs a grant the **caller** supplied through the disposition pipeline. So `NON_EXECUTABLE` is legal for any contract, including a critical one, but only the caller can make it legal; a plan cannot grant itself an exemption, and no class of invitation ("soft") exists to reason from. `PRESERVATION` contracts are never dispositionable. Severity, if a real consumer ever needs it, arrives as a separate `SEVERITY` field with its own reader and test (SLICE4) — not as a resurrection of `KIND`. Optional strict `## SCENARIOS` entries use one heading `### SCN-<n>` and exactly one each `PATH: <scenario-path>`, `TRIGGER: <condition>`, `OUTCOME: <observable-result>`, `CT-ID[]: CT-<slice>.<n>[, ...]`; no implicit CT edges. Within each slice, the grammar is:
 
 ```markdown
 Plan-Format: AI-NATIVE-PLAN-V2
@@ -1951,3 +1965,33 @@ proven. Legacy fresh-project BOOTSTRAP origin issue E679, E683 lineage/reset, im
 fallback, exact attribution, full E674 gates, STEP9B and W4 remain separate open obligations.
 A user-run standalone host harness is optional if an environment-dependent question cannot
 be answered locally; Docker-free syscall results alone are not Docker integration evidence.
+
+### E695 — accepted notes layout and focused kernel probe
+
+Operator accepts `notes/ledger.md` and directs `notes/open-questions.md`; roadmap relocation
+is optional only if it materially simplifies architecture. It does not: the E693 read-only
+worklogs parent already protects the root roadmap without a separate mount, while
+`workspace.py` project discovery/collision, `project_metadata.py` role recognition,
+scaffold, admission reads and prompts explicitly use the root path. Leave roadmap at root.
+This decision concerns new V2 project targets, not an automatic move of the existing I03
+worklogs or historical evidence. Source runtime and canonical schema have not changed.
+
+The local E693 diagnostic now also tests notes as the ledger's only writable directory
+mount, alongside e2e. `RootedViewIO` replaces `notes/ledger.md` from outside the child
+namespace; fresh shell append, same-directory atomic replace and subsequent append are
+visible in backing storage. Tested outside-scope worklogs writes and ancestor/acceptance
+attacks fail; a working `notes/open-questions.md` edit succeeds and is visible. This is
+expected usability, but proves the Q file alone cannot be trusted as an immutable admitted
+decision. Parent and child use the same backing; the child has a host alias outside this
+namespace and this is not a Docker isolation or publish witness. Notes symlink creation
+is allowed even though the tested follow-write into acceptance fails; current publication
+may reject new links late. Full nested scope, Q decision pin/re-admission, lifecycle,
+migration, recovery, open-FD concurrency, full closure and real composition remain open.
+
+TEST-EDITS: parameterized the existing diagnostic, preserving previous cases. Five-module
+bank **283 passed**, scoped Ruff/format and source-path mypy passed. Three targeted
+diagnostic mutants killed/restored: omit parent RO, omit notes mount, suppress questions
+write. This is C3 local observation and no production producer/EDGE, W4 or E657 closure.
+Follow E694's bounded next steps: update canonical schema and actual production seams in
+properly grounded vertical slices; test existing/new projects, conflict/crash recovery,
+independent mutation confinement and real authority stop/seal/publish/repin.
