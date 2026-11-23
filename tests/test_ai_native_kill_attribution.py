@@ -12,15 +12,18 @@ from fa.inner_loop.acceptance_bundle import AcceptanceBundle, AcceptanceBundleEr
 from fa.inner_loop.kill_attribution import (
     ATTRIBUTION_VERDICTS,
     NODE_OUTCOMES,
+    KillAttribution,
     KillAttributionError,
     KillTargetBinding,
+    NodeOutcome,
     NodeRun,
     attribute,
     bindings,
     oracle_argv,
     run_node_oracle,
 )
-from fa.inner_loop.slice_verification import CommandOutcome
+from fa.inner_loop.slice_verification import KILL_CHECK_VERDICTS, CommandOutcome, SliceVerdict
+from fa.inner_loop.verification_attempt import MUTATION_VERDICTS
 from tests.test_ai_native_acceptance_collection import (
     _NODEID,
     _PLAN_BYTES,
@@ -31,8 +34,8 @@ from tests.test_ai_native_acceptance_collection import (
     mint_sealed,
     sealed_tree,
 )
+from tests.test_ai_native_plan_v2 import granted_graph as admitted_graph
 from tests.test_ai_native_plan_v2 import plan_graph
-from tests.test_ai_native_plan_v2 import plan_graph as admitted_graph
 
 _REVISION = "rev-" + "0" * 32
 _TARGET = "publication.publish_plan"
@@ -57,12 +60,19 @@ def _binding(bundle: AcceptanceBundle, graph: Any = None) -> KillTargetBinding:
     return binding
 
 
-def _run(outcome: str, *, detail: str = "") -> NodeRun:
+def _run(outcome: NodeOutcome, *, detail: str = "") -> NodeRun:
     return NodeRun(outcome=outcome, command="python -m pytest ...", exit_code=0, detail=detail)
 
 
-def _attributed(bundle: AcceptanceBundle, outcome: str, *, detail: str = "") -> Any:
-    return attribute(_binding(bundle), baseline=_run("PASSED"), mutated=_run(outcome, detail=detail))
+def _attributed(bundle: AcceptanceBundle, outcome: NodeOutcome, *, detail: str = "") -> Any:
+    return attribute(_binding(bundle), baseline=_run(NodeOutcome.PASSED), mutated=_run(outcome, detail=detail))
+
+
+def _seal_rule(callable_: Callable[[], object]) -> str:
+    """The seal's own closed rule: drift is refused by the seal, never re-labelled."""
+    with pytest.raises(AcceptanceBundleError) as refused:
+        callable_()
+    return refused.value.rule
 
 
 def _rule(callable_: Callable[[], object]) -> str:
@@ -227,9 +237,11 @@ def test_a_drifted_acceptance_tree_never_runs_the_oracle(tmp_path: Path) -> None
     )
     executor = FakeHost(report=junit_report(("tests/test_publish.py::test_publish", "passed")))
 
-    with pytest.raises(AcceptanceBundleError):
-        run_node_oracle(bundle, _binding(bundle), workspace=tmp_path, executor=executor)
-    assert executor.commands == []
+    assert (
+        _seal_rule(lambda: run_node_oracle(bundle, _binding(bundle), workspace=tmp_path, executor=executor))
+        == "seal-byte-drift"
+    )
+    assert executor.commands == [], "a verdict about drifted bytes would be a verdict about nothing"
 
 
 @pytest.mark.parametrize("binding", [None, {"target": 1}])
@@ -243,63 +255,140 @@ def test_the_oracle_run_needs_a_binding(tmp_path: Path, binding: Any) -> None:
 
 
 def test_the_verdict_vocabulary_is_closed() -> None:
-    assert ATTRIBUTION_VERDICTS == {"PROVEN", "VACUOUS", "ERROR"}
-    assert NODE_OUTCOMES == {"PASSED", "FAILED", "SKIPPED", "MISSING", "ERROR"}
+    """Q-V2-SLICE3-3: a verdict is ``SliceVerdict``'s own member, not a second spelling."""
+    assert ATTRIBUTION_VERDICTS == {SliceVerdict.PROVEN, SliceVerdict.VACUOUS, SliceVerdict.ERROR}
+    assert {verdict.value for verdict in ATTRIBUTION_VERDICTS} <= {member.value for member in KILL_CHECK_VERDICTS}
+    assert NODE_OUTCOMES == {
+        NodeOutcome.PASSED,
+        NodeOutcome.FAILED,
+        NodeOutcome.SKIPPED,
+        NodeOutcome.MISSING,
+        NodeOutcome.ERROR,
+    }
+    # The wire spelling is part of the contract: these five words are what a reader of the
+    # attribution record sees, and the axis is deliberately *not* the verdict axis (lowercase).
+    assert {member.value for member in NODE_OUTCOMES} == {"PASSED", "FAILED", "SKIPPED", "MISSING", "ERROR"}
+
+
+def test_an_attribution_verdict_is_the_verdict_the_attempt_accepts() -> None:
+    """The bind the old two-vocabulary world could not state: no translation at the boundary.
+
+    ``MutationEvidence`` refuses a spelling outside ``MUTATION_VERDICTS``, so an attribution
+    verdict that is not expressible there would fail the day CT-3.4/3.5 is wired -- or, worse,
+    compare unequal to ``"proven"`` and read as *not proven*. This asserts the values are the
+    same strings, which is the only property the future writer needs.
+    """
+    assert {verdict.value for verdict in ATTRIBUTION_VERDICTS} <= MUTATION_VERDICTS
+    assert SliceVerdict.PROVEN.value in MUTATION_VERDICTS
+
+
+def test_a_record_cannot_name_a_verdict_the_gate_does_not_use(tmp_path: Path) -> None:
+    """The constant was exported and read by nothing; now it is the rule it claimed to be."""
+    bundle, _ = _seal(tmp_path)
+    binding = _binding(bundle)
+    good = attribute(binding, baseline=_run(NodeOutcome.PASSED), mutated=_run(NodeOutcome.FAILED))
+
+    with pytest.raises(KillAttributionError) as refused:
+        KillAttribution(
+            binding=good.binding,
+            verdict="PROVEN",  # type: ignore[arg-type]
+            detail="",
+            baseline=good.baseline,
+            mutated=good.mutated,
+        )
+    assert refused.value.rule == "kill-attribution-invalid"
+
+    # A member of the *slice* vocabulary that this module never measures. It carries a detail,
+    # so only the membership rule can refuse it -- that is the half the membership check owns.
+    with pytest.raises(KillAttributionError) as measured_elsewhere:
+        KillAttribution(
+            binding=good.binding,
+            verdict=SliceVerdict.PRODUCER_ABSENT,
+            detail="the slice gate owns this outcome",
+            baseline=good.baseline,
+            mutated=good.mutated,
+        )
+    assert measured_elsewhere.value.rule == "kill-attribution-invalid"
+
+    with pytest.raises(KillAttributionError) as unexplained:
+        KillAttribution(
+            binding=good.binding,
+            verdict=SliceVerdict.VACUOUS,
+            detail="",
+            baseline=good.baseline,
+            mutated=_run(NodeOutcome.PASSED),
+        )
+    assert unexplained.value.rule == "kill-attribution-invalid"
+
+
+def test_a_run_outcome_outside_the_five_is_refused_where_it_is_written() -> None:
+    with pytest.raises(KillAttributionError) as refused:
+        NodeRun(outcome="MAYBE", command="python -m pytest ...", exit_code=0)  # type: ignore[arg-type]
+    assert refused.value.rule == "kill-run-invalid"
 
 
 def test_a_baseline_pass_and_a_mutation_failure_is_proven(tmp_path: Path) -> None:
     bundle, _ = _seal(tmp_path)
 
-    attribution = _attributed(bundle, "FAILED")
+    attribution = _attributed(bundle, NodeOutcome.FAILED)
 
-    assert attribution.verdict == "PROVEN"
+    assert attribution.verdict is SliceVerdict.PROVEN
     assert attribution.detail == ""
     assert attribution.binding.target_id == _TARGET
-    assert attribution.baseline.outcome == "PASSED"
-    assert attribution.mutated.outcome == "FAILED"
+    assert attribution.baseline.outcome is NodeOutcome.PASSED
+    assert attribution.mutated.outcome is NodeOutcome.FAILED
 
 
 def test_a_mutation_that_still_passes_is_vacuous(tmp_path: Path) -> None:
     bundle, _ = _seal(tmp_path)
 
-    attribution = _attributed(bundle, "PASSED")
+    attribution = _attributed(bundle, NodeOutcome.PASSED)
 
-    assert attribution.verdict == "VACUOUS"
+    assert attribution.verdict is SliceVerdict.VACUOUS
     assert "still passes" in attribution.detail
 
 
-@pytest.mark.parametrize("baseline", ["FAILED", "SKIPPED", "MISSING", "ERROR"])
-def test_a_baseline_that_did_not_pass_can_never_prove_a_kill(tmp_path: Path, baseline: str) -> None:
+@pytest.mark.parametrize("baseline", [NodeOutcome.FAILED, NodeOutcome.SKIPPED, NodeOutcome.MISSING, NodeOutcome.ERROR])
+def test_a_baseline_that_did_not_pass_can_never_prove_a_kill(tmp_path: Path, baseline: NodeOutcome) -> None:
     bundle, _ = _seal(tmp_path)
 
-    attribution = attribute(_binding(bundle), baseline=_run(baseline), mutated=_run("FAILED"))
+    attribution = attribute(_binding(bundle), baseline=_run(baseline), mutated=_run(NodeOutcome.FAILED))
 
-    assert attribution.verdict == "ERROR"
-    assert attribution.detail == f"baseline_{baseline.lower()}"
+    assert attribution.verdict is SliceVerdict.ERROR
+    assert attribution.detail == f"baseline_{baseline.value.lower()}"
 
 
-@pytest.mark.parametrize("mutated", ["SKIPPED", "MISSING", "ERROR"])
-def test_a_mutation_run_that_was_not_an_assertion_failure_is_an_error(tmp_path: Path, mutated: str) -> None:
+@pytest.mark.parametrize("mutated", [NodeOutcome.SKIPPED, NodeOutcome.MISSING, NodeOutcome.ERROR])
+def test_a_mutation_run_that_was_not_an_assertion_failure_is_an_error(tmp_path: Path, mutated: NodeOutcome) -> None:
     bundle, _ = _seal(tmp_path)
 
     attribution = _attributed(bundle, mutated)
 
-    assert attribution.verdict == "ERROR"
-    assert attribution.detail == f"mutated_{mutated.lower()}"
+    assert attribution.verdict is SliceVerdict.ERROR
+    assert attribution.detail == f"mutated_{mutated.value.lower()}"
 
 
 @pytest.mark.parametrize(
     ("baseline", "mutated"),
-    [({"outcome": "MAYBE"}, "FAILED"), ("PASSED", {"outcome": "MAYBE"}), (None, "FAILED")],
+    [("MAYBE", "FAILED"), ("PASSED", "MAYBE"), (None, "FAILED")],
 )
-def test_a_run_with_an_unknown_outcome_cannot_be_attributed(tmp_path: Path, baseline: Any, mutated: Any) -> None:
-    bundle, _ = _seal(tmp_path)
-    unknown: Any = {"outcome": "MAYBE"}
-    runs: dict[Any, Any] = {"PASSED": _run("PASSED"), "FAILED": _run("FAILED"), None: None, "MAYBE": unknown}
-    base: Any = runs[baseline] if not isinstance(baseline, dict) else unknown
-    final: Any = runs[mutated] if not isinstance(mutated, dict) else unknown
+def test_something_that_is_not_a_run_cannot_be_attributed(tmp_path: Path, baseline: Any, mutated: Any) -> None:
+    """A run-shaped value that is not a ``NodeRun`` (a dict, ``None``) is refused as a run.
 
-    assert _rule(lambda: attribute(_binding(bundle), baseline=base, mutated=final)) == "kill-run-invalid"
+    An *outcome* outside the five is now refused where it is written (next test), so the only
+    way to hand ``attribute`` a bad value is to hand it something that is not a run at all.
+    """
+    bundle, _ = _seal(tmp_path)
+    runs: dict[Any, Any] = {
+        "PASSED": _run(NodeOutcome.PASSED),
+        "FAILED": _run(NodeOutcome.FAILED),
+        None: None,
+        "MAYBE": {"outcome": "MAYBE"},
+    }
+
+    assert _rule(lambda: attribute(_binding(bundle), baseline=runs[baseline], mutated=runs[mutated])) == (
+        "kill-run-invalid"
+    )
 
 
 def test_two_targets_attribute_independently(tmp_path: Path) -> None:
@@ -312,12 +401,12 @@ def test_two_targets_attribute_independently(tmp_path: Path) -> None:
     )
     bound = bindings(bundle, graph)
 
-    proven = attribute(bound[0], baseline=_run("PASSED"), mutated=_run("FAILED"))
-    vacuous = attribute(bound[1], baseline=_run("PASSED"), mutated=_run("PASSED"))
+    proven = attribute(bound[0], baseline=_run(NodeOutcome.PASSED), mutated=_run(NodeOutcome.FAILED))
+    vacuous = attribute(bound[1], baseline=_run(NodeOutcome.PASSED), mutated=_run(NodeOutcome.PASSED))
 
     assert [item.target_id for item in bound] == ["publication.publish_plan", "publication.plan_immutable"]
-    assert proven.verdict == "PROVEN"
-    assert vacuous.verdict == "VACUOUS"
+    assert proven.verdict is SliceVerdict.PROVEN
+    assert vacuous.verdict is SliceVerdict.VACUOUS
 
 
 _SLICE_UNSEALED_TARGET = """## SLICE1: sealed acceptance

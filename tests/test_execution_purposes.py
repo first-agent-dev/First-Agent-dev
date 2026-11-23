@@ -18,7 +18,7 @@ from typing import Any
 
 from fa.execution.supervisor import SupervisorError
 from fa.execution.types import Access, ExecutionContractError, GrantReply, ViewPurpose
-from fa.execution.workspace import WorkspaceAuthority
+from fa.execution.workspace import WorkspaceAuthority, sealed_project_paths
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot
 from tests.test_execution_readers import read_only_profile, record_path, ref
 from tests.test_execution_views import native_profile
@@ -770,3 +770,116 @@ def test_mutation_seal_rejects_out_of_root_changes_and_allows_root_only_publish(
         assert (site.source / "src" / "good.py").read_bytes() == b"GOOD = 1\n"
         assert (site.source / "plan.md").read_text() == "# plan\n"
         assert (site.source / "untracked.txt").read_bytes() == b"untracked"
+
+
+# --- CT-3.3 / INV-07: the coder cannot write the bytes the seal speaks for ---
+
+#: One V2 project as D-V2-9 lays it out. Every entry is a *sealed semantic path*:
+#: the roadmap, ledger and open questions the plan is read against, the admitted
+#: increment, and the acceptance closure the seal digests.
+_SEALED_PROJECT = "worklogs/demo"
+_SEALED_PLAN = f"{_SEALED_PROJECT}/increments/increment-01-initial-plan.md"
+_SEALED_ARTIFACTS = (
+    "roadmap.md",
+    "ledger.md",
+    "open-questions.md",
+    "increments/increment-01-initial-plan.md",
+    "acceptance/pytest.ini",
+    "acceptance/conftest.py",
+    "acceptance/tests/test_initial.py",
+    "acceptance/probes/host_readiness.sh",
+)
+
+
+def _seed_sealed_project(site: Site) -> None:
+    """Write a V2 project into the site's source tree, before any view exists."""
+    for relative in _SEALED_ARTIFACTS:
+        path = site.source / _SEALED_PROJECT / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {relative}\n")
+
+
+@contextmanager
+def v2_setup(site: Site) -> Generator[tuple[WorkspaceAuthority, dict[str, str], GrantReply, PlanRef]]:
+    """The same native authority as ``setup``, with a plan at its V2 location."""
+    _seed_sealed_project(site)
+    (site.source / "plan.md").write_text("# plan\n")
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        plan_ref = read_plan_snapshot(site.source, Path(_SEALED_PLAN)).ref
+        yield owner, ids, lease, plan_ref
+
+
+def test_v2_coder_projection_protects_every_sealed_semantic_path(site: Site) -> None:
+    """CT-3.3: no coder view writes the bytes its own verdict will be judged against.
+
+    One rule, two topologies (P4-4). A top-level coder holds a ``PROJECT`` view with
+    the whole tree writable; a nested coder holds a ``MUTATION`` view confined to
+    ``src``/``scripts``. Before this existed only the *plan file* was protected, so the
+    top-level coder could rewrite ``acceptance/tests/**`` while the nested one could
+    not -- "the coder cannot edit the tests it must pass" held by accident of topology.
+    Both views now refuse every sealed artifact, and the refusal is the IO layer's
+    ``PATH_DENIED``, not a policy the caller could decline.
+    """
+    with v2_setup(site) as (owner, ids, lease, plan_ref):
+        grants = {
+            "top-level coder (PROJECT)": create(
+                owner, ids, lease, purpose=ViewPurpose.PROJECT, access=Access.WRITE, plan_ref=plan_ref
+            ),
+            "nested coder (MUTATION)": create(
+                owner, ids, lease, purpose=ViewPurpose.MUTATION, access=Access.WRITE, plan_ref=plan_ref
+            ),
+        }
+
+        def write(grant: GrantReply, path: str, content: str = "rewritten") -> Any:
+            return owner.write_file(
+                PEER,
+                ACTOR,
+                view_ref=ref(grant),
+                capability=grant.capability,
+                path=path,
+                content=content,
+                expected_sha256=None,
+                deadline=until(),
+            )
+
+        for label, grant in grants.items():
+            # A *new* file is the case that matters most: writing over a sealed file
+            # already fails, so the hole was always "add a complying file beside it".
+            denied("PATH_DENIED", lambda grant=grant: write(grant, _SEALED_PROJECT + "/notes/new.md", "x"))
+            denied(
+                "PATH_DENIED",
+                lambda grant=grant: write(grant, _SEALED_PROJECT + "/acceptance/tests/test_injected.py", "x"),
+            )
+            for artifact in _SEALED_ARTIFACTS:
+                relative = f"{_SEALED_PROJECT}/{artifact}"
+                denied("PATH_DENIED", lambda grant=grant, relative=relative: write(grant, relative))
+            # The directory and its ancestors refuse too: re-creating a complying
+            # file beside the seal is the same edit with extra steps.
+            denied("PATH_DENIED", lambda grant=grant: write(grant, _SEALED_PROJECT, "x"))
+            source = views_root(owner, grant) / "source"
+            for artifact in _SEALED_ARTIFACTS:
+                assert (source / _SEALED_PROJECT / artifact).read_text() == f"# {artifact}\n", label
+
+        # The protection is scoped, and the two purposes stay distinguishable: a
+        # different project is ordinary data for a top-level coder and outside the
+        # approved roots for a nested one.
+        top_level = grants["top-level coder (PROJECT)"]
+        nested = grants["nested coder (MUTATION)"]
+        ok(lambda: write(top_level, "worklogs/other/roadmap.md", "# other\n"))
+        denied("PATH_DENIED", lambda: write(nested, "worklogs/other/roadmap.md", "# other\n"))
+        # ...and the ordinary coder work is still possible in both.
+        ok(lambda: write(top_level, "tests/test_new.py", "def test_new():\n    assert True\n"))
+
+
+def test_the_protected_set_is_derived_from_the_plan_not_declared_by_the_caller(site: Site) -> None:
+    """A caller that could name its own exclusions could name none.
+
+    The derivation is a pure function of the admitted plan's location, which is why it
+    can be applied at the authority for both topologies without a caller-supplied list.
+    """
+    assert sealed_project_paths(_SEALED_PLAN) == (_SEALED_PROJECT,)
+    assert sealed_project_paths(f"{_SEALED_PROJECT}/acceptance/tests/test_initial.py") == (_SEALED_PROJECT,)
+    # The legacy single-file route protects its own path and never protects nothing.
+    assert sealed_project_paths("plan.md") == ("plan.md",)

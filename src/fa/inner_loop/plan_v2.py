@@ -26,20 +26,27 @@ as a proven one (R2).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
 __all__ = [
+    "APPROVAL_EVIDENCE_KINDS",
     "CONTRACT_CLASSES",
     "DISPOSITION_OWNERS",
     "DISPOSITION_REASONS",
+    "DISPOSITION_ROUTES",
+    "EVIDENCE_ROUTES",
     "MAX_DISPOSITIONS",
     "MAX_DISPOSITION_AGE_DAYS",
     "MAX_PLAN_BYTES",
     "PLAN_FORMAT",
+    "PROBE_EVIDENCE_KINDS",
     "Acceptance",
+    "Attestation",
     "Contract",
     "EvidenceMode",
     "ExitCheck",
@@ -51,9 +58,11 @@ __all__ = [
     "SlicePlan",
     "Step",
     "attested_contracts",
+    "contract_attestations",
     "contract_evidence",
     "is_contract_id",
     "parse_plan",
+    "pending_contracts",
     "resolve_selectors",
 ]
 
@@ -70,6 +79,25 @@ DISPOSITION_REASONS = frozenset(
     }
 )
 DISPOSITION_OWNERS = frozenset({"W4", "operator"})
+#: D-V2-12: the route a reason commits the caller to. A route is not a severity:
+#: it says *where* the claim is checkable, and it decides the one legal kind of
+#: artifact the caller must name. Deriving it from the reason keeps the axis
+#: closed: a new reason must arrive with its route, never with a free choice.
+DISPOSITION_ROUTES = {
+    "HOST_READINESS": "HOST_PROBE",
+    "DEPLOYMENT_IDENTITY": "HOST_PROBE",
+    "DURABILITY_POWER_LOSS": "HOST_PROBE",
+    "OWNER_APPROVAL": "APPROVAL",
+}
+#: The closed route axis (D-V2-12). ``TEST`` is the route of every contract a
+#: selector covers; the other two belong to the disposition lane.
+EVIDENCE_ROUTES = frozenset({"TEST", "HOST_PROBE", "APPROVAL"})
+#: ``probe:<repo-relative path>@host:<label>``: an artifact that can be run where
+#: the claim is checkable, plus the host it is owed to.
+PROBE_EVIDENCE_KINDS = frozenset({"probe"})
+#: A document, an issue or a review: a reference a human can open. The only
+#: route that accepts this is ``APPROVAL``, which is why that route is expensive.
+APPROVAL_EVIDENCE_KINDS = frozenset({"doc", "issue", "review"})
 MAX_DISPOSITIONS = 16
 #: R5 (E577): an out-of-sandbox claim is re-reviewed, not trusted forever.
 MAX_DISPOSITION_AGE_DAYS = 30
@@ -132,7 +160,6 @@ class PlanV2Error(ValueError):
 @dataclass(frozen=True, slots=True)
 class Invariant:
     id: str
-    kind: str
     text: str
     evidence: str
     #: Requested only: the plan names *why* it cannot test the claim.
@@ -141,6 +168,9 @@ class Invariant:
     #: caller's declaration. A parsed plan never carries them.
     evidence_ref: str | None = None
     owner: str | None = None
+    #: Granted only: the ISO date the caller says the evidence was reviewed. The
+    #: seal records it, because "reviewed" without a date cannot be re-reviewed.
+    reviewed_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +241,18 @@ class PlanGraph:
 
     def acceptance(self) -> dict[str, Acceptance]:
         return {entry.test_id: entry for planned in self.slices for entry in planned.acceptance}
+
+    def kill_targets(self) -> tuple[KillTarget, ...]:
+        """Every declared ``KILL-TARGETS`` row, in document order (N2/Q-V2-SLICE3-4).
+
+        The V2 grammar's target is *attribution*: which contract and which test a mutation
+        belongs to. It carries no *operator*, and no agreed shape for the id either (the
+        authoring prompt teaches ``path::symbol``, the fixtures use dotted ids -- Q-V2-SLICE3-5),
+        so nothing here is executable --
+        but a plan that declares one and a report that says nothing about it are different
+        facts, and only this accessor lets a report tell them apart.
+        """
+        return tuple(target for planned in self.slices for target in planned.kill_targets)
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,9 +351,13 @@ def _collect_entries(
 
 def _build_invariant(entry: _Entry) -> Invariant:
     inv_id = entry.id
-    kind = _field(entry.body, "KIND", rule=f"invariant-{inv_id}-kind")
-    if kind not in {"HARD", "SOFT"}:
-        raise PlanV2Error(f"invariant-{inv_id}-kind")
+    # D-V2-10: severity is not part of the grammar. Its only reader exempted the
+    # invariant from evidence, and a label that reads as policy while obliging
+    # nothing is how an uncovered contract reached an admitted plan. A document
+    # that still writes it is told the field is gone -- silently ignoring it would
+    # leave the model believing the label did something.
+    if any(line.strip().startswith("KIND:") for line in entry.body):
+        raise PlanV2Error("invariant-kind-removed")
     text = _field(entry.body, "TEXT", rule=f"invariant-{inv_id}-text")
     evidence = _field(entry.body, "EVIDENCE", rule=f"invariant-{inv_id}-evidence")
     if evidence not in _EVIDENCE_MODES:
@@ -324,11 +370,11 @@ def _build_invariant(entry: _Entry) -> Invariant:
     if evidence == "TEST_REQUIRED":
         if any(line.strip().startswith("DISPOSITION-") for line in entry.body):
             raise PlanV2Error("disposition-without-non-executable")
-        return Invariant(id=inv_id, kind=kind, text=text, evidence=evidence)
+        return Invariant(id=inv_id, text=text, evidence=evidence)
     reason = _field(entry.body, "DISPOSITION-REASON", rule=f"invariant-{inv_id}-disposition-reason")
     if reason not in DISPOSITION_REASONS:
         raise PlanV2Error("disposition-reason-unratified")
-    return Invariant(id=inv_id, kind=kind, text=text, evidence=evidence, reason=reason)
+    return Invariant(id=inv_id, text=text, evidence=evidence, reason=reason)
 
 
 def _parse_invariants(lines: Sequence[str]) -> tuple[Invariant, ...]:
@@ -592,14 +638,21 @@ def _admit_steps(planned: SlicePlan, tests: Mapping[str, Acceptance]) -> None:
 
 
 def _admit_evidence(graph: PlanGraph, contracts: Mapping[str, Contract], tests: Mapping[str, Acceptance]) -> None:
-    """The policy matrix (R3): contract class x invariant kind decides what may prove it.
+    """Evidence totality (D-V2-10): every contract is discharged exactly once.
 
-    ``kind`` alone let a ``SOFT`` invariant say nothing at all, and let one
-    disposition free every contract hanging off it. The class is what carries the
-    meaning of the claim, so it is checked first: ``PRESERVATION`` ("what worked
-    still works") is the one claim a test can always express, and attesting it
-    away is exactly how a regression ships green. Then ``kind``: a ``HARD``
-    claim with no test needs a disposition, a ``SOFT`` one may stay uncovered.
+    Two ways to discharge a contract, and no third: an acceptance row whose
+    selector names its test, or a ``NON_EXECUTABLE`` invariant that states why the
+    claim cannot be tested -- and that one is only a *request* until the caller
+    grants it (``bind_dispositions``). Nothing exempts a contract: there is no
+    severity field, no class that may skip the check, and no "soft" invitation to
+    reason from. A ``TEST_REQUIRED`` contract with no selector is refused here, at
+    the point the plan is read, which is also the point a repair round is still
+    possible.
+
+    ``PRESERVATION`` is checked first and separately: "what worked still works" is
+    the one claim a test can always express, so attesting it away is how a
+    regression ships green. That refusal is independent of the evidence mode,
+    which is why it cannot be reached through the disposition branch.
 
     A request is structurally sufficient here; whether it was *granted* is checked
     by ``bind_dispositions`` at admission, where the caller's declaration exists
@@ -619,9 +672,7 @@ def _admit_evidence(graph: PlanGraph, contracts: Mapping[str, Contract], tests: 
         if invariant.evidence == "NON_EXECUTABLE" and invariant.reason:
             granted[invariant.id] = granted.get(invariant.id, 0) + 1
             continue
-        if invariant.kind != "HARD":
-            continue
-        raise PlanV2Error("hard-contract-without-executable-evidence")
+        raise PlanV2Error("contract-without-evidence")
     # One waiver frees one claim: an invariant that backs a cluster would attest
     # every contract under it with a single decision nobody re-read.
     if any(count > 1 for count in granted.values()):
@@ -754,9 +805,7 @@ def contract_evidence(graph: PlanGraph) -> dict[str, EvidenceMode]:
     """
     covered = {entry.ct for planned in graph.slices for entry in planned.acceptance}
     #: A granted invariant, not merely a disposed one: the reason alone is a request.
-    granted = {
-        item.id for item in graph.invariants if item.evidence == "NON_EXECUTABLE" and item.owner is not None
-    }
+    granted = {item.id for item in graph.invariants if item.evidence == "NON_EXECUTABLE" and item.owner is not None}
     graded: dict[str, EvidenceMode] = {}
     for planned in graph.slices:
         for contract in planned.contracts:
@@ -773,3 +822,76 @@ def attested_contracts(graph: PlanGraph) -> tuple[str, ...]:
     """The sorted contract ids whose only evidence is a disposition (R2)."""
     graded = contract_evidence(graph)
     return tuple(sorted(contract_id for contract_id, mode in graded.items() if mode is EvidenceMode.ATTESTED))
+
+
+@dataclass(frozen=True, slots=True)
+class Attestation:
+    """One granted claim, in the form a reader can audit (D-V2-12, P4-8).
+
+    ``scope_sha256`` is the digest of the two sentences the grant covers — the
+    invariant's authored fields (id, text, evidence, reason) and the contract's
+    (id, class, invariant, text). ``plan_sha256`` already invalidates a seal on any
+    plan edit; the scope is what lets a reader see *which* sentence was attested,
+    and what makes a re-review prove that it covered the new wording rather than
+    the old one.
+    """
+
+    contract_id: str
+    invariant_id: str
+    reason: str
+    route: str
+    artifact: str
+    owner: str | None
+    reviewed_at: str | None
+    scope_sha256: str
+
+
+def _attestation_scope(invariant: Invariant, contract: Contract) -> str:
+    payload = json.dumps(
+        {
+            "invariant": [invariant.id, invariant.text, invariant.evidence, invariant.reason],
+            "contract": [contract.id, contract.cls, contract.inv, contract.text],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(payload.encode("ascii")).hexdigest()
+
+
+def contract_attestations(graph: PlanGraph) -> tuple[Attestation, ...]:
+    """Every contract carried by a disposition, with its route and artifact.
+
+    Ordered by contract id so the seal record is canonical. A ``HOST_PROBE``
+    contract is a **pending** claim — it names an artifact that must be run where
+    the claim is checkable — while ``APPROVAL`` is a decision nobody can test.
+    Both are *attested* in the sense that a named party carries them; only the
+    first is still owed to a host, which is why ``pending_contracts`` exists
+    instead of a single flag.
+    """
+    invariants = {item.id: item for item in graph.invariants}
+    graded = contract_evidence(graph)
+    records: list[Attestation] = []
+    for contract in graph.contracts().values():
+        if graded.get(contract.id) is not EvidenceMode.ATTESTED:
+            continue
+        invariant = invariants[contract.inv]
+        reason = invariant.reason or ""
+        records.append(
+            Attestation(
+                contract_id=contract.id,
+                invariant_id=invariant.id,
+                reason=reason,
+                route=DISPOSITION_ROUTES.get(reason, ""),
+                artifact=invariant.evidence_ref or "",
+                owner=invariant.owner,
+                reviewed_at=invariant.reviewed_at,
+                scope_sha256=_attestation_scope(invariant, contract),
+            )
+        )
+    return tuple(sorted(records, key=lambda item: item.contract_id))
+
+
+def pending_contracts(graph: PlanGraph) -> tuple[str, ...]:
+    """Contracts whose evidence is owed to a host that has not run it (D-V2-12)."""
+    return tuple(item.contract_id for item in contract_attestations(graph) if item.route == "HOST_PROBE")

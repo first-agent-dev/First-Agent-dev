@@ -841,6 +841,11 @@ _V2_CREATE_FAILURES: dict[str, tuple[str, bool]] = {
     "bootstrap-invalid-body": ("bootstrap_content_invalid", False),
     "bootstrap-invalid-metadata": ("bootstrap_content_invalid", False),
     "bootstrap-refused": ("bootstrap_content_invalid", False),
+    # N1: admission read the pair, then the acceptance closure could not be sealed -- a selector
+    # nothing collects, a tree that is not a closure, or (the consistency half) a seal that
+    # refused what admission accepted. The repair stage runs first and its budget is the only
+    # thing that can fix the content half, so by the time this reaches the caller it is spent.
+    "bootstrap-acceptance-unsealed": ("bootstrap_content_invalid", False),
     # Format refusals, kept separate from content ones: a document in a plan format this
     # build does not read is not fixed by rewriting its prose. Today the controller folds
     # these into `bootstrap-invalid-metadata` before they reach here (recorded as debt in
@@ -857,11 +862,19 @@ _V2_CREATE_FAILURES: dict[str, tuple[str, bool]] = {
     "planner-unavailable": ("workspace_unavailable", True),
     # D-V2-9.1: the route the caller asked for and the reply the child produced disagree.
     "project-route-mismatch": ("project_route_mismatch", False),
+    # R1/D-V2-10: the plan requested a disposition and the caller supplied none. Only the
+    # caller can make that legal, so this is retryable -- with a declaration -- and the run
+    # never tries to repair it by rewriting the plan (the request would just be deleted).
+    "disposition-undeclared": ("disposition_required", True),
     # R1: the caller's own grant could not be verified against the pinned bytes. Fixing the
     # declaration is a real repair, and it happens before anything irreversible.
     "disposition-evidence-invalid": ("invalid_dispositions", True),
     "disposition-evidence-missing": ("invalid_dispositions", True),
     "disposition-evidence-mismatch": ("invalid_dispositions", True),
+    # D-V2-12: the reason commits to a route, and the route accepts one kind of
+    # artifact. A host claim answered with a document is the caller's mistake, so it
+    # is retryable -- and it must name itself, or it degrades to `workflow_failed`.
+    "disposition-evidence-route-mismatch": ("invalid_dispositions", True),
     # The authority does not know whether the effect landed. Never retried: one unknown
     # create repeated is two creates.
     "durability-unknown": ("durability_unknown", False),

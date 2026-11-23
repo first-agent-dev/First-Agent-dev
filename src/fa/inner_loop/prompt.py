@@ -1242,8 +1242,8 @@ stage's working view; your job is to fill it, in Markdown, with a plan admission
 1. `roadmap.md` — fill `## Intent` and `## Out of scope`. Leave the front matter alone:
    the slug, the roadmap id and the active increment are the harness's, not yours.
 2. `increments/increment-01-initial-plan.md` — the plan itself:
-   - a `## INVARIANTS` section, one `### INV-<n>` per invariant, with `KIND`,
-     `TEXT` and `EVIDENCE` (`TEST_REQUIRED` or `NON_EXECUTABLE`);
+   - a `## INVARIANTS` section, one `### INV-<n>` per invariant, with `TEXT` and
+     `EVIDENCE` (`TEST_REQUIRED` or `NON_EXECUTABLE`);
    - one `## SLICE<n>: <name>` per slice, each with `STEPS: prescriptive|outcome`,
      `## CONTRACTS`, `## ACCEPTANCE`, `## KILL-TARGETS`, `## STEP-EXIT-CHECKS` and
      its steps;
@@ -1257,11 +1257,20 @@ stage's working view; your job is to fill it, in Markdown, with a plan admission
 - Every contract row is `CT-<slice>.<n> [FUNCTIONAL|CONSTRAINT|PRESERVATION] INV: INV-<n>: <text>`.
 - Every acceptance row is `TEST-ID: TEST-<slice>.<n> | CT: CT-<slice>.<n> |`
   `SELECTOR: worklogs/<slug>/acceptance/tests/<file>.py::<test>`.
-- A `FUNCTIONAL`/`CONSTRAINT` contract with `INV` pointing at a `TEST_REQUIRED` invariant
-  must have an acceptance row. An invariant you cannot test must say why
-  (`DISPOSITION-REASON: HOST_READINESS`, `DEPLOYMENT_IDENTITY`, `OWNER_APPROVAL` or
-  `DURABILITY_POWER_LOSS`) and is then granted -- or refused -- by the **caller**.
-  Never write an owner: a disposition is a request here, not an authorisation.
+- **Every contract is discharged exactly once, and there is no third way.** A
+  `FUNCTIONAL`/`CONSTRAINT` contract needs an acceptance row; the only alternative is an
+  invariant you cannot test, which must say why (`DISPOSITION-REASON: HOST_READINESS`,
+  `DEPLOYMENT_IDENTITY`, `OWNER_APPROVAL` or `DURABILITY_POWER_LOSS`) and is then
+  granted -- or refused -- by the **caller**. Never write an owner: a disposition is a
+  request here, not an authorisation. One grant authorises one contract. The reason also
+  decides *where* the claim is checked: `HOST_READINESS`, `DEPLOYMENT_IDENTITY` and
+  `DURABILITY_POWER_LOSS` are owed to a host probe and stay **pending** -- a debt that
+  blocks deploy, not a settled verdict -- while only `OWNER_APPROVAL` is a decision no
+  machine can test. Choose the narrowest reason that is true.
+- There is no severity field and no "soft" invariant. `KIND` was removed from the
+  grammar; a document that still writes it is refused (`invariant-kind-removed`), and a
+  contract with neither a test nor a granted request is refused
+  (`contract-without-evidence`).
 - **Every `PRESERVATION` contract needs an executable test.** Attesting "what worked
   still works" is refused.
 - Slices are contiguous from `1`. No legacy `TESTS:`/`KILLS:` lines: those belong to the
@@ -1274,7 +1283,6 @@ The increment's front matter is the harness's; only `slices:` becomes non-zero. 
 ```
 ## INVARIANTS
 ### INV-1
-KIND: HARD
 TEXT: a known widget id parses.
 EVIDENCE: TEST_REQUIRED
 

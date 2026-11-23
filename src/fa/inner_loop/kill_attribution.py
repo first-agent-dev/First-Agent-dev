@@ -18,11 +18,18 @@ The rules, in the order they are applied:
 * The oracle run executes exactly one nodeid with the sealed configuration
   (``-c``/``--rootdir``/``no:cacheprovider``), and its report must contain exactly
   that one nodeid. Anything else is ``ERROR``, never a kill.
-* ``FAILED`` on that nodeid under the mutation is ``PROVEN``. ``PASSED`` is
-  ``VACUOUS``. Collection/setup/skip/timeout/crash/report error or zero executed
-  tests is ``ERROR``.
+* ``FAILED`` on that nodeid under the mutation is ``SliceVerdict.PROVEN``. ``PASSED``
+  is ``VACUOUS``. Collection/setup/skip/timeout/crash/report error or zero executed
+  tests is ``ERROR``. Verdicts are :class:`SliceVerdict` members, not a second
+  uppercase vocabulary (Q-V2-SLICE3-3): one axis, one spelling.
 * Unassigned failures cannot prove anything because nothing unassigned is run
   here; a caller that also runs a wider suite must keep those results separate.
+
+Two rules make the *record* honest rather than only the producer: ``kill-run-invalid`` (a run
+whose outcome is not one of :class:`NodeOutcome`) and ``kill-attribution-invalid`` (a verdict
+outside :data:`ATTRIBUTION_VERDICTS`, or a non-``PROVEN`` verdict with no detail). Before them,
+``ATTRIBUTION_VERDICTS`` was exported and read by nothing, so a hand-built record could name any
+string -- F1's shape, one entity over.
 
 The mutation itself is not applied here: the existing ``mutation_overlay`` owns the
 only mutated copy on disk, and ``apply_kill`` stays the only thing that rewrites
@@ -31,16 +38,19 @@ source. This module consumes the two runs and the sealed evidence.
 
 from __future__ import annotations
 
+import enum
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from .acceptance_bundle import AcceptanceBundle, verify_sealed_root
 from .acceptance_closure import pytest_argv, shell_command
 from .plan_v2 import KillTarget, PlanGraph
 from .slice_verification import (
     CommandOutcome,
+    SliceVerdict,
     VerifyCommandExecutor,
     parse_node_outcomes,
     run_commands,
@@ -52,6 +62,7 @@ __all__ = [
     "KillAttribution",
     "KillAttributionError",
     "KillTargetBinding",
+    "NodeOutcome",
     "NodeRun",
     "attribute",
     "bindings",
@@ -59,11 +70,33 @@ __all__ = [
     "run_node_oracle",
 ]
 
-#: What one oracle run did to the one nodeid it was allowed to run.
-NODE_OUTCOMES = frozenset({"PASSED", "FAILED", "SKIPPED", "MISSING", "ERROR"})
-#: What a kill target may be declared. ``PRODUCER_ABSENT`` and overlay provenance
-#: stay separate outcomes owned by the pre-existing gate, not folded in here.
-ATTRIBUTION_VERDICTS = frozenset({"PROVEN", "VACUOUS", "ERROR"})
+
+class NodeOutcome(enum.StrEnum):
+    """What one oracle run did to the one nodeid it was allowed to run.
+
+    A *run outcome* and a *claim verdict* are different axes, and they stay different: a run
+    can be ``MISSING``, which no verdict counterpart exists for, and a verdict can be
+    ``VACUOUS``, which describes a comparison rather than one run. What must not exist is two
+    spellings of the *same* axis -- which is what Q-V2-SLICE3-3 removed: the verdict is
+    :class:`SliceVerdict`'s own, not a second uppercase vocabulary beside it.
+    """
+
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+    MISSING = "MISSING"
+    ERROR = "ERROR"
+
+
+#: Derived, never restated: two literals for one axis is how the vocabularies drifted (F1).
+NODE_OUTCOMES: Final = frozenset(NodeOutcome)
+
+#: What a kill target may be declared. The members are :class:`SliceVerdict`'s own objects, so an
+#: attribution verdict can be handed to ``MutationEvidence`` without a spelling translation, and a
+#: reader compares it to the same ``proven`` the gate uses. ``PRODUCER_ABSENT`` stays out: the
+#: pre-existing slice gate owns that outcome, and folding it in here would claim a kill this
+#: module never measured.
+ATTRIBUTION_VERDICTS: Final = frozenset({SliceVerdict.PROVEN, SliceVerdict.VACUOUS, SliceVerdict.ERROR})
 
 
 class KillAttributionError(ValueError):
@@ -92,10 +125,19 @@ class KillTargetBinding:
 class NodeRun:
     """The outcome of running one nodeid, with the command that produced it."""
 
-    outcome: str
+    outcome: NodeOutcome
     command: str
     exit_code: int | None
     detail: str = ""
+
+    def __post_init__(self) -> None:
+        """A run whose outcome is not one of the five is a programming error, not data.
+
+        Strict, not coercing: ``"PASSED"`` arriving as a bare string is a typing bug at the call
+        site, and silently converting it would paper over the next one.
+        """
+        if not isinstance(self.outcome, NodeOutcome):
+            raise KillAttributionError("kill-run-invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,10 +145,28 @@ class KillAttribution:
     """The recorded verdict for one target, with both runs as evidence."""
 
     binding: KillTargetBinding
-    verdict: str
+    verdict: SliceVerdict
     detail: str
     baseline: NodeRun
     mutated: NodeRun
+
+    def __post_init__(self) -> None:
+        """Refuse a record the gate could not read: F1's shape, closed at the entity.
+
+        ``ATTRIBUTION_VERDICTS`` was exported and read by nothing, so a hand-built attribution
+        could name any string and a future writer would store it verbatim. The set is now the
+        rule it always claimed to be, and a non-``PROVEN`` verdict must say what to look at --
+        the same rule ``KillCheck`` already enforces, for the same reason.
+        """
+        if not isinstance(self.binding, KillTargetBinding):
+            raise KillAttributionError("kill-binding-invalid")
+        if not isinstance(self.verdict, SliceVerdict) or self.verdict not in ATTRIBUTION_VERDICTS:
+            raise KillAttributionError("kill-attribution-invalid")
+        if self.verdict is not SliceVerdict.PROVEN and not self.detail:
+            raise KillAttributionError("kill-attribution-invalid")
+        for run in (self.baseline, self.mutated):
+            if not isinstance(run, NodeRun):
+                raise KillAttributionError("kill-run-invalid")
 
 
 def _sealed_test_digest(bundle: AcceptanceBundle, nodeid: str) -> str:
@@ -172,16 +232,16 @@ def _rootdir_nodeid(bundle: AcceptanceBundle, binding: KillTargetBinding) -> str
     return binding.nodeid[len(prefix) :]
 
 
-def _classify(expected: str, outcomes: Mapping[str, str]) -> tuple[str, str]:
+def _classify(expected: str, outcomes: Mapping[str, str]) -> tuple[NodeOutcome, str]:
     """A single reported row decides: pass, assertion failure, or nothing at all."""
     if len(outcomes) != 1 or expected not in outcomes:
-        return "ERROR", "oracle-report-not-exact"
+        return NodeOutcome.ERROR, "oracle-report-not-exact"
     state = outcomes[expected]
     if state == "passed":
-        return "PASSED", ""
+        return NodeOutcome.PASSED, ""
     if state == "failed":
-        return "FAILED", ""
-    return "SKIPPED", "oracle-skipped"
+        return NodeOutcome.FAILED, ""
+    return NodeOutcome.SKIPPED, "oracle-skipped"
 
 
 def run_node_oracle(
@@ -208,14 +268,20 @@ def run_node_oracle(
         command = shell_command(argv)
         (result,) = run_commands((command,), workspace=Path(workspace), deadline=deadline, executor=executor)
         if result.outcome is CommandOutcome.ERROR:
-            return NodeRun(outcome="ERROR", command=command, exit_code=result.exit_code, detail="oracle-run-errored")
+            return NodeRun(
+                outcome=NodeOutcome.ERROR, command=command, exit_code=result.exit_code, detail="oracle-run-errored"
+            )
         try:
             raw = report.read_bytes()
         except OSError:
-            return NodeRun(outcome="MISSING", command=command, exit_code=result.exit_code, detail="oracle-no-report")
+            return NodeRun(
+                outcome=NodeOutcome.MISSING, command=command, exit_code=result.exit_code, detail="oracle-no-report"
+            )
     outcomes, _detail = parse_node_outcomes(raw)
     if outcomes is None:
-        return NodeRun(outcome="ERROR", command=command, exit_code=result.exit_code, detail="oracle-report-invalid")
+        return NodeRun(
+            outcome=NodeOutcome.ERROR, command=command, exit_code=result.exit_code, detail="oracle-report-invalid"
+        )
     outcome, detail = _classify(_rootdir_nodeid(bundle, binding), outcomes)
     return NodeRun(outcome=outcome, command=command, exit_code=result.exit_code, detail=detail)
 
@@ -234,18 +300,20 @@ def attribute(
     """
     if not isinstance(binding, KillTargetBinding):
         raise KillAttributionError("kill-binding-invalid")
+    # The outcome is validated where it is written (``NodeRun``), so this only refuses a value
+    # that is not a run at all -- one rule per fact instead of two copies of one rule.
     for run in (baseline, mutated):
-        if not isinstance(run, NodeRun) or run.outcome not in NODE_OUTCOMES:
+        if not isinstance(run, NodeRun):
             raise KillAttributionError("kill-run-invalid")
     verdict, detail = _verdict(baseline, mutated)
     return KillAttribution(binding=binding, verdict=verdict, detail=detail, baseline=baseline, mutated=mutated)
 
 
-def _verdict(baseline: NodeRun, mutated: NodeRun) -> tuple[str, str]:
-    if baseline.outcome != "PASSED":
-        return "ERROR", f"baseline_{baseline.outcome.lower()}"
-    if mutated.outcome == "FAILED":
-        return "PROVEN", ""
-    if mutated.outcome == "PASSED":
-        return "VACUOUS", "the oracle still passes with the producer mutated"
-    return "ERROR", f"mutated_{mutated.outcome.lower()}"
+def _verdict(baseline: NodeRun, mutated: NodeRun) -> tuple[SliceVerdict, str]:
+    if baseline.outcome is not NodeOutcome.PASSED:
+        return SliceVerdict.ERROR, f"baseline_{baseline.outcome.lower()}"
+    if mutated.outcome is NodeOutcome.FAILED:
+        return SliceVerdict.PROVEN, ""
+    if mutated.outcome is NodeOutcome.PASSED:
+        return SliceVerdict.VACUOUS, "the oracle still passes with the producer mutated"
+    return SliceVerdict.ERROR, f"mutated_{mutated.outcome.lower()}"

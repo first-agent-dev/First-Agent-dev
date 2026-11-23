@@ -998,6 +998,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit project route for a new-project task.",
     )
     invoke_parser.add_argument("--project-slug", default=None, help="Validated project slug for CREATE_NEW.")
+    # P4-6/R1: the caller's grant is the only source of owner, evidence and review date, so
+    # the human front must be able to give one. The value is transport, not policy: it is
+    # decoded and handed to the tool, whose `parse_dispositions` remains the single validator.
+    invoke_parser.add_argument(
+        "--dispositions",
+        default=None,
+        metavar="PATH_OR_JSON",
+        help=(
+            "Caller-granted non-executable dispositions for CREATE_NEW: a JSON file path or an "
+            "inline JSON array of {reason, owner, evidence, reviewed_at}. The reason fixes the "
+            "kind of `evidence` its route accepts: HOST_READINESS, DEPLOYMENT_IDENTITY and "
+            "DURABILITY_POWER_LOSS are owed to a host probe "
+            "(probe:worklogs/<slug>/acceptance/<path>@host:<label>), while OWNER_APPROVAL takes a "
+            "reference a person can open (doc:<path>@sha256:<digest>, issue:<KEY-123>, "
+            "review:<name>). Forwarded to the tool as decoded; the tool validates it, so this "
+            "flag adds no rule of its own."
+        ),
+    )
     invoke_parser.set_defaults(func=_cmd_invoke_workflow)
 
     # PLAN S5d / G9: read-only introspection for the injection control
@@ -2462,6 +2480,45 @@ def _cmd_workflow(
     return exit_code
 
 
+def _read_dispositions_argument(value: str | None) -> tuple[object, str | None]:
+    """Decode ``--dispositions`` into the value the tool expects; never validate it.
+
+    P4-6/R1: R1 makes the caller's grant the only source of owner and evidence, so the
+    human front needs a way to give one. But *validating* it here would create a second
+    rule, and the second rule is always the one that drifts: `parse_dispositions` owns the
+    vocabulary, the arity and the freshness, and it is the same code the chat tool runs.
+    So this function answers exactly one question -- is the operator's text JSON? -- and
+    returns what it decoded, even when what it decoded is the wrong shape.
+
+    ``PATH_OR_JSON``: a value naming an existing file is read from it (a grant carries a
+    review date and an evidence reference; a file is the shape an audit needs), anything
+    else is parsed as inline JSON. Returns ``(payload, None)`` or ``(None, message)`` so the
+    caller keeps its own ``return 2`` visible at one place.
+    """
+    if value is None:
+        return None, None
+    text = value
+    try:
+        names_a_file = Path(value).is_file()
+    except (OSError, ValueError):
+        # Not usable as a path (too long, embedded NUL): it can only be inline JSON.
+        names_a_file = False
+    if names_a_file:
+        try:
+            text = Path(value).read_text(encoding="utf-8")
+        except OSError as exc:
+            # A path the operator can name but not read is their problem to fix, and saying
+            # "not JSON" here would send them to inspect the syntax of a file we never read.
+            return None, f"--dispositions file could not be read ({exc.strerror or type(exc).__name__})"
+    try:
+        return json.loads(text), None
+    except json.JSONDecodeError as exc:
+        return None, (
+            f"--dispositions is not JSON ({exc.msg} at position {exc.pos}); "
+            "pass a JSON file path or an inline JSON array"
+        )
+
+
 def _cmd_invoke_workflow(
     args: argparse.Namespace,
     *,
@@ -2486,6 +2543,10 @@ def _cmd_invoke_workflow(
     task = _resolve_task(getattr(args, "task", None), getattr(args, "task_flag", None))
     if task is None or not task.strip():
         print("fa invoke-workflow: provide a task — positional or --task", file=sys.stderr)
+        return 2
+    dispositions, dispositions_error = _read_dispositions_argument(getattr(args, "dispositions", None))
+    if dispositions_error is not None:
+        print(f"fa invoke-workflow: {dispositions_error}", file=sys.stderr)
         return 2
     try:
         _apply_wrapper_session_workspace(args)
@@ -2520,6 +2581,8 @@ def _cmd_invoke_workflow(
         params["project_action"] = args.project_action
     if getattr(args, "project_slug", None) is not None:
         params["project_slug"] = args.project_slug
+    if dispositions is not None:
+        params["dispositions"] = dispositions
 
     result = tool.handler(params)
     if result.error is not None:

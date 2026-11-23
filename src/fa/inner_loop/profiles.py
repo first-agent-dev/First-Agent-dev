@@ -48,27 +48,9 @@ def is_path_within_allowlist(path: str, allowed_prefixes: Sequence[str]) -> bool
     workspace-relative subtree, so an absolute path can never be *within* one,
     and letting it through would depend on the caller's cwd.
     """
-    if not path:
+    resolved = _normalised_parts(path)
+    if resolved is None:
         return False
-    candidate = PurePosixPath(path)
-    if candidate.is_absolute():
-        return False
-    # Resolve "." / ".." textually; PurePosixPath keeps ".." parts, so a path
-    # that climbs above the workspace root is rejected rather than normalised
-    # into something that accidentally matches.
-    parts: list[str] = []
-    for part in candidate.parts:
-        if part == ".":
-            continue
-        if part == "..":
-            if not parts:
-                return False  # escapes the workspace root
-            parts.pop()
-            continue
-        parts.append(part)
-    if not parts:
-        return False
-    resolved = PurePosixPath(*parts)
     for prefix in allowed_prefixes:
         prefix_path = PurePosixPath(prefix)
         if prefix_path.is_absolute():
@@ -79,7 +61,58 @@ def is_path_within_allowlist(path: str, allowed_prefixes: Sequence[str]) -> bool
         # Strictly *within*: the target must have at least one component below
         # the prefix. Every allowlist entry names a directory, and a path equal
         # to the directory itself is not a writable file target.
-        if len(resolved.parts) > len(prefix_parts) and resolved.parts[: len(prefix_parts)] == tuple(prefix_parts):
+        if len(resolved) > len(prefix_parts) and resolved[: len(prefix_parts)] == tuple(prefix_parts):
+            return True
+    return False
+
+
+def _normalised_parts(path: str) -> tuple[str, ...] | None:
+    """Path components with ``.``/``..`` resolved, or ``None`` when it escapes the root.
+
+    Shared by both matchers so a traversal cannot be normalised one way by one of them and
+    another way by the other. ``PurePosixPath`` keeps ``..`` as a component, so a path that
+    climbs above the workspace root is rejected rather than collapsed into a match.
+    """
+    if not path:
+        return None
+    candidate = PurePosixPath(path)
+    if candidate.is_absolute():
+        return None
+    parts: list[str] = []
+    for part in candidate.parts:
+        if part == ".":
+            continue
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        parts.append(part)
+    return tuple(parts) or None
+
+
+def is_path_in_write_scope(path: str, scope: Sequence[str]) -> bool:
+    """True when *path* is exactly one of the *scope* entries, or lies strictly under one.
+
+    ``scope`` is a list of write **targets**, not of directories: the create-new repair
+    stage may write one named document or anything inside one named subtree. The profile
+    allowlists are directories, and for them ``is_path_within_allowlist`` is the right
+    predicate — a path equal to a directory entry is not a writable file target there.
+    Keeping the two apart matters in both directions: using this one for the profile would
+    let a write target the directory itself, and using the other one for the repair scope
+    made every repair target unreachable (``worklogs/<slug>/increments/...`` is a file, so
+    nothing is strictly *under* it).
+    """
+    resolved = _normalised_parts(path)
+    if resolved is None:
+        return False
+    for entry in scope:
+        prefix = _normalised_parts(entry)
+        if prefix is None:
+            continue
+        if resolved == prefix:
+            return True
+        if len(resolved) > len(prefix) and resolved[: len(prefix)] == prefix:
             return True
     return False
 
@@ -242,6 +275,7 @@ def _planner_target_allowed(root: Path, path: str, prefixes: Sequence[str], disp
         relative = resolve_workspace_path(root, path).relative_to(root).as_posix()
     except (OSError, ValueError, RuntimeError):
         return False
+    in_scope = is_path_in_write_scope if dispatch is not None and dispatch.repair_allowlist is not None else None
     active = dispatch.active_plan if dispatch is not None else None
     if relative == ".fa/admission" or relative.startswith(".fa/admission/") or relative == active:
         return False
@@ -253,7 +287,7 @@ def _planner_target_allowed(root: Path, path: str, prefixes: Sequence[str], disp
             pass
         except OSError:
             return False
-    return is_path_within_allowlist(relative, prefixes)
+    return (in_scope or is_path_within_allowlist)(relative, prefixes)
 
 
 def _candidate_dispatch(dispatch: PlannerDispatch | None) -> PlannerDispatch | None:
@@ -301,7 +335,10 @@ def _build_limited_write(
         p = params.get("path", "")
         if not isinstance(p, str):
             return orig_handler(params)
-        if not is_path_within_allowlist(p, allowed_prefixes):
+        # A repair scope names targets (exact documents plus subtrees); every other
+        # allowlist names directories. The predicate follows the dispatch's own shape.
+        in_scope = is_path_in_write_scope if repair_allowlist is not None else is_path_within_allowlist
+        if not in_scope(p, allowed_prefixes):
             return ToolResult.fail(
                 "path_denied",
                 (f"Planner write_file limited to {allowed_prefixes}, got '{p}' — use implementer role for src/ writes"),
@@ -671,5 +708,6 @@ __all__ = [
     "build_registry_for_role",
     "estimate_tokens",
     "get_profile",
+    "is_path_in_write_scope",
     "is_path_within_allowlist",
 ]

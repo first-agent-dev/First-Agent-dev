@@ -12470,6 +12470,859 @@ a named residual, not an open gate.
 
 No production change in this commit.
 
+### E602 — external design review: the question was mis-framed, and two bigger holes sit under it (2026-11-22)
+
+Full review: [i03-external-design-review-2026-11-22.md](notes/i03-external-design-review-2026-11-22.md).
+Read-only audit plus design opinion; no production change in this commit.
+
+E600 and E601 measured correctly but framed the decision over an architecture the route does not have, and one of
+their recommendations would remove a feature rather than a defect.
+
+**S1 — there is one gate, and its refusal *is* the repair trigger.** The create-new order is
+`_admit_published_project` (`workflow_controller.py:3141`) → `snapshot_from_bytes(… format=PLAN_V2)` (`:3190`) →
+`parse_plan`/`_admit` → `bind_dispositions` (`:3212`); any `PlanRefError` goes to `_bind_authored_project` (`:2963`)
+→ `_may_repair_authored_project` (`:2929`) → `_run_create_new_repair` (`:3081`). A parse refusal returns
+`bootstrap-invalid-metadata` (`:3202`), which is repairable — only collision/unavailable/route-mismatch/failed-repair
+are excluded (`:2946–2951`). So E600's premise that refusing at parse "lands before the repair begins" is not the
+code's behaviour: option B *drives* the repair loop. The real choice is one admission predicate versus two, not
+parse-versus-seal.
+
+**S2 — `HARD + NON_EXECUTABLE` is the disposition pipeline's primary case, not a bug.** The plan's quoted sentence
+carries the escape that E601 dropped ("unless Q-V2-ACC-2 is resolved under a ratified rule"), and the ACC-2 row
+itself offers typed `NON_EXECUTABLE` under a ratified rule as option B. `DISPOSITION_REASONS` are physical and
+institutional claims (host readiness, deployment identity, owner approval, durability), i.e. exactly the critical
+claims a test cannot express, and the grant is caller-supplied (`bind_dispositions` refuses
+`disposition-undeclared`; `contract_evidence` needs `owner is not None`). E601's (A) — refuse `HARD +
+NON_EXECUTABLE` — would leave dispositions usable only for claims nobody cares about. Do not implement it.
+
+**S3 — the gap is `SOFT + TEST_REQUIRED`, and the test defending it asserts a property no code implements.**
+Measured by executing `plan_v2` directly: `HARD+TEST_REQUIRED` uncovered → `hard-contract-without-executable-evidence`;
+`SOFT+TEST_REQUIRED` uncovered → **admitted**, grades `UNCOVERED`, and `UNCOVERED` has no reader. The defending
+test's docstring (`tests/test_ai_native_plan_v2.py:819`) says the gap is "legal — and visible"; the visible half is
+false.
+
+**S4 — the repair loop cannot perform the fix it is likely to need.** `_REPAIR_WRITABLE_SUFFIXES` (`:3044`) is the
+increment plus `open-questions.md`, so a missing acceptance test cannot be written by the repair; and every grammar
+refusal of any kind reaches the repair stage as the single string `bootstrap-invalid-metadata`
+(`_authored_diagnostics` `:2953`), with one repair in the budget (`DEFAULT_MAX_REPLANS = 1`, `:157`, `:2950`). The
+reachable "fixes" are deleting the claim or re-describing it as a grant request — the two behaviours an author model
+is most likely to choose. Diagnosis must carry the parser's rule, and `acceptance/tests/` must be in the allowlist.
+
+**S5 — a grant request has no upward path.** `ctx.dispositions` is fixed at invocation; a plan that truthfully needs
+an attestation the caller did not pre-declare gets `disposition-undeclared`, burns the repair, and the model
+optimizes the claim away. The pipeline needs a third outcome — `needs_grant(reason)` as a structured retryable
+result — so the operator can grant and re-invoke. That is the human gate the design intends, reached as a result
+rather than as an author's repair attempt.
+
+**S6 — the closed vocabulary does not contain the V2 vocabulary.** `ADMISSION_RULES_V2` has no `plan-v2` key, yet
+`_validate_v2_admission` emits diagnostics under it (`:3481`, `:3490`), which `_record_diagnostics` would reject as a
+corrupt record; and the record's `contract_id` shape is `CT\d+[a-z]?` (`admission_schema.py:169`) while V2 ids are
+`CT-1.1`. Both are latent and both are the §4 drift in executable form.
+
+**S7 — zero compatibility cost.** There is no V2 plan anywhere outside fixtures (`grep -rl AI-NATIVE-PLAN-V2
+worklogs/` → plan/ledger/notes only; `worklogs/<slug>/increments/` has none). Any vocabulary change recommended here
+costs nothing today and rises from here.
+
+**Recommendation.** Record D-V2-10 (evidence totality: one discharge mode per contract, `TEST_REQUIRED` ⇒ resolving
+selector, `NON_EXECUTABLE` ⇒ bound grant, `PRESERVATION` never dispositionable; parser rule as diagnostic; repair
+allowlist includes `acceptance/tests/`; `needs_grant` outcome) and D-V2-11 (one machine-readable grammar table as the
+source for parser rules, canonical document, skills and prompt example). Strike "ready CT". Order SLICE3
+riskiest-first: probe managed collection at the new acceptance path, then seal wiring, then mode A, then the
+verifier, then attribution; the schema/prompt conformance change lands last, because only then can it be written
+truthfully. Do not reopen D-V2-9.
+
+### E603 — self-review of E602: one claim was wrong, and it hid a second live hole (2026-11-22)
+
+Supersedes the v1 draft of [i03-external-design-review-2026-11-22.md](notes/i03-external-design-review-2026-11-22.md);
+the decision document now in that file is v2. No production change in this commit.
+
+**Correction — the hole is wider than E602 said.** E602 stated that an un-granted `NON_EXECUTABLE` request is
+refused by `disposition-undeclared`. It is not. `_admit_published_project` guards the binding with
+`if snapshot.graph is not None and granted:` (`workflow_controller.py:3209`), and `granted` is `()` whenever the
+caller supplied no dispositions — so **the binding step is skipped entirely**, no rule fires, and the graph is
+admitted with the request unbound and graded `UNCOVERED`. Measured: `bind_dispositions(graph, ())` raises
+`disposition-undeclared`, and `tests/test_ai_native_dispositions.py:183` already pins that; the controller therefore
+bypasses a rule the library enforces and a test proves. Closing it is deleting one guard. Consequence in the caller:
+the rule is absent from `_V2_CREATE_FAILURES`, so such a run ends as the generic non-retryable `workflow_failed`
+(`workflow_tool.py:879`) — unattributable, which INV-11 forbids.
+
+**Correction — the blast radius is three tests, not two.**
+`test_a_soft_invariant_may_still_stay_uncovered` (`tests/test_ai_native_plan_v2.py:819`),
+`test_a_contract_with_neither_a_selector_nor_a_disposition_is_uncovered` (`:720`), and
+`test_a_plan_that_disposes_of_nothing_seals_an_empty_attestation`
+(`tests/test_ai_native_acceptance_bundle.py:493`) — the third is the seal-level twin and mints a seal over an
+undispositionsed contract. `KIND: SOFT` occurs in 5 places in the whole test tree.
+
+**Measurement — the seal does not merely look similar, it omits the contract.** A seal minted over a plan with one
+tested contract and one un-granted `NON_EXECUTABLE` contract holds no trace of the second: `attested == ()`,
+`selectors` names only the first, and no field in the record could carry it (`CT-1.2 in seal → False`). The §6
+requirement (`contracts_total` + refusals inside `mint_seal`) follows from that, as a serialization invariant rather
+than a second gate.
+
+**Measurement — the recommended patch changes exactly one cell.** Removing the `kind != "HARD"` exemption from
+`_admit_evidence` (and renaming the rule) turns `SOFT + TEST_REQUIRED` uncovered from admitted into refused; the
+legitimate disposition request, the `HARD` refusal and the `PRESERVATION` refusal are unchanged. Applied to a copy of
+`plan_v2.py`, not to the tree.
+
+**Simplification — `needs_grant` as a new outcome type was over-engineered.** The same behaviour comes from existing
+tables: add `disposition-undeclared` to `_may_repair_authored_project`'s exclusion set (the planner cannot supply a
+human grant, so retrying it is a loop, exactly like a collision) and one row in `_V2_CREATE_FAILURES` mapping it to
+`disposition_required` with `retryable=True`. That also makes CT-1.5's missing `--dispositions` CLI ingress blocking
+rather than deferred.
+
+**Downgraded — the collection probe is not a research spike.** `sealed_collection_argv` pins the closure's own
+`pytest.ini`/`rootdir`, `collect_sealed_nodeids`/`run_sealed_acceptance` already refuse drift, unexecuted selectors
+and unusable reports, and `excluded_paths` defaults to `()` so `worklogs/` is visible through a managed view. The
+open questions are the managed executor, the new path prefix and parametrized nodeids: a ~1 h probe, not a gate on
+planning.
+
+**Credit where due.** The folded-rule part of the diagnostic defect is already recorded as debt in
+`workflow_tool.py:846–850`; what this review adds is why it is not deferrable — the diagnostic is the only feedback
+channel to the author, and there is one repair attempt.
+
+**Held.** E601's proposed refusal of `HARD + NON_EXECUTABLE` remains wrong: dispositions exist for claims that are
+critical and unobservable, and `bind_dispositions` is the authority that grants them. Re-confirmed, not re-argued.
+
+### E604 — cross-review of two independent packages: two live holes, and a confinement that is topology-dependent (2026-11-22)
+
+Third document in this sequence: [i03-external-design-review-2026-11-22.md](notes/i03-external-design-review-2026-11-22.md)
+(v3). A second agent produced an independent package for the same brief; it was read line by line and its load-bearing
+claims were re-measured. No production change.
+
+**Convergent (both packages, independently).** `TEST_REQUIRED` must be discharged for every contract regardless of
+`KIND`; the `SOFT` exemption is an implementation gap, not a ratified policy; `HARD + NON_EXECUTABLE` stays legal via
+the caller-granted pipeline and the plan's strict line-60 reading must be deleted, not enforced; the seal must be
+self-describing; the repair allowlist must admit `acceptance/tests/`; `--dispositions` is a real capability gap; the
+canonical schema is the root cause and the doc triad must change atomically. Two independent derivations agreeing on
+the policy is the strongest signal in this sequence — the recommendation is not an artefact of one reading.
+
+**Rejected from the parallel package, with cause.** (a) "a `HARD` invariant can be converted to a signature *by the
+planner choosing* `NON_EXECUTABLE`" — the grant is the caller's (`bind_dispositions` refuses
+`disposition-undeclared`; `contract_evidence` requires `owner is not None`); the planner selects *which claim* carries
+an attestation, not whether one exists, and that residual is now recorded with a cheap mitigation. (b) "`SOFT` = not
+admission-gating" — a severity claim with no consumer, i.e. the defect restated; the resolution adopted here is to
+delete `KIND` for the MVP. (c) one PR containing the document rewrite, parser policy, repair geometry and CLI —
+atomicity belongs to the doc triad only. (d) an `uncovered` field in the seal that can only be empty — a refusal plus
+`len(selectors)+len(attested)==contracts_total` asserts the same property without teaching consumers to accept the
+state. (e) a new rule name where renaming an existing vocabulary entry suffices.
+
+**Adopted from it.** The plan's five contradictory sentences with line numbers (60/233/284/511/621/650) — the single
+most actionable item either package produced; the fact that `acceptance_defect.correct` passes a caller-supplied graph
+into `mint_seal`, i.e. the seal has a **second existing producer** (verified `acceptance_defect.py:246`), which is a
+better justification for the mint-time refusal than "a future caller"; the zero-migration argument for bumping
+`SCHEMA_VERSION`; and the target-flow/role inventory.
+
+**New finding (missed by all three prior audits and by both packages).** `cli.py:2165` sets
+`write_purpose = MUTATION if is_nested_coder else PROJECT`, and `workspace.py:2844–2854` confines only `MUTATION` views
+to `{"src","scripts"}`; a `PROJECT`-purpose write view falls through to the ordinary rooted-IO policy, where the sole
+barrier is `protected_paths` — which carries the plan file and nothing else (`workspace.py:2194`, `:2814`). The coder
+holds unconfined `fs_write_file`/`fs_edit_file` (`profiles.py:123–137`). So "the coder cannot edit the tests it must
+pass" is true **because the V2 coder stage is nested**, not because the role is confined: a top-level managed coder
+stage can write `worklogs/<slug>/acceptance/tests/**`. Making the purpose unconditionally `MUTATION` is *not* the fix
+(the coder legitimately writes repository tests and docs outside those roots) — which is exactly why CT-3.3
+(`protected_paths` covering every sealed semantic path) is the correct mechanism, and why it is urgent rather than
+defence-in-depth. S3's priority rises; its implementation is unchanged.
+
+**Net.** Policy: both packages agree, adopt. Mechanics: this document's set is smaller and measured (one-cell patch
+blast radius, three encoding tests, the un-granted-request guard, the escalation classification). Process: adopt the
+parallel package's documentation-first ratification phase; reject its mega-PR.
+
+### E605 — the plan corrected before implementation: one evidence rule, `KIND` deleted, six defects become rows (2026-11-22)
+
+The plan was edited where it contradicted itself, **before** any implementation, so the next slice follows one rule
+instead of five. Documentation only; no production code changed.
+
+**What changed in [i03-ai-native-workflow-refactor-plan-v2.md](notes/i03-ai-native-workflow-refactor-plan-v2.md).**
+(1) A dated header note names every change and why, so nobody has to diff two drafts to discover the rule moved.
+(2) The five sentences that disagreed about evidence — grammar delta, §2 "production grammar", INV-05, CT-3.1, §8
+step 4 — now say one thing: every CT is discharged exactly once, by a selector resolving to one collected nodeid or
+by a caller-granted typed disposition; `KIND` exempts nothing; "ready CT" is gone from the vocabulary because it never
+had a runtime meaning. (3) `KIND: HARD | SOFT` is deleted from the grammar and from the grammar skeleton (D-V2-10);
+severity is deferred to a future `SEVERITY` field *with a consumer*. (4) Q-V2-ACC-2 is marked RESOLVED, keeping the
+measurements that made the old wording untenable, and §8 step 4 no longer claims ACC-1/2 are closed or calls
+Q-V2-MODEA-1 open after D-V2-6 answered it. (5) D-V2-10 (evidence totality, `KIND` removed, seal totality) and D-V2-11
+(one machine-readable grammar table; the doc triad moves atomically) enter the ratified-decision table. (6) Six
+defects become §12 rows **P4-1…P4-6** instead of prose in a note: the un-granted binding guard, the blind seal plus its
+second producer, the repair geometry, coder confinement being topology-dependent, `KIND`'s sole exempting reader, and
+the missing `--dispositions` ingress. (7) Five stale citations fixed (`parse_plan:674`,
+`_admit_published_project:3141`, `_validate_plan_admission:3427`/`_validate_v2_admission:3476`,
+`_run_stage:1601` with its coder gate at `:1634`, the acceptance bank's 45 tests), plus the SLICE2 paragraph that
+still described the deleted payload route as *today* (P2-4), the duplicated §5 number and the out-of-order §11/§12.
+
+**One correction to my own correction.** P4-1 first attributed `bind_dispositions` to `plan_v2`; it lives in
+`plan_admission.py:171`. Fixed in the same edit — a defect row that sends the implementer to a module that does not
+contain the function is the same class of error the row describes.
+
+**What this edit deliberately does not ratify**, recorded because editing the plan is how this project ratifies
+policy: nothing about S0 (whether the managed executor can collect and run a project test under
+`worklogs/<slug>/acceptance/` is still unmeasured), nothing about severity *existing*, and none of S1/S2's code.
+
+**Next slice chosen (plan §8 "Next slice, decided 2026-11-22"):** S1 policy closure → S2 seal totality → S0 probe →
+S3 mode A. S1 before S2 because a seal must not certify a graph admission will later reject; S2 before S0 because the
+probe proves *where* the closure runs, not that its result is trustworthy; S0 before any SLICE3 wiring because a
+closure that cannot be collected at the new path makes that wiring pointless; S3 next because confinement currently
+depends on the launch topology.
+
+### E606 — the gate environment is built from the repository's own runbook, so tests are evidence again (2026-11-22)
+
+Every measurement in E602–E605 that said "`[R]` by name, `[M]` only under a python3.11 stub" existed because this
+sandbox had no CPython 3.13 and `uv python install` could not fetch a standalone build (TLS to
+`python-build-standalone`; not an allowed host). The repository already answers that: `scripts/arena-env-build.sh`
+with `knowledge/arena-env-build.md` builds CPython from pinned `codeload.github.com` sources. It was run as written.
+
+- **Host had no OpenSSL headers and no `pkg-config`**, so `SYSTEM_OPENSSL=auto` chose the pinned source path:
+  zlib 1.3.1, OpenSSL 3.0.22, libffi, bzip2 and SQLite (FTS5) compiled into a staging prefix, then CPython **3.13.16**
+  built against it. Cold build on 2 cores: ~11 minutes, moderate `JOBS`.
+- **Toolchain:** `uv 0.13.7` (pinned, installed into an external tool cache, launcher in `.venv/bin`), `just 1.57.0`,
+  dev extra synced with `--frozen`.
+- **`./scripts/arena-env-build.sh --check` → `ENVIRONMENT_CHECK_OK`**: CPython 3.13.16, and every command `just check`
+  needs present (`pytest ruff deptry pylint mypy pyrefly mutmut vulture pip-audit fa`).
+
+**Baseline measured with it (before any code change in S1):**
+
+| Gate | Result |
+|---|---|
+| `uv run pytest tests/test_ai_native_plan_v2.py tests/test_ai_native_dispositions.py tests/test_ai_native_acceptance_bundle.py -q` | **231 passed**, 2.8 s |
+| `uv run pytest tests/ -q -k "ai_native or invoke_workflow or admission_v2"` | **613 passed**, 7685 deselected, 48.6 s |
+| `uv run fa authoring-check` | exit 0, 0 diagnostics |
+
+So the next slice starts from a measured green baseline on exactly the banks it will rewrite, not from a promise that
+they were green before.
+
+**Operational note for later turns.** `.venv` and `BUILD_ROOT` (`$HOME/.cache/arena-python313`) are outside the
+snapshot, so both can disappear between turns. Rebuild with `./scripts/arena-env-build.sh` — seconds when the cached
+source tree survived, ~11 minutes cold — and activate with `source .venv/bin/activate`. The `/tmp/stub` python3.11
+slice used in E602/E603 is now a fallback for quick probes only; **claims about gates must come from the real
+interpreter.**
+
+### E607 — S1 lands: admission's policy half closes, and the repair path it depends on was dead (2026-11-22)
+
+Four commits make up S1: `763239f`, `f932b13`, `03c3b87`, `b6ca424`. They are one change set because
+each closes a hole the next one would otherwise have to work around — a seal minted before S1 would
+certify a graph admission no longer accepts (plan §8, "Next slice").
+
+**What the code now does, item by item.**
+
+| # | Rule | Commit | Behaviour |
+|---|---|---|---|
+| 1 | P4-1 / R1 | `f932b13` | `_admit_published_project` binds unconditionally (`if snapshot.graph is not None:`). The old `and granted` skipped the binding exactly when the caller sent nothing — the one case with no other gate, since `bind_dispositions` is a no-op without requests. An ungranted request is now `disposition-undeclared`, pre-seal. |
+| 2 | D-V2-10 | `763239f` | `KIND` is gone from the grammar and from the prompt; every admitted CT is discharged exactly once (executable selector or caller-granted disposition); `UNCOVERED` is refused at admission and survives only as a grading state the seal reports. |
+| 3 | P4-1 (callers) | `f932b13` | `disposition-undeclared` is non-repairable in the controller (a repair would "fix" it by deleting the request) and maps to `disposition_required`, retryable, in the tool's closed table. |
+| 4 | P4-3 | `03c3b87` | The repair scope admits `roadmap.md`, the pair admission parses, `open-questions.md` and the `acceptance` subtree; the task text is derived from that tuple and names the parser's rule; `PlanRefError.detail` carries the rule while the persisted code stays the coarse metadata family. |
+| 5 | P4-6 | `b6ca424` | `fa invoke-workflow --dispositions PATH_OR_JSON`: the CLI decodes and forwards, `parse_dispositions` stays the only validator, and a value that is not JSON refuses before any lifecycle. |
+| 7 | D-V2-11 (first half) | — | Closed by measurement, not prose: `artifact-schema-and-grammar.md` has `KIND:` ×0, `AI-NATIVE-PLAN-V2` ×0, `CT-` ×0, `DISPOSITION` ×0, `^EVIDENCE:` ×0. It describes no field S1 deleted and contradicts nothing S1 changed; it is the V1 contract, and the V2 table that replaces it is S6. A partial V2 section now would be the *fourth* description the review counted. |
+
+**The defect inside the fix — P4-7.** Item 4 was not "widen a list". Measured through
+`build_registry_for_role`, the repair writer returned `path_denied` for the increment it exists to
+repair: the scope named *files* and the only matcher, `is_path_within_allowlist`, is
+strictly-descendant, so a file-name prefix admits nothing. Every repair test bound the workspace port
+directly, so no oracle could see it — the double hid the defect, which is the failure mode
+`/tests-writing` names. Fixed by `is_path_in_write_scope` (exact entry or subtree), selected by both
+gates when the dispatch carries a repair scope; the directory predicate is untouched for every
+profile allowlist, and a mutant proves the two are not interchangeable.
+
+**Gates (each commit, then the whole set).**
+
+| Gate | Result |
+|---|---|
+| S1 banks: `plan_v2 · dispositions · acceptance_bundle · bootstrap · invoke_workflow_tool · profiles_allowlist · cli` | **519 passed**, 22 s |
+| Wide bank `-k "ai_native or invoke_workflow or admission or workflow or plan_"` | **1479 passed**, 6838 deselected, 388 s (second run; the first showed one failure, see below) |
+| `uv run ruff check` on every touched file | clean (format drift in two pre-existing test files left alone) |
+| `uv run fa authoring-check` | exit 0, 0 diagnostics |
+| `uv run mypy` | **65 errors**, **0 in `src/`** — one fewer than the 66 the branch base had, because `_invoke_args` now returns `argparse.Namespace`. Mid-change it was 83; the extra ones were all my own test code, and they were fixed rather than declared. |
+
+**Mutation evidence, 25 mutants, 25 killed, each by its named oracle.**
+
+| Group | Mutants | Killed by |
+|---|---|---|
+| D-V2-10 (item 2) | 3: skip the seal restore, stale `KIND`, move the PRESERVATION rule | the three D-V2-10 oracles |
+| P4-1 (items 1, 3) | M4 restore `and granted`, M5 allow the repair, M6 drop the failure-map row | `test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarations`, `test_a_missing_grant_is_never_repaired_by_rewriting_the_plan`, the closed-rule parametrisation |
+| P4-3/P4-7 (item 4) | M7 scope back to two documents, M8/M8b the directory predicate at either gate, M9 unbounded rule, M10 no rule in the task, M11/M12 the metadata and parse rules dropped, M13 no threading, M14/M15 roadmap and acceptance removed, M16 the directory predicate starts matching equality | the repair-scope test, the bound-repair test, the grammar-refusal test, `tests/test_profiles_allowlist.py` |
+| P4-6 (item 5) | M17 grant never reaches the tool, M18 the CLI validates shape, M19 the file is never read, M20 the raw string forwarded, M21 absent grant becomes `[]`, M22 the flag is checked after the run starts, M23 an unreadable file says "not JSON", M24 a file is detected but never read | the five new CLI tests |
+
+**Recorded, not hidden.**
+
+- `tests/test_managed_workflow_e2e.py::test_parent_initial_planner_snapshot_is_one_shot_and_redacts_secrets`
+  failed once in two identical wide-bank runs, passes alone, passes as a file, and the rerun was
+  fully green (1479/1479). So it is order- or time-dependent in a bank, not a regression from S1 —
+  but it is a real flake in an E2E test and it is written down here rather than re-run until green.
+- `_validate_v2_admission` still emits diagnostics under validator `"plan-v2"`, which is absent from
+  `ADMISSION_RULES_V2` (`admission_schema.py:71`); `_record_diagnostics` would refuse such a record as
+  corrupt. Latent today because the create-new route returns before a `_WorkflowAdmission` exists.
+  Not S1's to fix (it is the record vocabulary, S2/S6), and not forgotten.
+- A *live* end-to-end run with a grant remains unproven for the same reason CT-1.5 already records:
+  the human front is the unmanaged shape. The flag is proven to reach the tool unmodified; what a
+  managed child does with it is proven separately.
+
+**Next slice:** S2 — seal totality. `mint_seal` refuses `UNCOVERED` and ownerless contracts, the record
+carries `contracts_total`/`attested`/`uncovered` with the arithmetic asserted, `SCHEMA_VERSION` 1→2, and
+**both** producers (`acceptance_bundle.mint_seal`, `acceptance_defect.correct`) are held to it.
+
+### E608 — the gate tracker: lists instead of counts, and what the red baseline actually is (2026-11-22)
+
+**Why the tracker exists.** During S1 mypy went 83 → 65 → 62 and I read that as "better". It was not:
+four errors had gone and **three of the remaining were mine**. A count answers "how bad"; the merge
+question is "did I add any", and only a set difference answers it. So the unit of evidence is now the
+finding list.
+
+**The tool** — `scripts/gate_tracker.py`, stdlib only, two commands:
+
+```bash
+python scripts/gate_tracker.py record --label base-1acb56b --out notes/gates/2026-11-22-base-1acb56b \
+    --cwd /tmp/base-wt --pythonpath /tmp/base-wt/src      # a worktree of the base commit
+python scripts/gate_tracker.py record --label head-e0cbea6 --out notes/gates/2026-11-22-head-e0cbea6
+python scripts/gate_tracker.py compare <base> <head>       # exits 1 when anything is new
+```
+
+Each recording keeps the raw log, the normalised finding list and `summary.json`; `compare` writes
+`compare.md`/`compare.json` into the head directory. `--reuse pytest=/tmp/suite.log` ingests a run
+instead of repeating a 13-minute suite. `--pythonpath` is not optional for a worktree: an editable
+install imports the *working* tree's package, which would quietly measure the wrong commit.
+
+Normalisation is deliberately coarse — line and column numbers are dropped (they drift with every
+unrelated edit; a finding that moves is not a new finding), pytest findings are nodeids, ruff findings
+are `file: CODE message`, `authoring-check` is its diagnostic count.
+
+**Result 1 — mypy.** Base `1acb56b`: 66 entries → **30 unique** findings. HEAD `e0cbea6`: 62 → **29**.
+`compare`: **0 new, 1 gone** (the four `_cmd_invoke_workflow` entries are one unique message). The
+three errors the count had hidden were real and were fixed in the code, not suppressed: typed doubles
+at the stage seam (`drive -> SessionOutcome`, `build_registry -> ToolRegistry`, the port cast to
+`WorkspacePort`, one `_stage_log` helper that says why a real `EventLog` is not used) and
+`WorkflowProgress("WORKFLOW")`, which passed a string where `plan_version: int` is declared — a real
+type error copied from a pre-existing test. `src/` has 0 findings.
+
+**Result 2 — pytest, measured twice, because the first measurement was wrong.** First attempt: a
+worktree of `1acb56b` gave **116 failed, 8146 passed, 6 errors**. That number was an artifact of how the
+worktree was prepared, not a property of the commit, and the difference is worth recording because it is
+easy to mistake for "the sandbox cannot run these tests":
+
+| Symptom in the bad run | Actual cause |
+|---|---|
+| 114 tests fail with `fa workflow: admission blocked: baseline-unavailable`, exit 2 | The product's T0 capture shells out to a literal `python -m pytest … -p fa.inner_loop.junit_nodeid_plugin`, and the gate environment puts `<workspace>/.venv/bin` first on `PATH`. The worktree had **no `.venv`**, so `python` was the system interpreter, the plugin did not import, no JUnit report appeared, and every workflow test was refused before its coder stage |
+| `assert 'runner status contradicts' in "JUnitXML report is missing or invalid … results.xml"` | The same missing report, surfaced by the one test that asserts on the message |
+| `AssertionError: just is required by the workspace check toolchain` (2 tests) | Real, but unrelated to the plans; `just` is genuinely absent here |
+
+Symlinking `.venv` into the worktree made the sample test pass immediately (`1 passed in 6.09s`), so the
+baseline was re-run properly. Comparable measurement, same tests, both trees able to run the toolchain:
+
+| | base `1acb56b` | head `e0cbea6` |
+|---|---|---|
+| pytest | 2 failed, 8267 passed, 18 skipped, 3 xfailed (**0 errors**) in 24m35s | 2 failed, 8286 passed, 18 skipped, 3 xfailed in 19m08s |
+| failures | `test_c901_diff_guard`, `test_pyrefly_import_topology` | `test_console_encoding`, `test_pyrefly_import_topology` |
+
+`compare`: **1 new, 1 gone**. The new one was mine and is fixed (`ddb5c8f`): `gate_tracker.py` printed
+box characters without `force_utf8_stdio()`, caught by `tests/test_console_encoding.py`. The "gone" one
+is a measurement artifact — the C901 diff guard needs `merge-base(HEAD, main|origin/main|HEAD^)`, and in
+a worktree at `1acb56b` none resolves (`main` shares no ancestor with this branch line, and the checkout
+does not carry the parent object, so `HEAD^` is "not a valid object name"). Details and the verification
+run are in `notes/gates/2026-11-22-head-e0cbea6/RESOLUTION.md`.
+
+So the honest split at this branch is: **new = 1, fixed in `ddb5c8f` and re-verified; pre-existing = 1**
+(`test_pyrefly_import_topology`, `pyrefly` not installed here) — the other 114 were neither, they were a
+tree that could not run the project's toolchain. Both lessons are now in `notes/gates/README.md`, because
+a baseline measured in such a tree is not a baseline.
+
+**Result 3 — pyrefly, the second type checker, same method.** Its test asserts a *total* of zero, and it
+is red on both sides (63 at base, 59 here), so the total is useless as a merge signal. Normalised lists
+(`file` + message) give 27 -> 26 unique, **0 new, 1 gone** — the same `SimpleNamespace` -> `Namespace`
+finding mypy lost. Recording: `notes/gates/2026-11-22-pyrefly-diff.md`. Not yet a gate in the tracker.
+
+**Policy recorded (plan §8).** `no new red` is a standing gate: `compare` must report `0 new`; known red
+stays listed with its reason; `xfail` only for a *proven* host prerequisite, never for "it fails in this
+environment"; known red that turns out to be code is fixed before deploy as its own item.
+
+### E609 — S2: the seal asserts totality, and the grant leaves a trace (2026-11-22)
+
+S2 was three items in the plan and became six when D-V2-12 was ratified in the same breath, which
+was the point of doing it in one schema bump: `SCHEMA_VERSION` 1 → 2 with one migration (zero, because
+no production seal exists and `load_seal` fails closed on an unknown version), not two.
+
+**1. A seal can no longer describe less than the plan.** `mint_seal` refused nothing before: it
+recorded `attested` and whatever `selectors` it could bind, so a contract that was neither selected
+nor attested *disappeared from the record* while the seal still read as the plan's oracle. Now
+`_attestations` refuses `seal-uncovered-contracts` while any contract is `UNCOVERED`, and records
+`contracts_total` with `len({covered contract ids}) + len(attested) == contracts_total`. The identity is
+re-proved in `load_seal`, because a digest proves a record was not *edited*, not that it *says
+everything* — `seal-totality-mismatch` is the load-side rule.
+
+**2. Every producer inherits the refusal, and `correct` now speaks one vocabulary.** `correct()`
+reaches `mint_seal`, so the refusal is inherited rather than re-implemented
+(`test_a_correction_cannot_seal_an_uncovered_contract`). Writing that test found a real gap: a seal
+refusal escaped `correct` as a bare `AcceptanceBundleError`, outside the `defect-*` vocabulary the
+module promises every failure belongs to. Fixed by translating at the boundary.
+
+**3. P4-8: the record of *who* carries the claim.** The seal now carries `attestations` — contract id,
+invariant id, reason, route, artifact, owner, `reviewed_at`, and a scope digest over the invariant and
+contract sentences the grant covers — inside the digest. `load_seal` refuses a block whose ids are not
+exactly `attested` (`seal-attestation-mismatch`), a `pending` list that is not exactly the host-owed
+subset (same rule), a route that contradicts its reason (`seal-attestation-route-invalid`), and a
+missing owner/review date/artifact at mint (`seal-attestation-unowned`).
+
+**4. D-V2-12's checkable half: the route decides the artifact.** `plan_admission` gained
+`probe:<repo-relative path>@host:<label>` and the closed reason→kind matrix
+(`disposition-evidence-route-mismatch`): a host claim can no longer be discharged by a document that
+says nothing about a host, and an approval cannot be discharged by a probe. The matrix caught four
+existing banks whose fixtures paired `HOST_READINESS` with `doc:`/`issue:` — those were the hole, not
+the tests. The route rule also entered the tool's closed failure table, so it names itself and stays
+retryable instead of degrading to `workflow_failed`.
+
+**5. The artifact-existence check lives where the tree is visible.** Admission reads plan bytes and
+never the acceptance tree, so `"a plan may name a probe that does not exist"` cannot be refused there.
+`mint_seal` refuses `seal-attestation-artifact-missing` when a `HOST_PROBE` artifact is not in the
+sealed closure — the rule the plan wording ("admission checks the artifact exists") had to be moved
+from, and the plan says so now.
+
+**6. `plan_sha256` now means what it says.** `mint_seal` took a graph *and* the plan bytes and only
+digested the bytes: a caller could seal one plan's graph beside another plan's bytes.
+`_bind_graph_to_bytes` refuses `seal-plan-graph-mismatch` unless every authored sentence of every
+invariant and contract appears in those bytes and the invariant-heading count matches. The roadmap is
+not part of the increment bytes, so this is what the bytes can prove on their own — weaker than
+re-parsing, strong enough that a scope digest cannot describe a plan nobody sealed.
+
+**HOST_PROBE is a debt, not a decision.** `pending` is the `HOST_PROBE` subset of `attested`; both are
+recorded, so no reader can collapse "a named party carries this" into "the host ran it". Nothing acts
+on `pending` yet — the seal states the debt and W4 is where a deploy gate reads it; that is recorded in
+the plan rather than implied by a field name.
+
+**The gate caught itself.** The first S2 recording printed `ruff exit=1 findings=0`: ruff's default output
+puts `F401 [*] msg` and `--> path:34:42` on separate lines, and the parser only knew the concise shape, so
+a real unused import was recorded as a clean gate. Fixed in `scripts/gate_tracker.py` (both shapes read,
+recordings ask for `--output-format=concise`) and the lesson is in `notes/gates/README.md`: a non-zero
+exit with an empty list is a parser bug, never a clean tree. Measured after the fix, base `1acb56b` →
+`b047160`: **pytest 0 new / 1 gone, mypy 0 new / 1 gone, ruff 0/0, authoring-check 0/0, pyrefly 0 new
+(27 → 26 unique)** — gate exit 0.
+
+**Deliberately not in S2:** `ROUTE:` on invariants, the prompt's grammar table and the authoring
+surface (S6/D-V2-11); a deploy gate that acts on `pending`; and any change to `PRESERVATION`
+(unchanged: never dispositionable).
+
+### E610 — S3: mode A stops depending on which coder topology is running (2026-11-22)
+
+**The defect (P4-4, measured).** `write_purpose = MUTATION if is_nested_coder else PROJECT`
+(`cli.py:2165`). A `MUTATION` view is confined to `{"src","scripts"}`, so a nested coder cannot reach
+the sealed tests. A `PROJECT` view falls through to ordinary rooted IO where the only barrier was
+`protected_paths` — which carried the plan file and nothing else. So "the coder cannot edit the tests it
+must pass" was true **because the V2 coder stage happens to be nested**, not because the role is
+confined: a top-level managed coder could write `worklogs/<slug>/acceptance/tests/**`. Making the purpose
+unconditionally `MUTATION` is not the fix either — the coder legitimately writes repository tests and
+docs outside those roots.
+
+**The fix (CT-3.3/INV-07).** One derivation in the authority:
+
+```python
+sealed_project_paths(plan_path)  # -> ("worklogs/<slug>",)   or  (plan_path,)
+```
+
+Both view construction sites pass it; `write_purpose` was not touched. Three properties earn the shape:
+
+* **Purpose-free**, so it cannot be topology-dependent again: `PROJECT` and `MUTATION` get the same
+  tuple, and `ViewPurpose` keeps deciding what a view *may* write, never what it may not.
+* **Derived from the plan the authority already holds**, not declared by the caller — a caller that
+  could name its own exclusions could name none.
+* **Directory-wide**, because the enumerated list is the thing that rots: roadmap, ledger, open
+  questions, every increment and the whole acceptance closure live under `worklogs/<slug>`, so a new
+  sealed artifact type is covered the day it is written. `RootedViewIO` refuses the directory *and its
+  ancestors*, so re-creating a complying file beside the seal is refused too.
+
+A plan outside that layout (legacy single-file route) protects its own path — the pre-S3 behaviour — and
+never protects nothing.
+
+**Oracles.** `test_v2_coder_projection_protects_every_sealed_semantic_path` opens both purposes on the
+real authority and requires `PATH_DENIED` for every sealed artifact **and for a new file beside them**
+(the case that mattered: overwriting an existing sealed file already failed with `STALE_REVISION`). It
+also proves the ban is scoped — another project stays writable for `PROJECT`, stays outside the approved
+roots for `MUTATION` — and that ordinary coder work (`tests/test_new.py`) still succeeds. Three more bind
+the parts: the derivation itself, the layout↔enforcement pair (scaffold paths vs protected directory, two
+modules that must not drift), and the drift half at both verdict entry points, now asserting the *named*
+rule `seal-byte-drift` with `executor.commands == []` rather than "some error was raised".
+
+**Producer kill-check.** With `sealed_project_paths` reduced to `return (plan_path,)`, the projection
+test fails as `expected PATH_DENIED; observed success` on the injected file — the exact hole P4-4
+described — and the derivation test fails on its first assertion. Restored, both pass.
+
+**Not in S3:** the S0 host probe (needs a live run; first thing SLICE3 wiring), CT-3.6, and any change to
+`profiles.py` or an approved profile identity (D-V2-6 stands: prevented where the interface allows it,
+detected everywhere else).
+
+### E611 — S0 is blocked by a missing decision, not by a missing host (2026-11-22)
+
+S3 closed, the next item in §8 is S0: "the managed-executor probe at `acceptance/tests/`", which gates
+SLICE3 wiring. Two facts measured before writing anything:
+
+1. **This environment cannot run it.** No `docker`, no `podman`, no `/var/run/docker.sock`. A probe of the
+   pinned managed substrate needs a real container, so here it can be *written* and not *run* — which is the
+   one category the review already allows to be `xfail(strict=True, reason=...)`.
+2. **The plan does not say where it lives.** "The managed-executor probe at `acceptance/tests/`" could be a
+   repo test driving the authority, a probe inside a fixture project's sealed closure, or both — and that
+   choice decides what "SLICE3 has started" means.
+
+Writing it blind would invent the contract the probe exists to check, so it is filed as **Q-V2-S0-1** with
+three options and a recommendation (A: a repo test under `xfail(strict=True)` with the host command in its
+docstring, plus C's fixture-closure probe as the live evidence once a host exists; B leaves nothing in the
+tree that would notice the substrate breaking). Slices S1–S3 are unaffected: none of them depends on the
+substrate, only SLICE3's wiring does.
+
+### E612 — the S0 probe is host-only by construction, and this session lost its interpreter (2026-11-22)
+
+Two measurements, neither of them a pass.
+
+**(1) The transport question is answered: there is no Docker-free in-process path to a real managed
+command.** The supervisor has exactly one cell backend and it is a container engine — `backend.CellBackend`
+(`src/fa/execution/backend.py:95`) is constructed over `DockerEngine`/`DockerCells` (`:20`, `:113`) and every
+RUN allocates through `self._cells.launch_new(...)` (`:252`, `:290`). Both escape hatches are ruled out in the
+modules' own prose, which they keep: `supervisor.py:288` "no defaults, implicit allow, host-shell fallback or
+grant reconstruction"; `service.py:7` "no default authority, no permissive fallback, no host-side runner".
+`DockerUnavailableError` is caught (`backend.py:266`, `:305`, `:493`, `:527`) only to become an honest failure.
+The harnesses that look like counter-examples are fakes one level down: `test_execution_composition._configure_local_cell_backend`
+wires the authority to `test_execution_docker.Endpoint`, a **fake Docker unix socket** that speaks the HTTP API
+and records calls, so `test_managed_workflow_e2e.py` proves the protocol, not the execution.
+
+Consequence for Q-V2-S0-1: the probe cannot be made runnable in this repository by rewriting it, so the
+"maybe it runs in-process without Docker" middle ground is closed. That does not decide the question — the
+*home and proof* of the probe still need ratification — but it removes the reason to re-open it.
+
+**(2) This session cannot execute anything, and that is a toolchain loss, not a green.** The sandbox returned
+with `python3.11` only and no `.venv`; `src/fa` requires 3.12+ (`fa.inner_loop.loop` imports `typing.override`)
+and `pyproject` declares `>=3.13`. Every route to 3.13 was tried and refused: `uv python install` needs a GitHub
+release asset and the proxy answers `release-assets.githubusercontent.com` with a TLS abort; `apt` has no
+`python3.13`; `pypi` has no vendored CPython (checked the full simple index for `python-build*`, `cpython*`,
+`pybi`, `static-python`); and a from-source build is not viable because the image carries no `zlib`, `openssl`
+or `sqlite3` headers, and `sqlite3` is imported by the session database every test touches. Under 3.11 the
+package does not even import, so no partial run is meaningful either.
+
+Therefore: **no test, no `mypy`, no `ruff`, no `fa authoring-check` ran this session.** The option-A probe was
+written in full and then *deliberately parked* rather than committed, because landing a file whose prerequisite
+is absent and whose xfail semantics were never exercised would be the "looks-tested" pattern this plan exists
+to stop. The draft lives verbatim at `notes/s0-managed-substrate-probe-draft-2026-11-22.md` with its host
+command; the next session that has the interpreter lands it (if A is ratified) and verifies on the host that
+`strict=True` turns into XPASS. Slices S1–S3 remain unaffected: their commits, gate recordings and comparison
+(`0 new` on every gate) are already in history at `e263a4e`.
+
+### E613 — the gate set was missing the formatter, and S2/S3 drifted under it (2026-11-22)
+
+The standing gate records four things (`gate_tracker.py record`: pytest, mypy, ruff, authoring-check).
+`just lint` checks five: `ruff check`, **`ruff format --check`** (`justfile:230`), deptry, pylint-gap.
+The formatter was in the gate I run by hand and not in the gate that leaves a recording, so the gap was
+invisible exactly where evidence is kept.
+
+Measured on the restored head (`e263a4e`) with ruff 0.17.6: `ruff format --check .` names 12 files. Checking
+each of the 12 against base `1acb56b` in a scratch path with the same formatter separates them into
+**8 pre-existing** (`tests/mutation/mut_step9.py`, `tests/test_admission_v2_provenance.py`,
+`tests/test_ai_native_bootstrap.py`, `tests/test_ai_native_plan_v2.py`, `tests/test_invoke_workflow_tool.py`,
+`tests/test_managed_acquisition.py`, `tests/test_prompt_registry_coherence.py`, `tests/test_s5p1_bootstrap.py`)
+and **4 mine** (`src/fa/execution/workspace.py`, `src/fa/inner_loop/acceptance_bundle.py`,
+`tests/test_ai_native_acceptance_bundle.py`, `tests/test_ai_native_acceptance_collection.py` — all clean at
+base, drifted by S2/S3). Per the standing `no new red` rule the second list is fixed here in its own commit
+(`7b3561b`), by applying the formatter to those four files only; the diff is blank lines, line wrapping and one
+byte-identical string concatenation, and both `ruff format --check` on them and `ruff check .` are clean after.
+The first list stays as a recorded, pre-existing list — it is not silence and not a count.
+
+**Correction after the environment was rebuilt (E614).** The 12/8 split above was measured with ruff 0.17.6, which was all the sandbox could install at that moment. The project's own pinned formatter is ruff **0.16.0** from `uv.lock`; re-running the same base-vs-head comparison with it gives **8** unformatted files, all of them dirty at base, and the four that were mine are clean. So both readings agree on the part that decides the commit — the drift was mine and it is fixed — while the counts differ because the tool did. The lesson is the one this ledger keeps repeating: a count is not evidence, and neither is a count taken with a different tool.
+
+Fix owed to the tooling, not to the tree: `gate_tracker.py record` must gain the formatter so a future slice
+cannot repeat this. Until then the fourth gate is "recorded", not "the lint gate".
+
+Not verified this session: no test, no mypy (E612 — no Python 3.13 in this sandbox). Formatter-only changes
+are the one class where a tool's own re-check substitutes for a suite run, and that substitution is stated
+here rather than implied.
+
+### E614 — S0 landed as option A, after the environment could be rebuilt (2026-11-22)
+
+`scripts/arena-env-build.sh` (documented in `knowledge/arena-env-build.md`) built CPython 3.13.16 from pinned
+codeload sources plus OpenSSL, published it under `$BUILD_ROOT/prefix`, and ran the frozen dev sync — so the
+session had a real interpreter again (`.venv`, pytest 9.0.3, mypy 2.1.0, ruff 0.16.0, pyrefly, deptry, pylint,
+mutmut). The earlier "no Python 3.13 obtainable" reading in E612 was true of the *interpreter-only* routes
+(release assets blocked, no apt package, nothing vendored on PyPI); the source build through `codeload` was the
+route that worked, and the repository already carried it. That distinction is worth keeping: the constraint was
+not the proxy, it was which host the archives come from.
+
+**Landed:** `tests/test_ai_native_managed_substrate_probe.py` — option A of Q-V2-S0-1 (now resolved = A). It builds
+a sealed acceptance closure at `worklogs/demo/acceptance/`, registers the workspace with a real
+`SupervisorService`, pins a `PIN_READER` view, wraps it in `ReadOnlyManagedBashExecutor` and
+`ManagedVerifyCommandExecutor`, and asserts `capture_test_nodeids` returns exactly
+`worklogs/demo/acceptance/tests/test_substrate_probe.py::test_the_cell_ran_the_seal` plus the harness's own
+in-band command (`-p fa.inner_loop.junit_nodeid_plugin`, `--junitxml=`). A green result therefore cannot be
+produced by a host shell running something else.
+
+**The xfail was verified to be the intended failure, not a broken probe.** `--runxfail` shows the failure text
+`verify: managed execution produced no verdict: ExecutionUnavailableError: execution_unavailable` — the
+supervisor refused at EXEC because there is no container engine — and the recorded command string is the
+harness's in-band `pytest` command, so everything before EXEC (register, `PIN_READER`, executor construction,
+capture orchestration) actually ran. `strict=True` means the W4 host turns the XPASS into a failure and forces
+the marker off in the same change that proves the substrate.
+
+Targeted runs: `tests/test_ai_native_managed_substrate_probe.py tests/test_execution_client_port.py
+tests/test_slice_verification_runner.py tests/test_authoring_rules_tests.py` → **138 passed, 1 xfailed in 12.10 s**;
+`fa authoring-check` → `diagnostics: 0`, exit 0; `ruff check` and `ruff format --check` clean on the new file.
+
+**Two tool findings from the same session.** (1) The probe's first draft imported `Access` but used
+`Operation.HEALTH` and carried a `noqa` that ruff called unused — both caught by `ruff check` before any test ran,
+which is the cheap half of the discipline working. (2) `gate_tracker.py` gained the missing `ruff-format` gate
+(E613): its first parser version recognised only the `Would reformat: <path>` summary shape and recorded
+`findings=0` beside `exit=1` — *the same silent-clean failure as E609, reproduced in the tool that documents it*.
+Ruff 0.16 emits `unformatted: File would be reformatted` plus a `--> path:l:c` line instead, so the parser now
+pairs the marker with the location, still accepts the legacy shape, and `record` refuses to report zero findings
+for a non-zero exit (it writes `<gate>: unrecognised failure (exit N)` instead). Verified: the parser returns the
+right finding for both shapes and nothing for the summary-only text, and a real `record --gate ruff-format` run
+lists exactly the eight files that the independent base-vs-head comparison names.
+
+### E615 — CT-3.6, verifier half: the sealed closure runs on the pinned cell (2026-11-22)
+
+What landed, in `src/fa/inner_loop/acceptance_collection.py`:
+
+* ``sealed_collection_inband_command(bundle, report=...)`` — the harness argv over the sealed closure with exactly
+  one substitution: the ``--junitxml=`` destination becomes the wrapper's ``$__fa_rep``, because a READ cell's only
+  writable path is its own tmpfs scratch and a controller-chosen path would be a guess. The argv is otherwise
+  rendered with ``shlex.quote`` and the substitution is counted: anything other than exactly one report flag is
+  refused (``collection-argv-invalid``) rather than rendered.
+* ``collect_sealed_nodeids_inband`` — runs that command and takes the nodeids out of the **receipt**, through the
+  same ``parse_inband_nodeids``/``parse_nodeid_report`` the rest of the gate uses (no second parser, no weaker one).
+* ``verify_sealed_acceptance(bundle, workspace=…, candidate_revision_id=…, plan_bytes=…, executor=…)`` — the pinned
+  verifier. Refusals happen **before any cell command**, in this order: not a seal; no managed substrate
+  (``verifier-substrate-required`` — ``writes_are_visible`` must be ``False``, so a host executor is refused rather
+  than silently substituted); a malformed candidate (``candidate-revision-invalid``); a closure overlapping a code
+  root (``sealed-root-code-overlap``); plan-digest mismatch; stale seal. It then records **both** identities —
+  ``sealed_revision_id`` (the revision the seal names, re-proved against the bytes) and ``candidate_revision_id``
+  (the caller's explicit current candidate) — because they are different claims.
+
+Supporting refactors, both to avoid a second copy of something: ``slice_verification.inband_junit_command`` is now
+the single source of the in-band wrapper (``NODEID_CAPTURE_INBAND_COMMAND`` is derived from it and stays
+byte-compatible, so the live in-band capture path is unchanged), and ``acceptance_bundle.require_revision_id``
+makes the seal's own revision rule public so a recorded-but-unsealed identity is validated the same way.
+
+Oracles (in ``tests/test_ai_native_acceptance_bundle.py``, the path §7 names): the run is **real** — an in-band
+substrate executes the harness command in a private ``$TMPDIR`` and the sealed nodeids can only appear if pytest
+collected the sealed bytes under the sealed ``pytest.ini``; the command is asserted to carry ``-c``/``--rootdir``
+into the sealed root, the plugin, ``--junitxml="$__fa_rep"`` and ``${TMPDIR:-/tmp}``, and *not* to name the
+controller's scratch path; the evidence is asserted to carry both revisions and the closure digest. Negative
+controls: no substrate, a host-shaped substrate, an empty candidate, an overlapping sealed root, a mismatched
+plan, a drifted closure, and a report whose nodeid is outside the closure (``collection-nodeid-outside-closure``);
+the refusal test also asserts ``prepared == {}`` — a refused call never reached a cell.
+
+Kill-checks (mutation, each reverted): overlap rule → ``False`` **killed** by the refusal test; substrate
+requirement removed **killed**; report not routed through the scratch **killed** by the real-run test; ``verify_plan``
+skipped **killed** by the plan-digest control.
+
+Gate (partial, as chosen): `notes/gates/2026-11-22-head-ae6d10e-ct36/` — mypy **62 raw / 29 unique, 0 new, 1 gone**;
+ruff 0; ruff-format 8 (all pre-existing, no baseline for this gate); authoring-check 0. ``pytest`` was **not**
+recorded — the targeted bucket (10 modules) gave **497 passed, 1 xfailed in 34.33 s** — and `compare` names pytest
+as one-sided instead of inventing a total. Two mypy findings of my own were caught by that loop and fixed before
+the recording (an untyped ``run_verify_command`` in a test double, and ``pin_reader`` handed a ``str | None`` in
+the S0 probe; the probe now uses ``managed.current_revision_id``).
+
+**Not done, and it is the point of the slice:** nothing *calls* ``verify_sealed_acceptance`` yet, so the planner
+``verify`` fence is still what the controller executes on the V2 route. Wiring it retires that fence, and it needs
+a decision the plan does not contain — what artifact a sealed verification writes, since ``write_verification``
+consumes ``PlanVerification`` built from planner commands. Filed as **Q-V2-SLICE3-1** (A recommended: a sibling
+``verification-v2.json``). Writing that wiring before the answer would decide the artifact by accident.
+
+### E616 — the attempt entity exists, and the verifier can no longer prove what it did not measure (2026-11-22)
+
+**The findings were checked against the code before anything was changed** (`notes/verification-entities-2026-11-22.md`,
+second half). Six were real as stated, one shrank, one is cosmetic, one is a stated exception — and the check turned
+up a ninth that is a defect in code already landed:
+
+* **F9 (new, real, mine).** `verify_sealed_acceptance` (E615) proves "the sealed nodeid executed and passed" and never
+  runs a mutation. `plan_v2.py:563` parses `KILL-TARGETS`, `verify_slice` populates `kill_checks` per contract, and
+  SLICE3's intent names STEP9A's mutation runner as the one to consume. So for a plan with kill targets the verifier
+  would have returned something that reads as proven while the kill check never happened.
+* **F4 (shrank).** The refusal path already records `errors` (`workflow_controller.py:1792–1796`), `blocking` is true
+  whenever `errors` is non-empty, and `_verification_is_indeterminate` is consulted before the gate (`:839`, `:902`).
+  So a new `executed|refused` field would be redundant state that can disagree with `errors`; it became an invariant.
+* **F6 (sharper).** The eval block *is* bounded, but by `rendered[:EVAL_VERIFICATION_MAX_CHARS]` (`:1136–1140`) — a
+  **head** truncation. One long `detail` on the first slice evicts every later verdict, nodeid and error from the
+  model's context. The bound had to move to the field.
+* **F1/F3/F5/F2/F8** held as stated, with the anchors now in the note (`kill_checks` at `workflow_controller.py:746`,
+  no total in `_slice_verification_payload` `:739–763`, `ViewRef.base_revision` `execution/types.py:63–70` with no
+  public accessor, planner commands and harness commands sharing `run_commands`).
+
+**Landed — `src/fa/inner_loop/verification_attempt.py`.** `VerificationAttempt = route + identity + claims + commands
++ attested + pending + contracts_total + kill_required + errors`, with `blocking`/`first_reason`/`repair_nodeids`
+derived. Five write-time refusals: `claims-total-mismatch`, `claim-mutation-missing`, `fence-on-v2-route`,
+`empty-attempt-unexplained`, `identity-missing-on-v2`. Two design changes happened *while* implementing, both
+simplifications: `attested`/`pending` are carried as the seal's own two lists instead of becoming claim outcomes (one
+idea, one vocabulary), and every free-text field is bounded at construction (2000 chars, one line, `…[truncated]`).
+
+**Landed — the F9 refusal.** `verify_sealed_acceptance` takes `kill_required: tuple[str, ...]` and raises
+`claim-mutation-missing` *before* any cell command when it is non-empty. This is deliberately a refusal and not a
+capability: it turns "silently false `PROVEN`" into "loud refusal", which is the property that matters until the
+mutation composition lands.
+
+Tests: 21 in `tests/test_v2_verification_attempt.py` plus the F9 oracle in the bundle bank (110 passed there). Seven
+mutants in the entity (fence rule, total rule, mutation rule, empty-attempt rule, identity rule, per-field bound,
+`proven` ignoring the mutation) each died on the intended test, and an eighth (the F9 refusal removed) died on
+its own. mypy 62 (0 new), ruff 0, ruff-format 0 new, authoring-check 0.
+
+**Not done:** nothing writes an attempt yet, and no mutation is executed on the sealed route. Order from here:
+`run_kill_checks` seam over the existing `_run_kill_check` → sealed projection into `VerificationAttempt` →
+controller branch that retires the fence → the two CT-3.6 properties (hostile fence runs nothing; partial identity
+refused at write).
+
+### E623 — GAP: E617–E622 are cited by the plan and the gate recordings, and were never written here (2026-11-22)
+
+**What a reader hits.** The plan names E617 (F10's measured defect), E618 (the sealed→attempt projection), E619 (the
+substrate names the revision — F5), E620 (the `PLAN-V2` controller branch), E621 (the artifact and eval block carry the
+attempt) and E622 (F1's closed mutation-verdict vocabulary), and five gate recordings open with "Recorded after E6xx".
+This ledger's highest entry was **E616**. So six evidence ids resolve to nothing, in the one artifact the planner is
+told to read at increment start — the class of drift E613 describes, applied to evidence rather than to gates.
+
+**Why it is recorded instead of back-filled.** Writing six `FACT` entries now would be a reconstruction from the plan's
+own prose and from commits, not from the verification that produced them, and a fabricated citation is worse than a
+missing one. What the ids described is recoverable without guessing, and is listed here so the chain can be followed:
+E617 ≡ the plan's "Measured defect (F10)" paragraph; E618–E621 ≡ the four "F10 item n landed" paragraphs;
+E622 ≡ the "F1 schema gap closed" paragraph; each paragraph states its own measurements and tests, and each gate
+recording named after an id carries the finding list of that commit.
+
+**Fix applied now.** The plan's paragraphs keep their ids (they are the record of what was verified); this entry is the
+resolution step they pointed at. From here, no new `E6xx` may be cited until the entry exists — the same rule the gate
+set got in E613.
+
+### E624 — DECIDED: Q-V2-SLICE3-4 = A, Q-V2-SLICE3-3 = A, and the mutation operator is prioritised (2026-11-22)
+
+Three operator decisions, taken on the two-option write-up in
+`notes/q-v2-slice3-3-4-options-and-plan-drift-review-2026-11-22.md`:
+
+* **Q-V2-SLICE3-4 = A (ratified, was implemented on the recorded recommendation).** A declared kill target is recorded
+  as declared-and-not-executed (`kill_declared`, `executed: false`); `kill_required` stays empty; `proven` speaks only
+  about the selector's execution. B (declare it required → `claim-mutation-missing`) is rejected because the authoring
+  prompt *requires* a `KILL-TARGETS` block: B blocks every project written to the instructions, permanently, until
+  `run_kill_checks` exists. The plan's CT-3.6 sentence that demanded B is rewritten to A in the same change.
+* **Q-V2-SLICE3-3 = A.** One vocabulary: `kill_attribution`'s verdicts are `SliceVerdict`'s own members, the constant is
+  derived, and both the record (`KillAttribution`) and the run (`NodeRun`) validate what they name. `NODE_OUTCOMES`
+  stays a separate axis, typed as its own `StrEnum`.
+* **The mutation operator ("option D" of Q-V2-SLICE3-4) is prioritised above the remaining S4/S5 work.** That makes
+  Q-V2-SLICE3-5 — the shape of `TARGET-ID` — the next gate rather than a backlog item, because a runner cannot be
+  written against a field that means "a site" to the prompt and "a label" to the fixtures.
+
+### E625 — Q-V2-SLICE3-3 landed: one axis, one spelling, and two constants become rules (2026-11-22)
+
+`kill_attribution.py`: `NodeOutcome` (`PASSED/FAILED/SKIPPED/MISSING/ERROR`) with `NODE_OUTCOMES` derived from it;
+`ATTRIBUTION_VERDICTS` derived from `SliceVerdict` (`{PROVEN, VACUOUS, ERROR}`) instead of an uppercase literal set;
+`KillAttribution.verdict` is a `SliceVerdict` and `__post_init__` refuses a verdict outside the set
+(`kill-attribution-invalid`) or a non-`PROVEN` verdict with no detail; `NodeRun.__post_init__` refuses an outcome
+outside the five (`kill-run-invalid`); `_classify`/`_verdict` speak the enums. The point is not tidiness: before this,
+`ATTRIBUTION_VERDICTS` was exported and read by nothing, so a hand-built record could name any string and a future
+writer would have stored it verbatim — F1's shape, one entity over.
+
+**Measured:** `tests/test_ai_native_kill_attribution.py` **35 passed** (was 32: three new oracles, one renamed), with
+the bind the old split could not state — `{v.value for v in ATTRIBUTION_VERDICTS} ⊆ MUTATION_VERDICTS`, so the day
+CT-3.4/3.5 wires attribution into the attempt there is no translation to forget. **Nine mutants, all killed:** the
+constant back to uppercase literals; the membership rule removed; the "non-`PROVEN` must explain itself" rule removed;
+`NodeRun` accepting any outcome; a failed mutation reading as `VACUOUS`; a failed report row reading as `SKIPPED`;
+`attribute` accepting a non-run; the outcome values lowercased; the baseline-pass precondition removed.
+
+**Environment caveat, stated because it is real:** the sandbox did not retain its python 3.13 virtualenv, so this
+change was verified on CPython **3.11** with a `typing.override` stand-in installed *outside* the repository (a `.pth`
+in the temporary venv). The code under test is the committed code; the interpreter is not the project's. The full
+suite, the `ruff-format` baseline recording and the pyrefly gate therefore remain **owed** for this change set (E623's
+gate-recording rule), and nothing here is claimed as host-verified.
+
+### E626 — the seal moved out of the tracked tree, and the ledger's own custody line is superseded (2026-11-22)
+
+**Supersedes the fact recorded in this ledger** as "The seal file (`acceptance.seal.json`) lives **beside**
+`worklogs/<slug>/acceptance/`, not inside it". That statement contradicted **D-V2-5** ("immutable per-seal files in
+private metadata plus one atomic pointer", "the seal never lives under `worklogs/`") and the code implemented it
+anyway, so the ledger recorded the drift as a decision. Today's code follows the plan: `acceptance_seal_store.SealStore`
+keeps immutable per-digest records under `.fa/seals/` and one atomically replaced pointer `.fa/seal-current.json`, and
+the create route mints and stores the seal after admission and before any coder (`workflow_controller._seal_published_project`,
+N1, `7b750f5`).
+
+**Why this matters beyond the file move:** the old location made "the project at revision R" and "the bytes on disk"
+stop meaning the same thing at the artifact whose job is to prove custody — every revision walk could carry the seal,
+and a re-seal would have been a plan edit. `.fa/` is the one location both canonical walks exclude and no file tool may
+address.
+
+**Also recorded here because no entry covers it:** the N1–N3 change set (`7b750f5`) shipped the store, the route mint,
+the stage reader, the scaffold's `acceptance/pytest.ini`, `kill_declared` (N2) and the sealed `attestations` in the
+artifact and eval block (N3), evidenced then by a 19-test bank, an affected bucket of 675, the full suite at 8411
+passed / 1 pre-existing red, the live bank at 581 passed, and 14/14 mutants.
+
+### E627 — Q-V2-SLICE3-5 grew a second axis, and Q-V2-SLICE3-6 was opened without a runner (2026-11-22, recorded 2026-11-23)
+
+**Why this entry exists late:** commit `c4d528d` changed the plan and nothing else, and a documentation-only change still
+has provenance. Two edits, both forcing.
+
+**The obligation axis.** The row `Q-V2-SLICE3-5` asked only what shape `TARGET-ID` should have. But the V2 grammar
+requires, for every declared row, a valid `CT`/`TEST-ID` — and requires **no row at all**: `plan_v2._admit_kill_targets`
+(`:610–615`) validates the rows it is given, while V1's `slice_verification.validate_kill_directives` (`:1177+`) emits
+`kill-directive-missing` for every `FUNCTIONAL` contract and exempts `CONSTRAINT`/`PRESERVATION` (CT54). So a `FUNCTIONAL`
+contract on the V2 route can reach `proven` without a mutation ever being declared, which is **strictly weaker** than the
+frozen legacy route. A shape decision that ignores that would name a field nobody is obliged to fill; the axis is now in
+the row, next to the options.
+
+**The new blocker.** Scoping "option D" (the executable mutation operator the operator prioritised) exposed a question
+that precedes it: the sealed verifier runs on a pinned read-only cell, and the mutation engine's overlay is built on the
+controller host, so the two cannot meet without a decision. Filed as `Q-V2-SLICE3-6` with three options — (a) a
+harness-owned cell-side bootstrap reusing the pure AST transform and `_PROVENANCE_PROBE`, (b) a second pinned view of a
+mutated tree, which needs the immutable payload store `D-V2-5` forbids, (c) host execution, the substrate F10 removed —
+and (d) deferring, which is where the code stands.
+
+**Measured, not assumed:** `KillOperator` has exactly two members and `KillDirective` is `(operator, path, symbol,
+callee, line)`; `_MUTATION_ROOTS = {"src","scripts"}` (`slice_verification.py:228`); `parse_kill_directives` accepts only
+`kill: <operator> <path>::<symbol> [-> <callee>]` (`:1049`); the authoring prompt teaches `TARGET-ID:
+src/widget.py::parse` (`prompt.py:1299–1300`) while every fixture writes a dotted id; and `PlanGraph.kill_targets()` is
+the only accessor that lets a report tell "declared" from "none declared". No code changed in `c4d528d`.
+
+### E628 — the two open questions got a brief another agent can start from, and three documentation defects died with it (2026-11-23)
+
+**The brief.** `notes/q-v2-slice3-5-6-blockers-and-context-brief-2026-11-23.md` states both blockers with addresses, the
+option comparison and criteria for "done", the order of work after the answers, the gate debt this branch carries, the
+list of settled decisions that must not be re-opened, a reading list in priority order, and the dead ends already paid
+for. It exists because the plan is 193 KB and the next reader should not have to rediscover which parts already hold.
+
+**One premise in the plan was wrong, so the plan was corrected rather than contradicted.** `Q-V2-SLICE3-6` said the
+existing mutation engine is "host-side by construction". Measured: `slice_verification._run_kill_check` (`:2061`)
+dispatches to `_run_inband_kill_check` (`:1992`) whenever `executor.writes_are_visible is False` (`:2101–2114`), and that
+path already builds one self-contained cell-side command (`_build_inband_kill_command`, `:1873`) that copies `src`
+(+`scripts`) into the cell's own scratch, writes the mutated bytes, proves with `_PROVENANCE_PROBE` that the overlay is
+the imported module, runs pytest and returns JUnit in-band between the `<<<FA-JUNIT-REPORT>>>` markers. Option (a) is
+therefore a **generalisation of landed code**, not a new substrate. What is actually missing is five named things, now
+in the row and in the brief §3.2: no baseline run inside the cell; `KILL_CHECK_COMMAND` (`:1781`) instead of the sealed
+argv; no `WorkspacePort` on the sealed route (`acceptance_collection.verify_sealed_acceptance`, `:406`); and
+`kill_attribution.run_node_oracle` (`:247`) writes its report to a host temp directory (`:265`), so through a managed
+executor every baseline reads as `MISSING` — a landed defect the 35-test bank cannot see, because all of it runs against
+`FakeHost` (`tests/test_ai_native_kill_attribution.py:155`); and `_junit_block` (`:832`) refuses more than one block, so
+two runs must be two commands.
+
+**Three documentation defects, all measurable, all fixed in the same change.** (1) `Q-V2-SLICE3-6` said "the operator the operator
+prioritised" — the noun survived from the sentence the clause was rewritten out of, so the row named the person twice and the
+option zero times. (2) The plan's §7 and ratified-decisions tables
+declared three columns while four `Q-V2-*`/`D-V2-*` rows carried four cells, and a renderer drops the extra cell — so
+the "Measured" evidence of every kill-target row was invisible to the reader the row exists for. Both tables now declare
+the fourth column (`Evidence (measured)`) and every row is padded to it: 10 + 8 rows. (3) CT-2.1's cell carried
+`AUTO_SELECT_EXISTING (default) | CREATE_NEW` inside one code span, and the literal pipe split the row; it is escaped.
+A cell-count scan over both tables and the new brief returns zero ragged rows.
+
+**Not claimed here:** no test ran for these changes (documentation only), and the full suite for `c4d528d` was still
+running when this entry was written — the gate recording (`gate_tracker.py record`, `ruff-format` included per E613) and
+pyrefly remain owed for the branch, as E623 already says for the 3.11-era verification.
+
+### E629 — the four cheap gates are recorded against the current head, and none of them is new (2026-11-23)
+
+**Recorded:** `notes/gates/2026-11-23-head-23d5d03` (label `2026-11-23-head-23d5d03`, CPython 3.13.16 from
+`scripts/arena-env-build.sh`) over the four gates that do not need a full suite: `ruff` 0, `ruff-format` 7, `mypy` 62
+lines / 29 unique findings, `authoring-check` 0.
+
+**Compared** against the last recorded head, `notes/gates/2026-11-22-head-n1n3`: `0 new, 0 gone` in every one of the
+four. That is the claim worth making: the code change between the two heads (`44f498c`, `Q-V2-SLICE3-3 = A`) added no
+finding to any gate, and the seven `ruff-format` files are the identical set (five of them untouched by this branch; two
+touched in `7b750f5`/`f932b13` but already flagged in the earlier `2f9924b` recording).
+
+**Not recorded, deliberately:** `pytest`. The suite was started on the 3.13 environment and the operator chose not to
+wait for it, so the recording is four gates and `gate_tracker compare` prints "pytest: not recorded — skipped, not
+counted" rather than a green. A `NEW TOTAL: 0` that silently omits a gate would be exactly the shaped-silence this
+ledger keeps rejecting, so the omission is written down here instead of being inferred from a missing line.
+
+**What remains owed for this branch, then, is one thing:** a pytest recording for the current head
+(`gate_tracker.py record ... --reuse pytest=/tmp/head-suite.log` once that run finishes). The other four gates are
+closed on `23d5d03`, which retires the non-pytest half of the debt E623 and E628 recorded.
+
+---
+
+*The entries below are the independent consolidation from branch `arena/529586c5-first-agent-dev` — a second, parallel review series over the same question, preserved verbatim and marked as such.*
+
+---
+
 ### E602 — expert opinion: what the evidence model is for, and the real question behind Q-V2-ACC-2 (2026-11-22)
 
 Full opinion: [q-v2-acc2-expert-opinion-2026-11-22.md](notes/q-v2-acc2-expert-opinion-2026-11-22.md).

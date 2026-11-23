@@ -40,8 +40,13 @@ def files() -> dict[str, str]:
     return scaffold_files(_SLUG, created=_CREATED)
 
 
-def test_scaffold_is_the_seven_fixed_files_in_write_order(files: dict[str, str]) -> None:
-    """The closed set, and ``roadmap.md`` first because its write is the collision check."""
+def test_scaffold_is_the_eight_fixed_files_in_write_order(files: dict[str, str]) -> None:
+    """The closed set, and ``roadmap.md`` first because its write is the collision check.
+
+    ``acceptance/pytest.ini`` joined the set with N1: a closure without the sealed config is not a
+    closure (``collect_acceptance_closure`` refuses it), and the planner has no instruction to
+    author a runner config -- so it is harness *shape*, like the front matter.
+    """
     assert scaffold_paths(_SLUG) == (
         _ROADMAP,
         f"{_ROOT}/ledger.md",
@@ -49,6 +54,7 @@ def test_scaffold_is_the_seven_fixed_files_in_write_order(files: dict[str, str])
         _INCREMENT,
         f"{_ROOT}/notes/README.md",
         f"{_ROOT}/reviews/README.md",
+        f"{_ROOT}/acceptance/pytest.ini",
         f"{_ROOT}/acceptance/tests/test_acceptance_placeholder.py",
     )
     assert tuple(files) == scaffold_paths(_SLUG)

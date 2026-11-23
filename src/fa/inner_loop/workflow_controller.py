@@ -35,6 +35,14 @@ from fa.execution.client import (
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, Operation, ViewPurpose
+from fa.inner_loop.acceptance_bundle import AcceptanceBundle, AcceptanceBundleError, mint_seal
+from fa.inner_loop.acceptance_collection import (
+    AcceptanceCollectionError,
+    collect_sealed_tree,
+    sealed_attempt,
+    verify_sealed_acceptance,
+)
+from fa.inner_loop.acceptance_seal_store import SealStore
 from fa.inner_loop.admission_schema import ADMISSION_RULES, ADMISSION_RULES_V2
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
@@ -71,6 +79,7 @@ from fa.inner_loop.plan_promotion import (
     retain_plan_draft,
     seed_plan_candidate,
 )
+from fa.inner_loop.plan_v2 import PlanV2Error
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.project_metadata import MetadataError, check_project_metadata
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
@@ -91,6 +100,7 @@ from fa.inner_loop.slice_verification import (
 )
 from fa.inner_loop.stage_candidate import reset_stage_candidate, stage_candidate_reader
 from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
+from fa.inner_loop.verification_attempt import ClaimEvidence, VerificationAttempt, VerificationIdentity
 from fa.inner_loop.workflow_artifacts import (
     AdmissionIOError,
     EvalReport,
@@ -228,6 +238,9 @@ class _WorkflowAdmission:
     block_exit_code: int = 2
     candidate: PlanSnapshot | None = None
     last_eval_report: EvalReport | None = None
+    #: F10: the V2 verification attempt for the most recent coder gate. ``None`` means the legacy
+    #: route ran (or the V2 route could not build one), never "the attempt was empty".
+    last_attempt: VerificationAttempt | None = None
     baseline: Literal["NOT_CAPTURED", "CAPTURED", "FAILED"] = "NOT_CAPTURED"
     admitted: bool = False
     failure: str | None = None
@@ -552,6 +565,141 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
             logger.error("verify read-only view did not become terminal (run=%s view=%s)", ctx.run_id, view.view_id)
 
 
+def _sealed_snapshot(ctx: WorkflowContext) -> PlanSnapshot | None:
+    """The admitted snapshot when its grammar is ``PLAN-V2``, else ``None``.
+
+    The branch is on the grammar, never on "are there commands": a V2 snapshot's ``ids`` are empty
+    by design (`plan_admission.py:74-76`), so a route that decided by commands would pick the
+    legacy verifier on exactly the grammar that retired it (F10).
+    """
+    if ctx.admission is None:
+        return None
+    snapshot = ctx.admission.snapshot
+    return snapshot if snapshot.format == PLAN_V2 else None
+
+
+def _record_stage_attempt(ctx: WorkflowContext, attempt: VerificationAttempt | None) -> None:
+    """Keep the stage's attempt on the admission record for the artifact writer (F10 item 4).
+
+    ``None`` is recorded as ``None`` rather than left stale: an attempt from an earlier repair
+    round describes another candidate, and a writer that read it would attach the wrong evidence.
+    """
+    if ctx.admission is not None:
+        ctx.admission.last_attempt = attempt
+
+
+def _stage_acceptance_bundle(ctx: WorkflowContext) -> tuple[AcceptanceBundle | None, tuple[str, ...]]:
+    """The seal this workspace admitted, or the closed rule that says why there is none.
+
+    A V2 stage cannot fall back to the planner's ``verify`` fence when the seal is missing: the
+    fence is exactly what the route retired (CT-3.6), so "no seal" is a blocking error, not an
+    invitation to run something else.
+    """
+    try:
+        return SealStore(ctx.workspace).current(), ()
+    except AcceptanceBundleError as error:
+        # ``seal-pointer-missing`` is the store's name for "nothing sealed yet", which on this
+        # route is the same fact the old missing-file check reported.
+        rule = "missing" if error.rule == "seal-pointer-missing" else error.rule
+        return None, (f"acceptance-seal/{rule}",)
+
+
+def _sealed_stage_verification(
+    ctx: WorkflowContext,
+    snapshot: PlanSnapshot,
+    substrate: _VerifySubstrate | None,
+    *,
+    attempt: int,
+    repair_round: int,
+) -> tuple[PlanVerification, VerificationAttempt | None]:
+    """CT-3.6 on the ``PLAN-V2`` route: the seal is the oracle, the plan's fence never runs (F10).
+
+    ``verify_plan`` is not called here at all -- not with a guard and not with an empty id set.
+    The measured defect was that a V2 snapshot's ids are empty by design, so the planner's fences
+    were the only commands and a stage that measured nothing read as a pass; branching on the
+    snapshot's *grammar* is what retires that, because the two routes have different oracles and
+    nothing in the route is allowed to decide by "are there commands".
+
+    Every refusal below is recorded as a ``PlanVerification`` error rather than raised, so the
+    existing gate (enforce/observe) keeps judging it; the difference is that the error is now the
+    reason a V2 stage blocks, instead of an empty command list reading as green.
+    """
+    bundle, errors = _stage_acceptance_bundle(ctx)
+    if substrate is None:
+        # No pinned cell means the host tree, and the host tree is what the coder just edited.
+        errors = (*errors, "verifier-substrate-required")
+    if bundle is None or substrate is None:
+        return PlanVerification(plan_command_results=(), slice_verifications=(), errors=errors), None
+
+    executor = substrate.executor
+    candidate_revision_id = getattr(executor, "view_revision_id", None)
+    if not isinstance(candidate_revision_id, str) or not candidate_revision_id:
+        return PlanVerification(
+            plan_command_results=(),
+            slice_verifications=(),
+            errors=(*errors, "verifier-revision-mismatch"),
+        ), None
+    managed = ctx.managed_execution
+    profile = None if managed is None else managed.read_only_profile
+    try:
+        verification = verify_sealed_acceptance(
+            bundle,
+            workspace=ctx.workspace,
+            candidate_revision_id=candidate_revision_id,
+            plan_bytes=snapshot.utf8_bytes,
+            # F9/CT-3.4: V2 `KILL-TARGETS` carry attribution only (`KillTarget(target_id, ct,
+            # test_id)`), so no executable mutation can be declared on this grammar and nothing
+            # is required -- not because a mutation was skipped.
+            kill_required=(),
+            deadline=ctx.deadline_mono,
+            executor=executor,
+        )
+    except (AcceptanceCollectionError, AcceptanceBundleError) as error:
+        rule = getattr(error, "rule", type(error).__name__)
+        return PlanVerification(
+            plan_command_results=(),
+            slice_verifications=(),
+            errors=(*errors, f"sealed-verification/{rule}"),
+        ), None
+    identity = VerificationIdentity(
+        plan_sha256=snapshot.ref.sha256,
+        candidate_revision_id=candidate_revision_id,
+        profile_id="managed-readonly" if profile is None else profile.profile_id,
+        substrate="managed-readonly" if managed is not None else "host",
+        run_id=ctx.run_id,
+        attempt=attempt,
+        repair_round=repair_round,
+        mode=_gate_mode(ctx.verify_gate_mode),
+        seal_sha256=bundle.seal_sha256,
+        closure_sha256=bundle.closure.digest,
+        sealed_revision_id=bundle.revision_id,
+    )
+    try:
+        sealed = sealed_attempt(
+            bundle,
+            verification,
+            identity=identity,
+            # N2/Q-V2-SLICE3-4 = A: the grammar's targets are attribution, so they are recorded
+            # as declared-and-not-executed rather than dropped. ``kill_required`` stays empty for
+            # the same reason -- nothing on this grammar is executable, which is a fact about the
+            # plan, not about the attempt.
+            kill_declared=snapshot.graph.kill_targets() if snapshot.graph is not None else (),
+        )
+    except AcceptanceCollectionError as error:
+        return PlanVerification(
+            plan_command_results=(),
+            slice_verifications=(),
+            errors=(*errors, f"sealed-attempt/{error.rule}"),
+        ), None
+    # One command, attributed to the oracle that actually ran: the harness built it from the seal.
+    plan_verification = PlanVerification(
+        plan_command_results=(verification.command,),
+        slice_verifications=(),
+        errors=(*errors, *(("sealed-attempt/" + sealed.first_reason,) if sealed.blocking else ())),
+    )
+    return plan_verification, sealed
+
+
 def _capture_nodeids_by_slice(
     plan_ids: PlanIds,
     *,
@@ -762,20 +910,106 @@ def _slice_verification_payload(result: SliceVerification) -> dict[str, object]:
     }
 
 
+def _claim_payload(claim: ClaimEvidence) -> dict[str, object]:
+    """One contract's evidence, explicitly: what ran, whether it passed, and the mutation."""
+    mutation = claim.mutation
+    return {
+        "contract_id": claim.contract_id,
+        "test_id": claim.test_id,
+        "nodeid": claim.nodeid,
+        "outcome": claim.outcome,
+        "proven": claim.proven,
+        "mutation": (
+            None
+            if mutation is None
+            else {
+                "operator": mutation.operator,
+                "target": mutation.target,
+                "verdict": mutation.verdict,
+                "detail": mutation.detail,
+            }
+        ),
+        "detail": claim.detail,
+    }
+
+
+def _sealed_attempt_payload(attempt: VerificationAttempt) -> dict[str, object]:
+    """The attempt's own facts (F10 item 4): route, identity, claims, authorship.
+
+    Deliberately additive. The legacy keys stay where they were, because the legacy route still
+    writes them and the eval contract they serve is unchanged; what was missing is the part a
+    reader needs to tell *which* candidate, *which* seal and *which* claims a verdict is about.
+    """
+    identity = attempt.identity
+    return {
+        "route": attempt.route,
+        "identity": (
+            None
+            if identity is None
+            else {
+                "plan_sha256": identity.plan_sha256,
+                "candidate_revision_id": identity.candidate_revision_id,
+                "sealed_revision_id": identity.sealed_revision_id,
+                "seal_sha256": identity.seal_sha256,
+                "closure_sha256": identity.closure_sha256,
+                "profile_id": identity.profile_id,
+                "substrate": identity.substrate,
+                "run_id": identity.run_id,
+                "attempt": identity.attempt,
+                "repair_round": identity.repair_round,
+                "mode": identity.mode,
+            }
+        ),
+        "claims": [_claim_payload(claim) for claim in attempt.claims],
+        "commands_authored_by": sorted({command.authored_by for command in attempt.commands}),
+        "attested": list(attempt.attested),
+        "pending": list(attempt.pending),
+        "contracts_total": attempt.contracts_total,
+        "attestations": [
+            {
+                "contract_id": record.contract_id,
+                "invariant_id": record.invariant_id,
+                "reason": record.reason,
+                "route": record.route,
+                "artifact": record.artifact,
+                "owner": record.owner,
+                "reviewed_at": record.reviewed_at,
+                "scope_sha256": record.scope_sha256,
+            }
+            for record in attempt.attestations
+        ],
+        "kill_required": list(attempt.kill_required),
+        # N2: declared, not executed. ``kill_required`` alone cannot tell "none declared" from
+        # "declared and never run", and those are different facts about the plan.
+        "kill_declared": [
+            {"target_id": target.target_id, "ct_id": target.ct, "test_id": target.test_id, "executed": False}
+            for target in attempt.kill_declared
+        ],
+        "attempt_blocking": attempt.blocking,
+        "first_reason": attempt.first_reason,
+    }
+
+
 def _verification_attempt_payload(
     verification: PlanVerification,
     *,
     mode: str,
     repair_round: int,
+    attempt: VerificationAttempt | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "mode": mode,
         "repair_round": repair_round,
-        "blocking": verification.blocking,
+        # The gate's own verdict plus the attempt's, so a disagreement can never be smoothed into
+        # a pass: either face of the same evidence may block.
+        "blocking": verification.blocking or (attempt is not None and attempt.blocking),
         "plan_commands": [_command_result_payload(result) for result in verification.plan_command_results],
         "slices": [_slice_verification_payload(result) for result in verification.slice_verifications],
         "errors": list(verification.errors),
     }
+    if attempt is not None:
+        payload.update(_sealed_attempt_payload(attempt))
+    return payload
 
 
 def write_verification(
@@ -787,8 +1021,14 @@ def write_verification(
     repair_round: int,
     plan_ref: PlanRef | None = None,
     deadline: float | None = None,
+    attempt: VerificationAttempt | None = None,
 ) -> None:
-    """Append typed attempt evidence with the established private locked atomic IO."""
+    """Append typed attempt evidence with the established private locked atomic IO.
+
+    ``attempt`` is the sealed route's own record (F10): when it is supplied the entry carries
+    ``route``, ``identity`` and ``claims`` beside the legacy keys, and its verdict is OR-ed into
+    ``blocking``. The legacy route passes nothing and its artifact is byte-for-byte unchanged.
+    """
     with _private_artifact_directory(path.parent) as parent:
         with _admission_lock(parent, deadline=deadline):
             try:
@@ -804,10 +1044,10 @@ def write_verification(
             ):
                 raise ValueError("existing verification.json has an incompatible run identity or schema")
             attempts = list(previous["attempts"])
-            attempt = _verification_attempt_payload(verification, mode=mode, repair_round=repair_round)
+            entry = _verification_attempt_payload(verification, mode=mode, repair_round=repair_round, attempt=attempt)
             if plan_ref is not None:
-                attempt["plan_ref"] = asdict(plan_ref)
-            attempts.append(attempt)
+                entry["plan_ref"] = asdict(plan_ref)
+            attempts.append(entry)
             _replace_private_json(parent, path.name, {"schema_version": 1, "run_id": run_id, "attempts": attempts})
 
 
@@ -1081,6 +1321,10 @@ judge's context. Truncation is always announced, never silent.
 """
 
 EVAL_VERIFICATION_MAX_CHARS: Final = 20_000
+#: One claim's free text inside the eval block. ``ClaimEvidence.detail`` is already bounded at
+#: ``DETAIL_LIMIT`` for the artifact; the block has its own budget and ten claims at 2000 characters
+#: would spend it on coder-influenced text (F6).
+EVAL_CLAIM_DETAIL_MAX_CHARS: Final = 300
 """Cap on detailed deterministic verification evidence sent to the evaluator."""
 
 EVAL_DOC_PATHS: Final = ("knowledge/adr/DIGEST.md", "knowledge/adr/README.md")
@@ -1092,18 +1336,72 @@ rather than sending the judge to a dead reference.
 """
 
 
+def _claim_evidence_lines(attempt: VerificationAttempt) -> list[str]:
+    """Render the attempt's claims: what ran, what it proved, and who authored the command (F6).
+
+    ``detail`` is assertion text and command output, i.e. bytes a coder can influence, so it is
+    labelled ``untrusted`` and cut to the block's own budget rather than the artifact's. The
+    ``proven`` word is the harness's verdict, not the coder's, and it is what the evaluator must
+    read first.
+    """
+    lines = [
+        f"- Route: {attempt.route}",
+        f"- Commands authored by: {', '.join(sorted({c.authored_by for c in attempt.commands}))}",
+    ]
+    identity = attempt.identity
+    if identity is not None:
+        lines.append(
+            "- Identity: plan={plan} seal={seal} closure={closure} candidate={candidate} sealed={sealed}".format(
+                plan=identity.plan_sha256[:12],
+                seal=(identity.seal_sha256 or "none")[:12],
+                closure=(identity.closure_sha256 or "none")[:12],
+                candidate=identity.candidate_revision_id,
+                sealed=identity.sealed_revision_id or "none",
+            )
+        )
+    for claim in attempt.claims:
+        state = "proven" if claim.proven else "NOT proven"
+        lines.append(f"- {claim.contract_id} {claim.test_id} [{state}]: {claim.outcome} at {claim.nodeid}")
+        if claim.mutation is not None:
+            lines.append(f"  mutation {claim.mutation.operator} {claim.mutation.target}: {claim.mutation.verdict}")
+        if claim.detail:
+            detail = claim.detail[:EVAL_CLAIM_DETAIL_MAX_CHARS]
+            lines.append(f"  detail (untrusted): {detail}")
+    for record in attempt.attestations:
+        # N3/P4-8: the ids alone say *that* a contract was carried; this says who carried it, on
+        # what, and when. ``owner`` and ``artifact`` are caller text, so both are cut and labelled.
+        lines.append(
+            f"- {record.contract_id} attested (untrusted): reason={record.reason} route={record.route} "
+            f"artifact={record.artifact[:EVAL_CLAIM_DETAIL_MAX_CHARS]} "
+            f"owner={(record.owner or 'none')[:EVAL_CLAIM_DETAIL_MAX_CHARS]} reviewed_at={record.reviewed_at or 'none'}"
+        )
+    for target in attempt.kill_declared:
+        lines.append(
+            f"- {target.ct} kill target {target.target_id} ({target.test_id}): declared, not executed "
+            "on this route (the V2 grammar expresses attribution only)"
+        )
+    if attempt.attested:
+        lines.append(f"- Attested elsewhere (not run here): {', '.join(attempt.attested)}")
+    if attempt.pending:
+        lines.append(f"- Pending deploy debt (does not block this attempt): {', '.join(attempt.pending)}")
+    return lines
+
+
 def _verification_evidence_lines(
     verification: PlanVerification,
     *,
     mode: str,
     repair_round: int,
     artifact_path: Path,
+    attempt: VerificationAttempt | None = None,
 ) -> tuple[str, ...]:
     """Render the current attempt's authoritative facts for the evaluator."""
     lines = [
         f"Harness verify gate (mode={mode}, repair_round={repair_round}, blocking={verification.blocking}):",
         f"Detailed artifact: {artifact_path}",
     ]
+    if attempt is not None:
+        lines.extend(_claim_evidence_lines(attempt))
     for result in verification.plan_command_results:
         lines.append(
             f"- Plan command: outcome={result.outcome.value}, exit_code={result.exit_code}, "
@@ -1194,6 +1492,9 @@ def _eval_evidence_block(
                 mode=ctx.verify_gate_mode,
                 repair_round=repair_round,
                 artifact_path=ctx.artifact_paths.verification,
+                # F10: the sealed route's claim-level evidence lives on the admission record, so
+                # the evaluator reads the same attempt the gate judged rather than a re-derivation.
+                attempt=None if ctx.admission is None else ctx.admission.last_attempt,
             )
         )
 
@@ -1311,6 +1612,33 @@ def _plan_integrity_errors(ctx: WorkflowContext) -> tuple[str, ...]:
         _mark_integrity_failure(ctx, reason)
         return (reason,)
     return ()
+
+
+def _stage_eval_report(ctx: WorkflowContext, final_text: str, *, progress: WorkflowProgress) -> EvalReport:
+    """Build, adjust, then write the eval report -- exactly one write (S12/§24 D-1).
+
+    Calling ``emit_eval_report`` here and rewriting afterwards would persist a report that
+    contradicts the routing decision for the window in between, which is why this stays one
+    function with one write.
+    """
+    report = build_eval_report(
+        final_text,
+        run_id=ctx.run_id,
+        # S12a: the plan's declared ID when one was supplied, else run_id.
+        plan_id=ctx.plan_identity(),
+        plan_version=progress.plan_version,
+        eval_independence=_load_eval_independence(ctx),
+    )
+    report, slice_warnings = validate_slice_ids(
+        report,
+        ctx.plan_text(),
+        plan_ids=ctx.admission.snapshot.ids if ctx.admission is not None else None,
+    )
+    for warning in slice_warnings:
+        logger.warning("workflow eval-report: %s (run=%s)", warning, ctx.run_id)
+        print(f"fa workflow: {warning}", file=sys.stderr)
+    _write_stage_eval_report(ctx, report)
+    return report
 
 
 def _write_stage_eval_report(ctx: WorkflowContext, report: EvalReport) -> None:
@@ -1749,20 +2077,33 @@ def _run_stage(
         # snapshot contains and where the commands run, so T1 and the comparison can
         # never disagree about which tree they are talking about.
         now: BaselineCapture | None = None
+        sealed_attempt_for_stage: VerificationAttempt | None = None
+        sealed_snapshot = _sealed_snapshot(ctx)
         try:
             with _pinned_verify_substrate(ctx) as substrate:
-                now = _capture_nodeids_by_slice(
-                    plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono, execution=substrate
-                )
-                verification = verify_plan(
-                    plan_ids,
-                    root=ctx.workspace,
-                    baseline_by_slice=baseline.nodeids_by_slice,
-                    now_by_slice=now.nodeids_by_slice,
-                    deadline=ctx.deadline_mono,
-                    executor=None if substrate is None else substrate.executor,
-                    port=None if substrate is None else substrate.port,
-                )
+                if sealed_snapshot is not None:
+                    # F10: the oracle is the seal, and `verify_plan` is not reached at all -- not
+                    # with a guard and not with the empty id set the route carries by design.
+                    verification, sealed_attempt_for_stage = _sealed_stage_verification(
+                        ctx,
+                        sealed_snapshot,
+                        substrate,
+                        attempt=progress.repair_round + 1,
+                        repair_round=progress.repair_round,
+                    )
+                else:
+                    now = _capture_nodeids_by_slice(
+                        plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono, execution=substrate
+                    )
+                    verification = verify_plan(
+                        plan_ids,
+                        root=ctx.workspace,
+                        baseline_by_slice=baseline.nodeids_by_slice,
+                        now_by_slice=now.nodeids_by_slice,
+                        deadline=ctx.deadline_mono,
+                        executor=None if substrate is None else substrate.executor,
+                        port=None if substrate is None else substrate.port,
+                    )
         except Exception as error:  # Uncertainty is a recorded ERROR, never a pass.
             logger.exception("workflow verification failed unexpectedly (run=%s)", ctx.run_id)
             verification = PlanVerification(
@@ -1770,6 +2111,7 @@ def _run_stage(
                 slice_verifications=(),
                 errors=(f"verify_plan raised {type(error).__name__}: {error}",),
             )
+        _record_stage_attempt(ctx, sealed_attempt_for_stage)
         capture_errors = tuple(
             error
             for error in (
@@ -1792,6 +2134,7 @@ def _run_stage(
                 repair_round=progress.repair_round,
                 plan_ref=ctx.admission.snapshot.ref if ctx.admission is not None else None,
                 deadline=ctx.deadline_mono,
+                attempt=sealed_attempt_for_stage,
             )
             verification_saved = True
         except Exception as error:  # Artifact failure stays explicit and blocks enforce mode.
@@ -1807,27 +2150,7 @@ def _run_stage(
             file=sys.stderr,
         )
     if role == "eval" and code == 0 and sink:
-        _eval_independence = _load_eval_independence(ctx)
-        # S12/§24 D-1: build -> adjust -> write, exactly one write. Calling
-        # emit_eval_report here and rewriting afterwards would persist a report
-        # that contradicts the routing decision for the window in between.
-        report = build_eval_report(
-            sink[-1].final_text,
-            run_id=ctx.run_id,
-            # S12a: the plan's declared ID when one was supplied, else run_id.
-            plan_id=ctx.plan_identity(),
-            plan_version=progress.plan_version,
-            eval_independence=_eval_independence,
-        )
-        report, _slice_warnings = validate_slice_ids(
-            report,
-            ctx.plan_text(),
-            plan_ids=ctx.admission.snapshot.ids if ctx.admission is not None else None,
-        )
-        for _warning in _slice_warnings:
-            logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
-            print(f"fa workflow: {_warning}", file=sys.stderr)
-        _write_stage_eval_report(ctx, report)
+        report = _stage_eval_report(ctx, sink[-1].final_text, progress=progress)
     terminal, acquisition_outcome, _refused = _post_stage_binding(
         ctx, role, code, sink, report, verification, dispatch=dispatch
     )
@@ -2286,9 +2609,7 @@ def _run_role_loop(
             _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
             return _StageLoopResult(ctx, result.exit_code, n_stages, last_role, eval_report, verification)
         if result.authored_project:
-            ctx, blocked = _bind_authored_project(
-                ctx, progress=progress, run_stage_fn=run_stage_fn
-            )
+            ctx, blocked = _bind_authored_project(ctx, progress=progress, run_stage_fn=run_stage_fn)
             if blocked is not None:
                 return _StageLoopResult(ctx, blocked, n_stages, last_role, eval_report, verification)
         if result.acquisition is not None:
@@ -2923,6 +3244,13 @@ def _authored_refusal_detail(rule: str) -> _BootstrapFailure:
         return _BootstrapFailure("bootstrap", "invalid-body", "ERROR", "INDETERMINATE", None)
     if rule == "project-route-mismatch":
         return _BootstrapFailure("selection", "project-route-mismatch", "ERROR", "INDETERMINATE", None)
+    if rule == "disposition-undeclared":
+        # The persisted record has no `disposition-*` slot: `ADMISSION_RULES_V2` extends the
+        # v1 vocabularies by name, and none of them names a grant. `needs-clarification` is
+        # the closest true statement -- the caller must decide something -- while the exact
+        # rule survives in `blocked_reason` (which is what the caller's failure code keys
+        # on). Q-V2-RULES-1 carries the choice that would let the record keep the rule.
+        return _BootstrapFailure("selection", "needs-clarification", "ERROR", "INDETERMINATE", None)
     return _BootstrapFailure("selection", "needs-clarification", "ERROR", "INDETERMINATE", None)
 
 
@@ -2943,9 +3271,21 @@ def _may_repair_authored_project(ctx: WorkflowContext, refusal: PlanRefError) ->
     """
     if refusal.rule in {"bootstrap-collision", "bootstrap-unavailable", "project-route-mismatch"}:
         return False
+    # A grant is the caller's to give (R1). A repair rewrites the plan, so its cheapest
+    # way to satisfy this refusal is to delete the request -- silently dropping a claim
+    # the planner said it could not test. The run stops and the caller either supplies the
+    # declaration (retryable) or the claim changes on a new plan revision.
+    if refusal.rule == "disposition-undeclared":
+        return False
     # "bootstrap-refused" is the repair stage's own failure; repairing a failed repair
     # with another repair is a loop, and the operator needs the failure instead.
     if refusal.rule == "bootstrap-refused":
+        return False
+    # N1: an unsealed project is usually a content problem -- an acceptance tree that does not
+    # collect, a selector outside its own closure -- and ``acceptance/`` is inside the repair
+    # scope (S1 item 4) precisely so the planner can fix it. The consistency half is not:
+    # there, admission accepted what the seal refused, and the planner has nothing to repair.
+    if refusal.rule == "bootstrap-acceptance-unsealed" and refusal.detail in _UNREPAIRABLE_SEAL_RULES:
         return False
     return ctx.authored_repairs < ctx.replans_allowed
 
@@ -2990,6 +3330,7 @@ def _bind_authored_project(
             run_stage_fn,
             diagnostics=_authored_diagnostics(refusal),
             reason=refusal.rule,
+            rule=refusal.detail,
         )
         if repair_refusal is None:
             return repaired, None
@@ -3036,26 +3377,65 @@ def _granted_dispositions(
     return declarations
 
 
-#: The allowlist a create-new *repair* stage writes through (D-V2-9.8). Narrower than
-#: the authoring stage's ``worklogs/<slug>/`` because a repair may only fix the
-#: documents admission read: the increment, and the question record when the refusal
-#: was a Q-record one. "Narrowed" is the whole point -- a repair that could rewrite
-#: the roadmap could publish a project admission never saw.
-_REPAIR_WRITABLE_SUFFIXES = ("increments/increment-01-initial-plan.md", "open-questions.md")
+#: The allowlist a create-new *repair* stage writes through (D-V2-9.8).
+#:
+#: Wider than the two documents a metadata refusal needs, and narrower than the
+#: authoring root, because a repair must be able to fix every refusal that *is*
+#: repairable without being able to publish a project nobody re-read. The accepted
+#: families are: the pair admission parses, the question record, and the acceptance
+#: tree. The acceptance tree is here because D-V2-10 makes evidence the common
+#: refusal and the fix for it is a test -- admitting only the plan would tell the
+#: model to discharge a contract in a file it may not write. The roadmap is here
+#: because ``plan-format-marker-roadmap`` is repairable and its only fix lives there;
+#: leaving it out made that repair a guaranteed failure that cost a planner call and
+#: ended in the worse code ``bootstrap-refused``. The ledger is not here: nothing
+#: admission refuses can be fixed by editing it.
+#:
+#: Widening this cannot weaken the gate -- the second revision is re-admitted whole,
+#: including the metadata cross-check -- it only stops a dead-end repair.
+_REPAIR_WRITABLE_SUFFIXES = (
+    "roadmap.md",
+    "increments/increment-01-initial-plan.md",
+    "open-questions.md",
+    # A subtree, spelled without a trailing slash: the dispatch validates its entries as
+    # path components, and the writer's matcher is component-wise, so a bare parent admits
+    # the whole tree without admitting a sibling whose name merely starts with "acceptance".
+    "acceptance",
+)
+
+
+#: A parser rule as it may appear in a prompt: lowercase kebab, bounded. The rules embed
+#: document identifiers (``invariant-1-text``), so the value is model-influenced; the
+#: prompt is the last place it can do harm.
+_REPAIR_RULE_RE = re.compile(r"[a-z][a-z0-9-]{0,63}")
+
+
+def _bounded_rule(rule: str | None) -> str | None:
+    """The rule if it is shaped like one of ours, else ``None``. Never raises."""
+    if rule is None or _REPAIR_RULE_RE.fullmatch(rule) is None:
+        return None
+    return rule
 
 
 def _repair_allowlist(root: str) -> tuple[str, ...]:
-    """The exact files a create-new repair may write, spelled as prefixes.
+    """The exact paths a create-new repair may write, spelled as prefixes.
 
     Prefixes rather than paths because that is the shape the limited writer consumes
-    (``is_path_within_allowlist``); the two entries are full file names, so the
-    prefix admits exactly one file each and no sibling.
+    (``is_path_in_write_scope``: an exact entry, or a subtree). Three entries are full file
+    names, so each admits exactly one file and no sibling; ``acceptance`` is a subtree,
+    which is the only shape that can admit a test the planner has not written yet.
     """
     return tuple(f"{root}/{suffix}" for suffix in _REPAIR_WRITABLE_SUFFIXES)
 
 
-def _repair_stage_task(base_task: str | None, *, slug: str, diagnostics: tuple[_AdmissionDiagnostic, ...]) -> str:
-    """The task for a create-new repair: fix these two files, change nothing else.
+def _repair_stage_task(
+    base_task: str | None,
+    *,
+    slug: str,
+    diagnostics: tuple[_AdmissionDiagnostic, ...],
+    rule: str | None = None,
+) -> str:
+    """The task for a create-new repair: fix the refused documents, change nothing else.
 
     A repair is not a re-authoring. The project already published one revision with
     a scaffold and the planner's documents; the refusal was about the *content of the
@@ -3065,15 +3445,27 @@ def _repair_stage_task(base_task: str | None, *, slug: str, diagnostics: tuple[_
     """
     root = f"worklogs/{slug}"
     payload = json.dumps([asdict(item) for item in diagnostics], sort_keys=True)
+    # Built from the allowlist rather than spelled out: the previous text promised "exactly
+    # two files" in prose, which is how a prompt and a writer drift apart when the allowlist
+    # moves. The rule is bounded HERE, at the boundary where a code becomes prose: it is the
+    # only place that turns it into text, so there is one guard rather than a contract each
+    # caller has to remember.
+    writable = "\n".join(f"- `{root}/{suffix}`" for suffix in _REPAIR_WRITABLE_SUFFIXES)
+    rule = _bounded_rule(rule)
+    rule_line = f"Admission's rule: `{rule}`." if rule else "Admission gave no rule name."
     return (
         f"{base_task or ''}\n"
         f"This project's documents were refused by admission. The revision is already "
         f"published; fix it in place -- do not start over and do not re-plan.\n\n"
-        f"You may write exactly two files:\n"
-        f"- `{root}/increments/increment-01-initial-plan.md`\n"
-        f"- `{root}/open-questions.md`\n\n"
-        f"Anything else -- the roadmap, the ledger, the acceptance tests -- is fixed and "
-        f"a write to it is refused.\n\n"
+        f"{rule_line}\n\n"
+        f"You may write exactly these paths:\n{writable}\n\n"
+        f"Anything else -- the ledger, `.fa/`, any path outside `{root}/` -- is fixed "
+        f"and a write to it is refused. The identity fields in the front matter are checked "
+        f"again on the next admission, so changing them refuses the repair.\n\n"
+        f"There are two legal ways out of an evidence refusal: give the contract a test in "
+        f"`{root}/acceptance/tests/` and name it in `ACCEPTANCE`, or declare why the claim "
+        f"cannot be tested (`DISPOSITION-REASON`) and leave the grant to the caller. "
+        f"Deleting the contract or the invariant to satisfy admission is not a repair.\n\n"
         f"The refusal, sanitized: {payload}"
     )
 
@@ -3085,6 +3477,7 @@ def _run_create_new_repair(
     *,
     diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
     reason: str = "",
+    rule: str | None = None,
 ) -> tuple[WorkflowContext, PlanRefError | None]:
     """Repair a refused create-new project with a second authoring stage (D-V2-9.8).
 
@@ -3096,7 +3489,10 @@ def _run_create_new_repair(
     other documents would be unrestorable because they never had a draft.
 
     So the repair is a second stage of the *same* kind over the published revision, with
-    the allowlist narrowed to the pair admission read. ``plan_ref`` stays ``None``: the
+    the allowlist narrowed to the documents a repairable refusal can be fixed in -- the
+    pair admission parses, the roadmap, the question record and the acceptance tree
+    (``_REPAIR_WRITABLE_SUFFIXES``), which is narrower than the authoring root and still
+    admits every legal fix. ``plan_ref`` stays ``None``: the
     stage's business is to change the very bytes a plan-ref would freeze (D-V2-9.5), and
     the allowlist -- not `_validate_plan_boundary`, which protects coders and verifiers --
     is what bounds it.
@@ -3112,7 +3508,7 @@ def _run_create_new_repair(
         return ctx, PlanRefError("project-route-mismatch")
     root = f"worklogs/{slug}"
     role_tasks = dict(ctx.per_role_task)
-    role_tasks["planner"] = _repair_stage_task(ctx.base_task, slug=slug, diagnostics=diagnostics)
+    role_tasks["planner"] = _repair_stage_task(ctx.base_task, slug=slug, diagnostics=diagnostics, rule=rule)
     repair_ctx = replace(ctx, per_role_task=role_tasks)
     dispatch = PlannerDispatch(
         PlannerDispatchKind.CREATE_NEW_PROJECT,
@@ -3186,7 +3582,7 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
         check_project_metadata({roadmap_path: roadmap.content, increment_path: increment.content})
     except MetadataError as error:
         logger.warning("project metadata refused [%s] (run=%s)", error.rule, ctx.run_id)
-        return ctx, PlanRefError("bootstrap-invalid-metadata")
+        return ctx, PlanRefError("bootstrap-invalid-metadata", detail=error.rule)
     snapshot = snapshot_from_bytes(
         increment_path,
         increment.content.encode("utf-8"),
@@ -3199,13 +3595,17 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
         # repair round already knows how to name, with the parser's own rule logged:
         # admission's vocabulary is closed, the operator's is not.
         logger.warning("authored plan refused [%s] (run=%s)", snapshot.format_error, ctx.run_id)
-        return ctx, PlanRefError("bootstrap-invalid-metadata")
-    if snapshot.graph is not None and granted:
-        # R1: the plan only *requests* a disposition; the caller's declaration is the
-        # sole source of owner and reference. Binding here -- not at seal -- keeps the
-        # refusal pre-coder, and `contract_evidence` grades an unbound invariant as a
-        # request rather than an attestation, so skipping this would let a plan reach
-        # the coder ATTESTED on a grant nobody gave.
+        # The rule travels with the refusal even though the *code* stays the metadata one:
+        # the repair prompt is the only place that can act on it, and "invalid metadata"
+        # alone tells a planner nothing it could not have guessed (P4-3).
+        return ctx, PlanRefError("bootstrap-invalid-metadata", detail=snapshot.format_error)
+    if snapshot.graph is not None:
+        # R1/D-V2-10: the plan only *requests* a disposition; the caller's declaration is
+        # the sole source of owner and reference. Binding therefore always runs -- the old
+        # `and granted` skipped it precisely when the caller sent nothing, which is the one
+        # case where an unbound request has no other gate: the plan was admitted, sealed and
+        # handed to a coder with a waiver nobody gave. `bind_dispositions` is a no-op for a
+        # graph with no requests, so the always-bound form costs nothing on that route.
         try:
             snapshot = replace(
                 snapshot,
@@ -3239,7 +3639,117 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
         )
     except (OSError, ValueError) as error:
         _admission_storage_failure(bound, error)
+    # N1/D-V2-5: mint and store the seal now, so the coder stage has an oracle and the gate can
+    # refuse a missing one instead of rewriting the plan to make absence legal.
+    refused = _seal_published_project(bound, snapshot)
+    if refused is not None:
+        logger.warning("published project not sealed [%s/%s] (run=%s)", refused.rule, refused.detail, ctx.run_id)
+        # The *bound* context is not handed back (every other refusal in this function returns
+        # ``ctx``): an unsealed project has no oracle, so the value a caller could dispatch a
+        # coder from must not carry an admission.
+        return ctx, refused
     return bound, None
+
+
+#: Seal refusals that a second authoring stage cannot fix.
+#:
+#: The family is one rule (``bootstrap-acceptance-unsealed``) because the caller sees one fact
+#: -- "the project was not sealed" -- while the *detail* is the closed rule of the producer
+#: that refused. These details are the consistency half: admission accepted the graph and the
+#: seal refused it, which is a defect in this build, not in the planner's prose. Spending the
+#: repair budget on our own inconsistency would burn a model call and end in a worse code.
+_UNREPAIRABLE_SEAL_RULES: frozenset[str] = frozenset(
+    {
+        "plan-graph-missing",
+        "seal-uncovered-contracts",
+        "seal-attestation-unowned",
+        "seal-attestation-artifact-missing",
+        "seal-plan-graph-mismatch",
+        "seal-totality-mismatch",
+        "seal-conflict",
+        "seal-record-mismatch",
+        "seal-record-missing",
+        "seal-pointer-invalid",
+        "seal-pointer-unreadable",
+        "seal-store-unwritable",
+        "seal-store-unreadable",
+    }
+)
+
+
+def _seal_published_project(ctx: WorkflowContext, snapshot: PlanSnapshot) -> PlanRefError | None:
+    """Mint the acceptance seal for the revision admission just read, or refuse (N1, D-V2-5).
+
+    Before this function the route had no seal at all: ``mint_seal`` was reachable only from
+    the defect-correction route and from tests, so every V2 stage refused
+    ``acceptance-seal/missing`` and CT-3.6 -- and every rule inside it -- was a guard nobody
+    tripped. The two halves of that gap are visible here: the collection report the mint needs
+    could only be produced by a collector that needed a minted seal (:func:`collect_sealed_tree`
+    breaks that cycle), and nothing ran the mint after admission succeeded.
+
+    Order is load-bearing. The seal is minted *after* every admission refusal has already
+    returned, so a project that admission would reject never gets a seal that outlives the
+    refusal, and it is minted *before* the coder is dispatched, so the coder's first stage can
+    rely on the pointer existing (D-V2-5 §3).
+
+    ``candidate_revision_id`` is the sealed revision here, not a candidate: the acceptance
+    closure lives in the revision the authoring stage published, and C2 says the revision pin
+    is consulted once -- at admission -- while standing custody is content-based
+    (``verify_plan`` + ``verify_sealed_root``) from then on.
+    """
+    managed = ctx.managed_execution
+    slug = ctx.project_hint
+    graph = snapshot.graph
+    if managed is None or slug is None:  # pragma: no cover - the route proved both before the stage
+        return PlanRefError("bootstrap-unavailable")
+    if graph is None:
+        # A PLAN-V2 snapshot with no graph cannot describe a contract, let alone seal one.
+        return PlanRefError("bootstrap-acceptance-unsealed", detail="plan-graph-missing")
+    sealed_root = f"worklogs/{slug}/acceptance"
+    acceptance_root = ctx.workspace / sealed_root
+    with _pinned_verify_substrate(ctx) as substrate:
+        if substrate is None:
+            # No pinned cell means the collection would run on the host tree, which is what the
+            # coder just edited; that is an authority fact, so it is retryable and pre-seal.
+            return PlanRefError("bootstrap-unavailable")
+        try:
+            collection = collect_sealed_tree(
+                acceptance_root,
+                sealed_root=sealed_root,
+                workspace=ctx.workspace,
+                deadline=ctx.deadline_mono,
+                executor=substrate.executor,
+            )
+        except AcceptanceCollectionError as error:
+            return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+        except AcceptanceBundleError as error:
+            # ``sealed-root-invalid`` stays the seal's rule on the way in, by design.
+            return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+    try:
+        bundle = mint_seal(
+            graph=graph,
+            plan_bytes=snapshot.utf8_bytes,
+            revision_id=managed.current_revision_id,
+            sealed_root=sealed_root,
+            acceptance_root=acceptance_root,
+            collected=collection.nodeids,
+        )
+    except AcceptanceBundleError as error:
+        return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+    except PlanV2Error as error:
+        # ``mint_seal`` resolves the plan's selectors against the collection, so a selector
+        # nothing collected surfaces here as the parser's own rule. It is content, and the
+        # repair prompt is the only place that can act on it (P4-3).
+        return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+    try:
+        SealStore(ctx.workspace).store(bundle)
+    except AcceptanceBundleError as error:
+        # A second mint with a different digest means the pointer already names another seal.
+        # On the create route that is a conflict, not a supersede: D-V2-9 allows one revision,
+        # so nothing here may swing the pointer over a record a reviewer is reading.
+        rule = "seal-conflict" if error.rule == "seal-supersede-required" else error.rule
+        return PlanRefError("bootstrap-acceptance-unsealed", detail=rule)
+    return None
 
 
 _CLARIFICATION_V2_RULES: dict[str, str] = {
@@ -4790,6 +5300,7 @@ __all__ = [
     "DEADLINE_REASON_MARKER",
     "DEFAULT_MAX_REPAIRS",
     "DEFAULT_MAX_REPLANS",
+    "EVAL_CLAIM_DETAIL_MAX_CHARS",
     "EVAL_DIFF_MAX_CHARS",
     "EVAL_DOC_PATHS",
     "EVAL_VERDICT_TO_TERMINAL_STATUS",

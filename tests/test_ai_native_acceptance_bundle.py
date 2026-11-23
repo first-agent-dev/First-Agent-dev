@@ -15,7 +15,6 @@ import pytest
 from fa.inner_loop.acceptance_bundle import (
     MAX_ATTESTED,
     SCHEMA_VERSION,
-    SEAL_FILENAME,
     AcceptanceBundle,
     AcceptanceBundleError,
     PinnedIdentity,
@@ -30,16 +29,22 @@ from fa.inner_loop.acceptance_bundle import (
     write_seal,
 )
 from fa.inner_loop.acceptance_closure import collect_acceptance_closure
+from fa.inner_loop.acceptance_collection import AcceptanceCollectionError, verify_sealed_acceptance
 from fa.inner_loop.plan_v2 import EvidenceMode, PlanV2Error, contract_evidence
-from tests.test_ai_native_plan_v2 import granted_graph, plan_document, plan_graph
+from fa.inner_loop.slice_verification import JUNIT_BLOCK_END, JUNIT_BLOCK_START, CommandOutcome, CommandResult
+from tests.test_ai_native_plan_v2 import GRANT_PROBE_FILES, granted_graph, plan_document, plan_graph
+from tests.test_slice_verification_runner import _inband_executor
 
+#: A file name the seal writer is given explicitly; custody is the store's business now.
+_SEAL_FILE = "acceptance.seal.json"
 _SEALED_ROOT = "worklogs/demo/acceptance"
 _TEST_PATH = f"{_SEALED_ROOT}/tests/test_publish.py"
 _NODEID = f"{_TEST_PATH}::test_publish"
 _REVISION = "rev-" + "0" * 32
 _PLAN = plan_document()
 _PLAN_BYTES = _PLAN.encode("utf-8")
-_COLLECTED = {_TEST_PATH: [_NODEID]}
+_NODEID_SECOND = f"{_TEST_PATH}::test_publish2"
+_COLLECTED = {_TEST_PATH: [_NODEID, _NODEID_SECOND]}
 _SLICE_WITH_FOREIGN_SELECTOR = """## SLICE1: sealed acceptance
 STEPS: prescriptive
 CONTRACTS:
@@ -60,6 +65,10 @@ _TEST = """from support.helper import publish
 
 def test_publish():
     assert publish() == "published"
+
+
+def test_publish2():
+    assert publish() == "published"
 """
 _HELPER = """def publish():
     return "published"
@@ -70,10 +79,15 @@ def _sealed_tree(tmp_path: Path) -> Path:
     root = tmp_path / "worklogs" / "demo" / "acceptance"
     (root / "tests").mkdir(parents=True)
     (root / "support").mkdir()
+    (root / "probes").mkdir()
     (root / "pytest.ini").write_text(_INI, encoding="utf-8")
     (root / "conftest.py").write_text("import pytest\n", encoding="utf-8")
     (root / "support" / "helper.py").write_text(_HELPER, encoding="utf-8")
     (root / "tests" / "test_publish.py").write_text(_TEST, encoding="utf-8")
+    # D-V2-12: an attested HOST_PROBE names an artifact the seal must find in the
+    # closure, so the fixture tree carries every probe its grants refer to.
+    for probe in GRANT_PROBE_FILES:
+        (root / "probes" / Path(probe).name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     return root
 
 
@@ -130,6 +144,9 @@ def test_mints_a_seal_bound_to_plan_revision_closure_and_nodeids(tmp_path: Path)
     assert bundle.closure.digest == collect_acceptance_closure(root).digest
     assert [entry.path for entry in bundle.closure.files] == [
         "conftest.py",
+        "probes/deployment_identity.sh",
+        "probes/host_readiness.sh",
+        "probes/power_loss.sh",
         "pytest.ini",
         "support/helper.py",
         "tests/test_publish.py",
@@ -283,7 +300,7 @@ def test_an_unadmitted_plan_never_reaches_the_seal() -> None:
 
 def test_a_seal_is_written_once_with_fixed_mode(tmp_path: Path) -> None:
     bundle = _mint(_sealed_tree(tmp_path))
-    path = tmp_path / "worklogs" / "demo" / SEAL_FILENAME
+    path = tmp_path / "worklogs" / "demo" / _SEAL_FILE
 
     assert write_seal(bundle, path) == path
     assert path.read_bytes() == seal_bytes(bundle)
@@ -294,7 +311,7 @@ def test_a_seal_is_written_once_with_fixed_mode(tmp_path: Path) -> None:
 def test_an_existing_seal_is_never_replaced(tmp_path: Path) -> None:
     root = _sealed_tree(tmp_path)
     bundle = _mint(root)
-    path = tmp_path / "worklogs" / "demo" / SEAL_FILENAME
+    path = tmp_path / "worklogs" / "demo" / _SEAL_FILE
     write_seal(bundle, path)
 
     assert _rule(lambda: write_seal(_mint(root, supersedes_sha256=bundle.seal_sha256), path)) == "seal-exists"
@@ -311,7 +328,7 @@ def test_a_seal_path_must_be_a_path(tmp_path: Path, path: Any) -> None:
 def test_a_missing_parent_directory_is_refused(tmp_path: Path) -> None:
     bundle = _mint(_sealed_tree(tmp_path))
 
-    assert _rule(lambda: write_seal(bundle, tmp_path / "absent" / SEAL_FILENAME)) == "seal-path-invalid"
+    assert _rule(lambda: write_seal(bundle, tmp_path / "absent" / _SEAL_FILE)) == "seal-path-invalid"
 
 
 # -- refusal: loading a hostile record --------------------------------------
@@ -326,13 +343,135 @@ def test_an_oversized_record_is_refused() -> None:
     assert _rule(lambda: load_seal(b" " * (1024**2 + 1))) == "seal-malformed"
 
 
-@pytest.mark.parametrize("overrides", [{"schema_version": 2}, {"kind": "BUNDLE"}, {}])
+# A literal version would rot the moment the schema moves: S2 moved this from 1 to
+# 2, and the old literal ``2`` then read as *current*. The neighbours of the current
+# version are what "unknown" means, whichever version is current.
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"schema_version": SCHEMA_VERSION + 1},
+        {"schema_version": SCHEMA_VERSION - 1},
+        {"kind": "BUNDLE"},
+        {},
+    ],
+)
 def test_an_unknown_schema_is_refused(tmp_path: Path, overrides: dict[str, Any]) -> None:
     bundle = _mint(_sealed_tree(tmp_path))
 
     raw = b"{}" if not overrides else _hostile(bundle, **overrides)
 
     assert _rule(lambda: load_seal(raw)) == "seal-schema-unknown"
+
+
+def test_every_scaffolded_project_artifact_is_inside_a_protected_path() -> None:
+    """Layout and enforcement are two modules; this binds them (CT-3.3/INV-07).
+
+    ``project_scaffold`` owns the layout and lives in the inner loop; the refusal is
+    the authority's (``execution.workspace.sealed_project_paths``) and the execution
+    layer does not import upward. So the two are bound here instead of by a shared
+    constant: every path the harness scaffolds -- and therefore every artifact a later
+    admitted plan speaks for -- falls inside the directory a coder view cannot write,
+    including the acceptance closure the seal digests.
+    """
+    from fa.execution.workspace import sealed_project_paths
+    from fa.inner_loop.project_scaffold import scaffold_paths
+
+    paths = scaffold_paths("demo")
+    (protected,) = sealed_project_paths(paths[0])
+
+    assert protected == "worklogs/demo"
+    for path in paths:
+        assert path.startswith(f"{protected}/"), path
+    assert any(path.startswith(f"{protected}/acceptance/") for path in paths)
+    assert any("/increments/" in path for path in paths)
+
+
+# -- S2: seal totality, and the record of who carried the claim (P4-8/D-V2-12) --
+
+
+def test_the_seal_carries_the_attestation_record(tmp_path: Path) -> None:
+    """The record a reader could never reconstruct: who, on what, when, over which text."""
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert bundle.contracts_total == 2
+    assert bundle.attested == ("CT-1.2",)
+    assert bundle.pending == ("CT-1.2",), "a host claim is a debt, not a decision"
+    (record,) = bundle.attestations
+    assert (record.contract_id, record.invariant_id, record.reason, record.route) == (
+        "CT-1.2",
+        "INV-2",
+        "HOST_READINESS",
+        "HOST_PROBE",
+    )
+    assert record.owner == "W4" and record.reviewed_at == "2026-11-19"
+    assert record.artifact.startswith("probe:") and record.artifact.endswith("@host:w4-ubuntu")
+    # Inside the digest, not beside it: an edited record breaks the seal.
+    record_bytes = json.loads(seal_bytes(bundle))
+    assert record_bytes["attestations"][0]["scope_sha256"] == record.scope_sha256
+    assert record_bytes["contracts_total"] == 2
+
+
+def test_a_seal_is_refused_while_a_contract_has_no_evidence(tmp_path: Path) -> None:
+    """The hole S2 closes: a plan with an uncovered contract could be sealed.
+
+    ``mint_seal`` used to record ``attested`` and nothing else, so a contract that
+    was neither selected nor attested simply vanished from the record while the seal
+    still read as the oracle for the whole plan.
+    """
+    assert _rule(lambda: _mint(_sealed_tree(tmp_path), graph=plan_graph())) == "seal-uncovered-contracts"
+
+
+def test_a_probe_the_closure_does_not_hold_is_refused(tmp_path: Path) -> None:
+    """A promise to run something that does not exist is not evidence.
+
+    Admission cannot see the tree; the seal can, so this is where the artifact is
+    checked. The rule names the artifact, not the input.
+    """
+    root = _sealed_tree(tmp_path)
+    (root / "probes" / "host_readiness.sh").unlink()
+
+    assert _rule(lambda: _mint(root)) == "seal-attestation-artifact-missing"
+
+
+def test_a_graph_that_does_not_describe_the_plan_bytes_is_refused(tmp_path: Path) -> None:
+    """``plan_sha256`` must name a plan the graph actually describes (D-V2-12)."""
+    other = plan_document(
+        slice_body="## SLICE1: other\nSTEPS: outcome\nCONTRACTS:\nACCEPTANCE:\nKILL-TARGETS:\nSTEP-EXIT-CHECKS:\n"
+    )
+
+    assert _rule(lambda: _mint(_sealed_tree(tmp_path), plan_bytes=other.encode("utf-8"))) == (
+        "seal-plan-graph-mismatch"
+    )
+
+
+def test_a_block_that_does_not_describe_the_attested_set_is_refused(tmp_path: Path) -> None:
+    """``load_seal`` re-proves the record's arithmetic instead of trusting the digest."""
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert _rule(lambda: load_seal(_hostile(bundle, attestations=[]))) == "seal-attestation-mismatch"
+
+
+def test_a_pending_list_that_is_not_the_host_subset_is_refused(tmp_path: Path) -> None:
+    """``pending`` is derived, so a record that drops it is describing another plan."""
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert _rule(lambda: load_seal(_hostile(bundle, pending=[]))) == "seal-attestation-mismatch"
+
+
+def test_a_route_that_contradicts_its_reason_is_refused(tmp_path: Path) -> None:
+    """The route is a function of the reason; a record cannot claim both halves."""
+    bundle = _mint(_sealed_tree(tmp_path))
+    record = json.loads(seal_bytes(bundle))["attestations"][0]
+    record["route"] = "APPROVAL"
+
+    assert _rule(lambda: load_seal(_hostile(bundle, attestations=[record]))) == "seal-attestation-route-invalid"
+
+
+def test_the_totals_identity_is_re_checked_on_load(tmp_path: Path) -> None:
+    """Covered + attested == total is the seal's whole claim; it is re-proved on read."""
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert _rule(lambda: load_seal(_hostile(bundle, contracts_total=3))) == "seal-totality-mismatch"
 
 
 def test_an_edited_field_breaks_the_seal_digest(tmp_path: Path) -> None:
@@ -462,22 +601,36 @@ def test_the_seal_is_bound_to_one_immutable_revision(tmp_path: Path) -> None:
 #: The default plan with INV-2's disposition removed: the same two contracts, no
 #: attestation anywhere, so CT-1.2 is merely *uncovered* rather than attested.
 _NO_DISPOSITION_INVARIANTS = """### INV-1
-KIND: HARD
 TEXT: The writer never publishes without a sealed acceptance revision.
 EVIDENCE: TEST_REQUIRED
 
 ### INV-2
-KIND: SOFT
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: TEST_REQUIRED
 """
-_NO_DISPOSITION_PLAN = plan_document(invariants=_NO_DISPOSITION_INVARIANTS)
+#: Both contracts tested, no request anywhere: the plan that legitimately produces a
+#: seal with an empty attestation. Before D-V2-10 the second contract could go
+#: uncovered instead, which is the shape admission now refuses.
+_NO_DISPOSITION_SLICE = """## SLICE1: sealed acceptance
+STEPS: prescriptive
+CONTRACTS:
+  CT-1.1 [FUNCTIONAL] INV: INV-1: publication requires a sealed selection
+  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host
+ACCEPTANCE:
+  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: worklogs/demo/acceptance/tests/test_publish.py::test_publish
+  TEST-ID: TEST-1.2 | CT: CT-1.2 | SELECTOR: worklogs/demo/acceptance/tests/test_publish.py::test_publish2
+KILL-TARGETS:
+STEP-EXIT-CHECKS:
+  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1
+- [ ] STEP1: publish through the sealed authority. EXIT-CHECK: CHECK-1
+"""
+_NO_DISPOSITION_PLAN = plan_document(invariants=_NO_DISPOSITION_INVARIANTS, slice_body=_NO_DISPOSITION_SLICE)
 
 
 def _executable_only(root: Path) -> AcceptanceBundle:
     return _mint(
         root,
-        graph=plan_graph(invariants=_NO_DISPOSITION_INVARIANTS),
+        graph=plan_graph(invariants=_NO_DISPOSITION_INVARIANTS, slice_body=_NO_DISPOSITION_SLICE),
         plan_bytes=_NO_DISPOSITION_PLAN.encode("utf-8"),
     )
 
@@ -491,9 +644,16 @@ def test_the_seal_names_the_contracts_that_only_a_disposition_covers(tmp_path: P
 
 
 def test_a_plan_that_disposes_of_nothing_seals_an_empty_attestation(tmp_path: Path) -> None:
+    """No request anywhere: every contract is executable, so nothing is attested.
+
+    D-V2-10 made the neighbouring shape -- a contract with neither a selector nor a
+    request -- unreachable at admission, so an empty ``attested`` list now means
+    "everything here is tested", not "one contract slipped through".
+    """
     bundle = _executable_only(_sealed_tree(tmp_path))
 
-    assert contract_evidence(plan_graph(invariants=_NO_DISPOSITION_INVARIANTS))["CT-1.2"] is EvidenceMode.UNCOVERED
+    graded = contract_evidence(plan_graph(invariants=_NO_DISPOSITION_INVARIANTS, slice_body=_NO_DISPOSITION_SLICE))
+    assert graded == {"CT-1.1": EvidenceMode.EXECUTABLE, "CT-1.2": EvidenceMode.EXECUTABLE}
     assert bundle.attested == ()
     assert json.loads(seal_bytes(bundle))["attested"] == []
     assert load_seal(seal_bytes(bundle)).attested == ()
@@ -545,3 +705,196 @@ def test_an_out_of_band_attestation_never_reaches_the_bytes(tmp_path: Path, atte
     bundle = _mint(_sealed_tree(tmp_path))
 
     assert _rule(lambda: seal_bytes(replace(bundle, attested=attested))) == "seal-malformed"
+
+
+# ── CT-3.6: the verifier runs the sealed closure, not the plan's fence ────────
+
+
+def _collection_rule(callable_: Callable[[], object]) -> str:
+    with pytest.raises(AcceptanceCollectionError) as refused:
+        callable_()
+    return refused.value.rule
+
+
+def _candidate() -> str:
+    """A revision that is not the sealed one: the code moved, the oracle did not."""
+    return "rev-" + "1" * 32
+
+
+def test_v2_verifier_uses_sealed_closure_with_current_candidate_revision(tmp_path: Path) -> None:
+    """CT-3.6 — the oracle is the sealed argv, and both revisions are recorded.
+
+    The run is real: the in-band substrate executes the harness-built command in a
+    private ``$TMPDIR``, so the nodeids can only appear if pytest collected the
+    sealed bytes under the sealed ``pytest.ini`` and the report travelled back
+    inside the receipt. Nothing in the plan supplies a command here.
+    """
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+    candidate = _candidate()
+    prepared: dict[str, Any] = {}
+
+    verification = verify_sealed_acceptance(
+        bundle,
+        workspace=tmp_path,
+        candidate_revision_id=candidate,
+        plan_bytes=_PLAN_BYTES,
+        executor=_inband_executor(writes_visible=False, prepared=prepared, revision=candidate),
+    )
+
+    # Two identities, two claims: the closure stayed at the sealed revision while
+    # the code came from the caller's explicit current candidate.
+    assert verification.sealed_revision_id == _REVISION
+    assert verification.candidate_revision_id == candidate
+    assert verification.sealed_root == _SEALED_ROOT
+    assert verification.run.closure_sha256 == bundle.closure.digest
+
+    command = prepared["command"]
+    assert f"-c {_SEALED_ROOT}/pytest.ini" in command
+    assert f"--rootdir {_SEALED_ROOT}" in command
+    assert "-p fa.inner_loop.junit_nodeid_plugin" in command
+    # The report went to the cell's scratch, never to a path this controller chose.
+    assert '--junitxml="$__fa_rep"' in command
+    assert "${TMPDIR:-/tmp}" in command
+    # ... and the controller never names that path: only the cell's own env does.
+    assert str(prepared["tmpdir"]) not in command
+
+    # The sealed selectors are what executed, re-keyed to workspace-relative form.
+    assert verification.run.outcomes == {_NODEID: True, _NODEID_SECOND: True}
+    assert verification.run.nodeids == {_TEST_PATH: (_NODEID, _NODEID_SECOND)}
+
+
+def test_the_sealed_verifier_refuses_before_it_runs_a_cell_command(tmp_path: Path) -> None:
+    """CT-3.6 — every refusal that needs no execution happens before the command."""
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+    prepared: dict[str, Any] = {}
+    managed = _inband_executor(writes_visible=False, prepared=prepared)
+    common: dict[str, Any] = {"workspace": tmp_path, "plan_bytes": _PLAN_BYTES, "candidate_revision_id": _candidate()}
+
+    # No substrate at all: there is no host fallback to fall back to.
+    assert _collection_rule(lambda: verify_sealed_acceptance(bundle, executor=None, **common)) == (
+        "verifier-substrate-required"
+    )
+    # A substrate whose writes this controller can see is the host, not the cell.
+    assert (
+        _collection_rule(
+            lambda: verify_sealed_acceptance(bundle, executor=_inband_executor(writes_visible=True), **common)
+        )
+        == "verifier-substrate-required"
+    )
+    # The candidate revision is recorded, so it must at least be an identity.
+    assert (
+        _collection_rule(
+            lambda: verify_sealed_acceptance(
+                bundle, executor=managed, workspace=tmp_path, plan_bytes=_PLAN_BYTES, candidate_revision_id=""
+            )
+        )
+        == "candidate-revision-invalid"
+    )
+    # The seal is only valid for the plan it was minted from, on this route too.
+    assert (
+        _rule(
+            lambda: verify_sealed_acceptance(
+                bundle, executor=managed, workspace=tmp_path, candidate_revision_id=_candidate(), plan_bytes=b"other"
+            )
+        )
+        == "plan-digest-mismatch"
+    )
+    # A closure that overlaps a code root would let an edit become part of the oracle.
+    overlapped = replace(bundle, sealed_root="tests/acceptance")
+    assert _collection_rule(lambda: verify_sealed_acceptance(overlapped, executor=managed, **common)) == (
+        "sealed-root-code-overlap"
+    )
+
+    assert prepared == {}, "a refused call must not have reached a cell"
+
+
+def test_a_declared_kill_target_is_refused_rather_than_proved_without_its_mutation(tmp_path: Path) -> None:
+    """F9 — the verifier cannot prove a contract whose mutation it never ran.
+
+    `claim` proof is "the sealed test passed *and* its mutation died". This route has no mutation
+    runner yet, so a plan that declares `KILL-TARGETS` must be refused before the cell runs; the
+    alternative is an attempt that reads as proven while the kill check never happened.
+    """
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+    prepared: dict[str, Any] = {}
+
+    assert (
+        _collection_rule(
+            lambda: verify_sealed_acceptance(
+                bundle,
+                workspace=tmp_path,
+                candidate_revision_id=_candidate(),
+                plan_bytes=_PLAN_BYTES,
+                kill_required=("CT-1.1",),
+                executor=_inband_executor(writes_visible=False, prepared=prepared, revision=_candidate()),
+            )
+        )
+        == "claim-mutation-missing"
+    )
+    assert prepared == {}, "the refusal must happen before a cell command exists"
+
+
+def test_the_sealed_verifier_still_refuses_a_drifted_closure(tmp_path: Path) -> None:
+    """CT-3.6 — the pinned route keeps the seal's own byte-drift rule."""
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+    (root / "tests" / "test_publish.py").write_text(_TEST + "\n\ndef test_late():\n    assert True\n", encoding="utf-8")
+
+    assert (
+        _rule(
+            lambda: verify_sealed_acceptance(
+                bundle,
+                workspace=tmp_path,
+                candidate_revision_id=_candidate(),
+                plan_bytes=_PLAN_BYTES,
+                executor=_inband_executor(writes_visible=False, revision=_candidate()),
+            )
+        )
+        == "seal-byte-drift"
+    )
+
+
+def test_a_report_from_outside_the_closure_is_refused(tmp_path: Path) -> None:
+    """CT-3.6 EDGE — a nodeid the closure does not hold is not evidence about it."""
+
+    class _ForeignReport:
+        writes_are_visible = False
+        view_revision_id = _candidate()
+
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            del cwd, timeout_s, env
+            body = (
+                '<testsuite name="pytest" tests="1" failures="0" errors="0" skipped="0">'
+                '<testcase classname="x" name="y"><properties>'
+                '<property name="fa_pytest_nodeid" value="tests/test_elsewhere.py::test_other"/>'
+                "</properties></testcase></testsuite>"
+            )
+            return CommandResult(
+                command=command,
+                outcome=CommandOutcome.PASS,
+                exit_code=0,
+                stdout_tail=f"{JUNIT_BLOCK_START}\n{body}\n{JUNIT_BLOCK_END}\n",
+                stderr_tail="",
+                duration_s=0.0,
+            )
+
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+
+    assert (
+        _collection_rule(
+            lambda: verify_sealed_acceptance(
+                bundle,
+                workspace=tmp_path,
+                candidate_revision_id=_candidate(),
+                plan_bytes=_PLAN_BYTES,
+                executor=_ForeignReport(),
+            )
+        )
+        == "collection-nodeid-outside-closure"
+    )

@@ -18,10 +18,13 @@ from pathlib import Path
 
 from fa.inner_loop.plan_ids import PlanIds, extract_plan_ids
 from fa.inner_loop.plan_v2 import (
+    APPROVAL_EVIDENCE_KINDS,
     DISPOSITION_OWNERS,
     DISPOSITION_REASONS,
+    DISPOSITION_ROUTES,
     MAX_DISPOSITION_AGE_DAYS,
     MAX_DISPOSITIONS,
+    PROBE_EVIDENCE_KINDS,
     Invariant,
     PlanGraph,
     PlanV2Error,
@@ -41,10 +44,19 @@ ADMISSION_FORMATS = frozenset({PLAN_V1, PLAN_V2})
 
 
 class PlanRefError(ValueError):
-    """Closed diagnostic reason; never expose input paths or exception bodies."""
+    """Closed diagnostic reason; never expose input paths or exception bodies.
 
-    def __init__(self, rule: str) -> None:
+    ``detail`` is an optional second, equally closed code: the grammar or metadata rule
+    behind a refusal whose ``rule`` is the coarse family admission persists. It exists
+    because a repair stage has to be told *which* rule failed in order to fix it, while
+    the persisted record's vocabulary has no slot for per-document rules. It is never
+    free text -- callers pass a parser rule and the consumer bounds it again before it
+    reaches a prompt (``_bounded_rule``).
+    """
+
+    def __init__(self, rule: str, detail: str | None = None) -> None:
         self.rule = rule
+        self.detail = detail
         super().__init__(f"invalid plan reference: {rule}")
 
 
@@ -82,6 +94,21 @@ class PlanSnapshot:
 _EVIDENCE_DOC_RE = re.compile(r"doc:(?P<path>[A-Za-z0-9_][A-Za-z0-9_./-]*)@sha256:(?P<digest>[0-9a-f]{64})")
 _EVIDENCE_ISSUE_RE = re.compile(r"issue:[A-Z][A-Z0-9]+-[0-9]+")
 _EVIDENCE_REVIEW_RE = re.compile(r"review:[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
+#: D-V2-12: a probe is the one artifact that names *where* the claim is checked.
+#: The path is repo-relative and must sit inside the sealed acceptance tree the
+#: seal can see; the host label is the machine the run is owed to. Kept to the
+#: same character class as doc paths so it cannot smuggle a shell fragment.
+_EVIDENCE_PROBE_RE = re.compile(
+    r"probe:(?P<path>worklogs/[a-z0-9][a-z0-9._-]*/acceptance/[A-Za-z0-9_][A-Za-z0-9_./-]*)"
+    r"@host:(?P<host>[a-z][a-z0-9._-]{0,63})"
+)
+#: Which evidence kinds each route accepts (D-V2-12). ``HOST_PROBE`` takes only a
+#: probe, so "host readiness" cannot be discharged by a document that says nothing
+#: about a host; ``APPROVAL`` takes only a reference a human can open.
+_ROUTE_EVIDENCE_KINDS = {
+    "HOST_PROBE": PROBE_EVIDENCE_KINDS,
+    "APPROVAL": APPROVAL_EVIDENCE_KINDS,
+}
 MAX_EVIDENCE_CHARS = 256
 _DISPOSITION_FIELDS = frozenset({"reason", "owner", "evidence", "reviewed_at"})
 
@@ -93,11 +120,15 @@ class EvidenceRef:
     kind: str
     target: str
     digest: str | None = None
+    #: Set only for ``probe``: the host the artifact is owed to.
+    host: str | None = None
 
     def text(self) -> str:
         """The canonical form, which is what a bound invariant carries."""
         if self.kind == "doc":
             return f"doc:{self.target}@sha256:{self.digest}"
+        if self.kind == "probe":
+            return f"probe:{self.target}@host:{self.host}"
         return f"{self.kind}:{self.target}"
 
 
@@ -121,6 +152,12 @@ def _evidence_ref(raw: object) -> EvidenceRef:
         return EvidenceRef(kind="issue", target=raw.partition(":")[2])
     if _EVIDENCE_REVIEW_RE.fullmatch(raw) is not None:
         return EvidenceRef(kind="review", target=raw.partition(":")[2])
+    probe = _EVIDENCE_PROBE_RE.fullmatch(raw)
+    if probe is not None:
+        path = probe["path"]
+        if ".." in path.split("/"):
+            raise PlanRefError("disposition-evidence-invalid")
+        return EvidenceRef(kind="probe", target=path, host=probe["host"])
     raise PlanRefError("disposition-evidence-invalid")
 
 
@@ -131,6 +168,19 @@ def _review_date(raw: object) -> date:
         return date.fromisoformat(raw)
     except ValueError:
         raise PlanRefError("disposition-reviewed-at-invalid") from None
+
+
+def _require_route_evidence(reason: str, evidence: EvidenceRef) -> None:
+    """The route a reason commits to accepts exactly one kind of artifact (D-V2-12).
+
+    Without this, "host readiness" could be discharged by `doc:` — a document that
+    says nothing about any host — and the route axis would be a label rather than
+    a check. The refusal names the mismatch, not the input.
+    """
+    route = DISPOSITION_ROUTES.get(reason)
+    allowed = _ROUTE_EVIDENCE_KINDS.get(route or "")
+    if allowed is None or evidence.kind not in allowed:
+        raise PlanRefError("disposition-evidence-route-mismatch")
 
 
 def parse_dispositions(raw: object) -> tuple[DispositionDeclaration, ...]:
@@ -155,11 +205,13 @@ def parse_dispositions(raw: object) -> tuple[DispositionDeclaration, ...]:
         owner = item["owner"]
         if not isinstance(owner, str) or owner not in DISPOSITION_OWNERS:
             raise PlanRefError("disposition-owner-invalid")
+        evidence = _evidence_ref(item["evidence"])
+        _require_route_evidence(reason, evidence)
         declarations.append(
             DispositionDeclaration(
                 reason=reason,
                 owner=owner,
-                evidence=_evidence_ref(item["evidence"]),
+                evidence=evidence,
                 reviewed_at=_review_date(item["reviewed_at"]),
             )
         )
@@ -192,7 +244,14 @@ def bind_dispositions(graph: PlanGraph, declarations: Sequence[DispositionDeclar
         declaration = granted.get(invariant.reason or "")
         if declaration is None:
             raise PlanRefError("disposition-undeclared")
-        bound.append(replace(invariant, owner=declaration.owner, evidence_ref=declaration.evidence.text()))
+        bound.append(
+            replace(
+                invariant,
+                owner=declaration.owner,
+                evidence_ref=declaration.evidence.text(),
+                reviewed_at=declaration.reviewed_at.isoformat(),
+            )
+        )
     return replace(graph, invariants=tuple(bound))
 
 

@@ -91,7 +91,9 @@ __all__ = [
     "VerifyCommandExecutor",
     "apply_kill",
     "capture_test_nodeids",
+    "inband_junit_command",
     "mutation_overlay",
+    "parse_inband_nodeids",
     "parse_kill_directives",
     "parse_node_outcomes",
     "parse_nodeid_report",
@@ -163,19 +165,50 @@ JUNIT_BLOCK_END = _JUNIT_BLOCK_END
 #: harness-issued before/after snapshots, not commands the plan gets to rewrite.
 NODEID_CAPTURE_COMMAND = "python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin --junitxml={report} -q"
 
+
 #: The in-band form of the same harness run (Q142 option A). pytest writes the report
 #: to a file inside the cell's own scratch (``$TMPDIR`` -> ``/scratch/tmp`` inside
 #: containers with ``ReadonlyRootfs=True``) and echoes only the report block between
 #: markers when present, keeping noisy test stdout out of the 64 KiB receipt tail.
+def inband_junit_command(command: str, *, report: str) -> str:
+    """Wrap ``command`` so its JUnit report comes back inside the receipt (Q142 A).
+
+    One wrapper, two callers: the nodeid capture below and the sealed acceptance
+    collection (CT-3.6). They must not each carry their own shell text -- a second
+    copy is how one of them silently stops emitting the block the parser needs.
+
+    ``command`` names the report destination as ``"$__fa_rep"``: the path is the
+    *cell's* scratch (``$TMPDIR`` -> ``/scratch/tmp`` under a read-only rootfs), so
+    the controller cannot know it and the command must not try to. ``report`` is
+    only the basename inside that scratch. The markers are the whole protocol: the
+    parser refuses anything that is not exactly one block between them, which is
+    what keeps arbitrary test output from being read as evidence.
+    """
+    return (
+        '__fa_rep="${TMPDIR:-/tmp}/'
+        + report
+        + '"; __fa_log="${__fa_rep}.log"; '
+        + command
+        + ' >"$__fa_log" 2>&1; __fa_rc=$?; '
+        'if [ -s "$__fa_rep" ]; then '
+        f"printf '%s\\n' '{_JUNIT_BLOCK_START}'; cat \"$__fa_rep\"; "
+        f"printf '%s\\n' '{_JUNIT_BLOCK_END}'; "
+        'else tail -c 4000 "$__fa_log" 2>/dev/null || true; fi; '
+        'rm -f "$__fa_rep" "$__fa_log"; exit $__fa_rc'
+    )
+
+
+#: Its historical call site formats this constant (``paths``/``report``), so the
+#: shell's own ``${TMPDIR:-/tmp}`` is doubled here. Behaviour is byte-for-byte what
+#: it was; only how the text is produced changed, so the two callers share one
+#: wrapper instead of drifting apart.
 NODEID_CAPTURE_INBAND_COMMAND = (
-    '__fa_rep="${{TMPDIR:-/tmp}}/"{report}; __fa_log="${{__fa_rep}}.log"; '
-    'python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin --junitxml="$__fa_rep" -q '
-    '>"$__fa_log" 2>&1; __fa_rc=$?; '
-    'if [ -s "$__fa_rep" ]; then '
-    "printf '%s\\n' '" + _JUNIT_BLOCK_START + '\'; cat "$__fa_rep"; '
-    "printf '%s\\n' '" + _JUNIT_BLOCK_END + "'; "
-    'else tail -c 4000 "$__fa_log" 2>/dev/null || true; fi; '
-    'rm -f "$__fa_rep" "$__fa_log"; exit $__fa_rc'
+    inband_junit_command(
+        'python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin --junitxml="$__fa_rep" -q',
+        report="{report}",
+    )
+    .replace("${TMPDIR:-/tmp}", "${{TMPDIR:-/tmp}}")
+    .replace("${__fa_rep}", "${{__fa_rep}}")
 )
 
 _GATE_TEST_DEPTH_ENV: Final = "FA_VERIFY_GATE_TEST_DEPTH"
@@ -467,6 +500,17 @@ class ManagedVerifyCommandExecutor:
             raise ExecutionContractError
         self._executor = executor
         self._root = root
+
+    @property
+    def view_revision_id(self) -> str | None:
+        """Forward the substrate's own answer to "which revision is pinned" (F5).
+
+        This wrapper is where verification is *judged*, so it must not become a place where the
+        identity gets invented: it forwards only, and a wrapped executor that cannot name its
+        revision yields ``None`` rather than an empty string that could compare equal by accident.
+        """
+        named = getattr(self._executor, "view_revision_id", None)
+        return named if isinstance(named, str) and named else None
 
     def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
         """Run one command inside the pinned view and translate the result.
@@ -805,6 +849,22 @@ def _junit_block(stdout: str) -> tuple[bytes | None, str]:
     if not body:
         return None, "JUnit report block is empty"
     return body.encode("utf-8"), ""
+
+
+def parse_inband_nodeids(stdout: str) -> tuple[dict[str, bool] | None, str]:
+    """Parse the report a managed command carried in its own receipt (Q142 A).
+
+    The composed public step: take the single marked block out of ``stdout``, then
+    hand its bytes to the *same* JUnit parser the controller-side path uses. A
+    report that crossed a cell boundary is not more trusted than one read from a
+    path, and a second parser would be a weaker oracle by construction.
+    """
+    if not isinstance(stdout, str):
+        return None, "in-band stdout is not text"
+    carried, detail = _junit_block(stdout)
+    if carried is None:
+        return None, detail
+    return parse_nodeid_report(carried)
 
 
 def parse_nodeid_report(report_bytes: bytes) -> tuple[dict[str, bool] | None, str]:

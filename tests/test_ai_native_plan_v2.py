@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import replace as dc_replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +18,7 @@ from fa.inner_loop import workflow_controller
 from fa.inner_loop.plan_admission import (
     PLAN_V1,
     PLAN_V2,
+    DispositionDeclaration,
     PlanIds,
     PlanRef,
     PlanRefError,
@@ -30,9 +34,11 @@ from fa.inner_loop.plan_v2 import (
     PlanGraph,
     PlanV2Error,
     attested_contracts,
+    contract_attestations,
     contract_evidence,
     is_contract_id,
     parse_plan,
+    pending_contracts,
     resolve_selectors,
 )
 from fa.inner_loop.registry import ToolResult, ToolSpec
@@ -56,28 +62,17 @@ Nothing here.
 """
 
 _INVARIANT_1 = """### INV-1
-KIND: HARD
 TEXT: The writer never publishes without a sealed acceptance revision.
 EVIDENCE: TEST_REQUIRED
 """
 
 _INVARIANT_2 = """### INV-2
-KIND: HARD
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
 """
 
-_INVARIANT_3 = """### INV-3
-KIND: SOFT
-TEXT: Logs stay human readable.
-EVIDENCE: TEST_REQUIRED
-"""
-
-_INV_DUP = (
-    "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n\n"
-    "### INV-1\nKIND: SOFT\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n"
-)
+_INV_DUP = "### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n\n### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n"
 _CHECK_ROW = "  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1\n"
 _ACCEPT_ROW = (
     "  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: worklogs/demo/acceptance/tests/test_publish.py::test_publish\n"
@@ -194,34 +189,34 @@ def test_rejects_an_unterminated_fence() -> None:
 @pytest.mark.parametrize(
     ("invariants", "rule"),
     [
-        ("### INV-1\nKIND: MAYBE\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n", "invariant-INV-1-kind"),
-        ("### INV-1\nKIND: HARD\nEVIDENCE: TEST_REQUIRED\n", "invariant-INV-1-text"),
-        ("### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: MAYBE\n", "invariant-INV-1-evidence"),
-        ("### INV-1\nKIND: HARD\nTEXT: t\n", "invariant-INV-1-evidence"),
+        # D-V2-10 removed the field; any value is now "you are writing the old grammar".
+        ("### INV-1\nKIND: MAYBE\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n", "invariant-kind-removed"),
+        ("### INV-1\nEVIDENCE: TEST_REQUIRED\n", "invariant-INV-1-text"),
+        ("### INV-1\nTEXT: t\nEVIDENCE: MAYBE\n", "invariant-INV-1-evidence"),
+        ("### INV-1\nTEXT: t\n", "invariant-INV-1-evidence"),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n",
+            "### INV-1\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n",
             "invariant-INV-1-disposition-reason",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: BECAUSE\n",
+            "### INV-1\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: BECAUSE\n",
             "disposition-reason-unratified",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
-            "DISPOSITION-REASON: HOST_READINESS\nDISPOSITION-OWNER: W4\n",
+            "### INV-1\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\nDISPOSITION-OWNER: W4\n",
             "disposition-not-caller-authority",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
+            "### INV-1\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
             "DISPOSITION-REASON: HOST_READINESS\nDISPOSITION-EVIDENCE: doc:x@sha256:" + "0" * 64 + "\n",
             "disposition-not-caller-authority",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\nDISPOSITION-REASON: HOST_READINESS\n",
+            "### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\nDISPOSITION-REASON: HOST_READINESS\n",
             "disposition-without-non-executable",
         ),
         (_INV_DUP, "duplicate-invariant-id"),
-        ("### NOPE-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n", "invariants-unknown-heading"),
+        ("### NOPE-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n", "invariants-unknown-heading"),
     ],
 )
 def test_invariant_rules_are_closed(invariants: str, rule: str) -> None:
@@ -232,8 +227,7 @@ def test_disposition_count_is_bounded() -> None:
     blocks = []
     for index in range(MAX_DISPOSITIONS + 1):
         blocks.append(
-            f"### INV-{index + 1}\nKIND: HARD\nTEXT: t{index}\nEVIDENCE: NON_EXECUTABLE\n"
-            "DISPOSITION-REASON: HOST_READINESS\n"
+            f"### INV-{index + 1}\nTEXT: t{index}\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\n"
         )
     slashed = _increment(invariants="\n".join(blocks), slice_body=_SLICE.replace("INV-1", "INV-1"))
 
@@ -284,8 +278,9 @@ def test_slice_rules_refuse_invalid_graphs(slice_body: str, rule: str) -> None:
     assert _rule(lambda: _parse(_increment(slice_body=slice_body))) == rule
 
 
-def test_a_hard_contract_without_a_test_or_disposition_is_refused() -> None:
-    assert _rule(lambda: _parse(_increment(slice_body=_MINIMAL_SLICE))) == "hard-contract-without-executable-evidence"
+def test_a_contract_without_a_test_or_request_is_refused() -> None:
+    """D-V2-10: no class and no severity escapes the check, so the rule names neither."""
+    assert _rule(lambda: _parse(_increment(slice_body=_MINIMAL_SLICE))) == "contract-without-evidence"
 
 
 def test_a_hard_contract_with_a_requested_disposition_is_admitted_unbound() -> None:
@@ -311,7 +306,7 @@ def test_top_level_sections_are_closed() -> None:
     assert _rule(lambda: _parse(stray)) == "content-outside-sections"
 
     duplicated = _increment().replace(
-        "## SCENARIOS", "## INVARIANTS\n### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n## SCENARIOS", 1
+        "## SCENARIOS", "## INVARIANTS\n### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n## SCENARIOS", 1
     )
     assert _rule(lambda: _parse(duplicated)) == "duplicate-section"
 
@@ -386,17 +381,46 @@ def plan_graph(*, invariants: str = "", scenario: str = "", slice_body: str = ""
 
 
 #: A grant for every reason the fixtures use, reviewed inside its 30-day life.
+#: D-V2-12: the artifact's *kind* is decided by the reason's route, so the
+#: host-facing reasons name a probe and only ``OWNER_APPROVAL`` is a review.
+_PROBE_ROOT = "worklogs/demo/acceptance/probes"
+_GRANT_EVIDENCE = {
+    "HOST_READINESS": f"probe:{_PROBE_ROOT}/host_readiness.sh@host:w4-ubuntu",
+    "DEPLOYMENT_IDENTITY": f"probe:{_PROBE_ROOT}/deployment_identity.sh@host:w4-ubuntu",
+    "DURABILITY_POWER_LOSS": f"probe:{_PROBE_ROOT}/power_loss.sh@host:w4-ubuntu",
+    "OWNER_APPROVAL": "review:r1",
+}
 _GRANTS = parse_dispositions(
     [
         {
             "reason": reason,
             "owner": "W4",
-            "evidence": "review:r1",
+            "evidence": _GRANT_EVIDENCE[reason],
             "reviewed_at": "2026-11-19",
         }
         for reason in sorted(DISPOSITION_REASONS)
     ]
 )
+#: The probe files the granted graph can attest; a sealed tree must carry them,
+#: because ``mint_seal`` refuses a ``HOST_PROBE`` artifact outside the closure.
+GRANT_PROBE_FILES = tuple(
+    sorted(
+        {
+            _GRANT_EVIDENCE[reason].split("probe:")[1].split("@host:")[0]
+            for reason in DISPOSITION_REASONS
+            if _GRANT_EVIDENCE[reason].startswith("probe:")
+        }
+    )
+)
+
+
+def grant_declarations() -> tuple[DispositionDeclaration, ...]:
+    """The caller's declarations, for a test that has to hand them to admission itself.
+
+    ``granted_graph`` binds them after the fact; the create route binds the caller's own
+    declarations to the plan it read, so a test that drives admission needs the same list.
+    """
+    return _GRANTS
 
 
 def granted_graph(*, invariants: str = "", scenario: str = "", slice_body: str = "") -> PlanGraph:
@@ -429,6 +453,74 @@ def test_a_disposition_request_without_a_grant_is_never_attested() -> None:
     assert contract_evidence(bound)["CT-1.2"] is EvidenceMode.ATTESTED
     assert attested_contracts(bound) == ("CT-1.2",)
 
+
+def test_an_attestation_records_the_route_the_artifact_and_the_review() -> None:
+    """P4-8: the seal is told *who* carried the claim, not just which contract it was.
+
+    Before this the graph carried an owner on the invariant and the seal recorded
+    only contract ids, so a reader could not tell an owner's review from a rubber
+    stamp. The route, the artifact and the review date travel with the claim.
+    """
+    records = contract_attestations(granted_graph())
+
+    assert [record.contract_id for record in records] == ["CT-1.2"]
+    record = records[0]
+    assert (record.invariant_id, record.reason, record.route) == ("INV-2", "HOST_READINESS", "HOST_PROBE")
+    assert record.artifact == "probe:worklogs/demo/acceptance/probes/host_readiness.sh@host:w4-ubuntu"
+    assert (record.owner, record.reviewed_at) == ("W4", "2026-11-19")
+    assert pending_contracts(granted_graph()) == ("CT-1.2",)
+
+
+def test_a_request_that_was_never_granted_produces_no_attestation() -> None:
+    """A request is not an authorisation: nothing to record, nothing pending."""
+    assert contract_attestations(plan_graph()) == ()
+    assert pending_contracts(plan_graph()) == ()
+
+
+def test_the_scope_digest_covers_the_sentences_the_grant_describes() -> None:
+    """The digest names the text that was attested, so a re-review can prove its scope.
+
+    ``plan_sha256`` already kills a seal on any plan edit; the scope is what lets a
+    reader see *which* sentence moved, and what makes "reviewed again" checkable.
+    """
+    original = contract_attestations(granted_graph())[0].scope_sha256
+
+    reworded_invariant = contract_attestations(
+        granted_graph(
+            invariants=(
+                "### INV-1\nTEXT: publication requires a sealed selection.\nEVIDENCE: TEST_REQUIRED\n"
+                "\n### INV-2\nTEXT: readiness is proven on the approved host.\nEVIDENCE: NON_EXECUTABLE\n"
+                "DISPOSITION-REASON: HOST_READINESS\n"
+            )
+        )
+    )[0].scope_sha256
+    reworded_contract = contract_attestations(
+        granted_graph(
+            slice_body=_SLICE.replace(
+                "CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+                "CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the frozen host",
+            )
+        )
+    )[0].scope_sha256
+
+    assert reworded_invariant != original, "the invariant's own sentence must be inside the scope"
+    assert reworded_contract != original, "the contract the grant discharges must be inside the scope"
+
+
+def test_an_approval_is_attested_but_not_pending() -> None:
+    """Only a host claim is a debt; a decision is not something a host can run later."""
+    graph = granted_graph(
+        invariants=(
+            "### INV-1\nTEXT: publication requires a sealed selection.\nEVIDENCE: TEST_REQUIRED\n"
+            "\n### INV-2\nTEXT: the owner approved the wording.\nEVIDENCE: NON_EXECUTABLE\n"
+            "DISPOSITION-REASON: OWNER_APPROVAL\n"
+        )
+    )
+
+    (record,) = contract_attestations(graph)
+    assert record.route == "APPROVAL"
+    assert attested_contracts(graph) == ("CT-1.2",)
+    assert pending_contracts(graph) == ()
 
 
 # --- SLICE1: the admission cutover (format, graph, and closed rules) ---------
@@ -481,6 +573,30 @@ def test_v2_admission_surfaces_closed_rule_codes_not_exceptions() -> None:
     assert validation.outcome == "INDETERMINATE"
     assert [(item.validator, item.rule, item.severity) for item in validation.diagnostics] == [
         ("plan-v2", "plan-format-marker-increment", "ERROR")
+    ]
+
+
+def test_an_uncovered_contract_reaches_admission_as_its_own_rule() -> None:
+    """EDGE: the policy sits on the path the controller walks, not only in ``_admit``.
+
+    ``snapshot_from_bytes`` is what admission reads, so the refusal has to survive as
+    the snapshot's own rule; a check reachable only from a direct ``parse_plan`` call
+    would leave the live route exactly as it was.
+    """
+    uncovered = _increment(invariants=_INVARIANT_1 + "\n" + _UNTESTED_INVARIANT_2)
+    snapshot = snapshot_from_bytes(
+        "worklogs/demo/increments/increment-01-demo.md",
+        uncovered.encode("utf-8"),
+        format=PLAN_V2,
+        roadmap=_ROADMAP,
+    )
+
+    assert snapshot.graph is None
+    assert snapshot.format_error == "contract-without-evidence"
+    validation = workflow_controller._validate_plan_admission(snapshot)
+    assert validation.outcome == "INDETERMINATE"
+    assert [(item.validator, item.rule) for item in validation.diagnostics] == [
+        ("plan-v2", "contract-without-evidence")
     ]
 
 
@@ -572,7 +688,7 @@ class _Recorder:
         )
 
 
-def _invoke_args(**overrides: object) -> SimpleNamespace:
+def _invoke_args(**overrides: object) -> argparse.Namespace:
     values: dict[str, object] = {
         "task": "ship the sealed project",
         "task_flag": None,
@@ -585,9 +701,12 @@ def _invoke_args(**overrides: object) -> SimpleNamespace:
         "session_id": None,
         "project_action": "CREATE_NEW",
         "project_slug": "demo-project",
+        "dispositions": None,
     }
     values.update(overrides)
-    return SimpleNamespace(**values)
+    # `argparse.Namespace`, not `SimpleNamespace`: `_cmd_invoke_workflow` takes a `Namespace`
+    # and every attribute read is a `getattr`, so the two are interchangeable here.
+    return argparse.Namespace(**values)
 
 
 def test_invoke_workflow_cli_calls_the_same_tool_the_chat_registers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -610,6 +729,113 @@ def test_invoke_workflow_cli_calls_the_same_tool_the_chat_registers(monkeypatch:
     # The provider the CLI hands the tool is the same closure shape the chat
     # registry uses, so the child run is assembled by the same code.
     assert callable(recorder.ctx_provider)
+
+
+#: One grant the tool would accept, spelled the way a caller sends it over the wire.
+_GRANT_JSON = '[{"reason": "HOST_READINESS", "owner": "W4", "evidence": "issue:412", "reviewed_at": "2026-11-20"}]'
+_GRANT = [{"reason": "HOST_READINESS", "owner": "W4", "evidence": "issue:412", "reviewed_at": "2026-11-20"}]
+
+
+def test_invoke_workflow_forwards_the_callers_grant_unmodified(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P4-6/R1: the human front can grant what the chat front can grant.
+
+    R1 makes the caller's declaration the only source of owner, evidence and review date,
+    so a legal V2 plan that requests a non-executable invariant is unreachable from the
+    operator's front unless the flag exists. The CLI must not *reshape* the grant either:
+    what the operator wrote is what the tool validates.
+    """
+    recorder = _Recorder()
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    # The flag exists on the *parser*, not only as a keyword the command happens to read:
+    # a rename of one without the other is the failure this line exists for.
+    parsed = cli.build_parser().parse_args(["invoke-workflow", "task", "--dispositions", _GRANT_JSON])
+    assert parsed.dispositions == _GRANT_JSON
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions=_GRANT_JSON)) == 0
+    assert recorder.params is not None
+    assert recorder.params["dispositions"] == _GRANT
+
+    # ...and no flag means no key: the tool sees the field absent, not an empty grant.
+    assert cli._cmd_invoke_workflow(_invoke_args()) == 0
+    assert recorder.params is not None and "dispositions" not in recorder.params
+
+
+def test_invoke_workflow_reads_the_grant_from_a_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`PATH_OR_JSON`: a grant carries a review date and an evidence reference, so the shape
+    an audit can keep is a file. Both spellings must mean the same thing."""
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(_GRANT_JSON, encoding="utf-8")
+
+    recorder = _Recorder()
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions=str(grant_file))) == 0
+    assert recorder.params is not None
+    assert recorder.params["dispositions"] == _GRANT
+
+
+def test_a_grant_file_the_operator_cannot_read_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The two transport failures are different and must not share a message.
+
+    "Not JSON" would send an operator to inspect the syntax of a file the CLI never opened.
+    """
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(_GRANT_JSON, encoding="utf-8")
+
+    def unreadable(self: Path, *_args: object, **_kwargs: object) -> str:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("pathlib.Path.read_text", unreadable, raising=True)
+    built: list[object] = []
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", lambda *a: built.append(a))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions=str(grant_file))) == 2
+    assert built == []
+    message = capsys.readouterr().err
+    assert "could not be read" in message and "not JSON" not in message
+
+
+def test_the_cli_leaves_the_grant_to_the_tool_to_validate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI is transport, not a second rule.
+
+    A second validator is the one that drifts: it would either accept what the tool
+    refuses or refuse what the tool accepts, and nobody would notice until a grant that
+    admission honoured was rejected at the front. So a wrong-shaped grant is forwarded
+    verbatim and the tool's own refusal is what the operator sees.
+    """
+    wrong_shape = {"reason": "HOST_READINESS"}  # not a list: only `parse_dispositions` says so
+    recorder = _Recorder()
+    recorder.result = ToolResult.fail("invalid_dispositions", "`dispositions` refused [disposition-invalid]")
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions=json.dumps(wrong_shape))) == 2
+    assert recorder.params is not None
+    assert recorder.params["dispositions"] == wrong_shape
+
+
+def test_a_dispositions_argument_that_is_not_json_refuses_before_any_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Transport failure is the operator's, and it is theirs to fix: refuse before a run.
+
+    A grant that cannot even be decoded must not start a pipeline that then reports some
+    deeper refusal -- the operator would debug admission for a typo in their own flag.
+    """
+    built: list[object] = []
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", lambda *a: built.append(a))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions="not json at all")) == 2
+    assert built == []
+    assert "--dispositions is not JSON" in capsys.readouterr().err
 
 
 def test_invoke_workflow_cli_maps_a_tool_refusal_to_a_failed_exit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -659,14 +885,12 @@ def test_invoke_workflow_cli_returns_the_child_exit_code(monkeypatch: pytest.Mon
 
 # --- R2: evidence grades a contract by what the plan affords -----------------
 
-_SOFT_INVARIANT_2 = """### INV-2
-KIND: SOFT
+_UNTESTED_INVARIANT_2 = """### INV-2
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: TEST_REQUIRED
 """
 
 _DISPOSED_INVARIANT_1 = """### INV-1
-KIND: HARD
 TEXT: The writer never publishes without a sealed acceptance revision.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
@@ -677,7 +901,7 @@ _TWO_DISPOSED_INVARIANTS = (
     _INVARIANT_1
     + "\n"
     + _INVARIANT_2
-    + "\n### INV-3\nKIND: HARD\nTEXT: Deployment identity is proven by the release record.\n"
+    + "\n### INV-3\nTEXT: Deployment identity is proven by the release record.\n"
     + "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: DEPLOYMENT_IDENTITY\n"
 )
 
@@ -717,17 +941,49 @@ def test_attestation_is_sorted_not_declaration_ordered() -> None:
     assert attested_contracts(graph) == ("CT-1.10", "CT-1.2")
 
 
-def test_a_contract_with_neither_a_selector_nor_a_disposition_is_uncovered() -> None:
-    """A soft invariant needs no executable evidence, so the gap is legal — and visible."""
-    graph = plan_graph(invariants=_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+def test_a_contract_with_neither_a_selector_nor_a_request_is_refused() -> None:
+    """D-V2-10: the gap this test used to describe as "legal and visible" is now refused.
 
-    assert contract_evidence(graph)["CT-1.2"] is EvidenceMode.UNCOVERED
-    assert attested_contracts(graph) == ()
+    The plan is read once, and reading it is the last moment a repair round can still
+    fix it -- so a contract with no test and no request to waive it does not become a
+    graded gap downstream, it becomes a diagnostic here.
+    """
+    assert _rule(lambda: plan_graph(invariants=_INVARIANT_1 + "\n" + _UNTESTED_INVARIANT_2)) == (
+        "contract-without-evidence"
+    )
+
+
+def test_the_grader_still_names_a_contract_that_admission_refuses() -> None:
+    """``UNCOVERED`` stays a grading state: the seal reports it, admission never produces it.
+
+    Admission refuses the shape, so the grader is exercised on a graph handed to it --
+    strip the request from an admitted graph and the same function the seal uses names
+    the contract instead of assuming it is discharged.
+    """
+    graph = plan_graph()
+    stripped = dc_replace(
+        graph,
+        invariants=tuple(
+            dc_replace(item, evidence="TEST_REQUIRED", reason=None) if item.id == "INV-2" else item
+            for item in graph.invariants
+        ),
+    )
+
+    assert contract_evidence(stripped)["CT-1.2"] is EvidenceMode.UNCOVERED
+    assert attested_contracts(stripped) == ()
+
+
+#: Two different reasons, so the one-shot reason bound (E585) is not what refuses.
+_DISPOSED_PAIR = (
+    _DISPOSED_INVARIANT_1
+    + "\n### INV-2\nTEXT: Deployment identity is proven by the release record.\n"
+    + "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: DEPLOYMENT_IDENTITY\n"
+)
 
 
 def test_a_selector_outranks_a_disposition_on_its_own_invariant() -> None:
     """A disposition never weakens evidence that exists: the run still executes it."""
-    graph = plan_graph(invariants=_DISPOSED_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+    graph = plan_graph(invariants=_DISPOSED_PAIR)
 
     assert contract_evidence(graph)["CT-1.1"] is EvidenceMode.EXECUTABLE
     assert "CT-1.1" not in attested_contracts(graph)
@@ -743,7 +999,7 @@ def test_the_contract_id_grammar_refuses_everything_else(value: object) -> None:
     assert not is_contract_id(value)
 
 
-# --- R3: the policy matrix (contract class x invariant kind) -----------------
+# --- R3: the policy matrix (contract class x evidence mode) -------------------
 
 _PRESERVING_SLICE = _SLICE.replace(
     "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
@@ -757,25 +1013,19 @@ _CLUSTERED_SLICE = _SLICE.replace(
 )
 
 
-@pytest.mark.parametrize("kind", ["HARD", "SOFT"])
-def test_a_preservation_claim_always_needs_a_test(kind: str) -> None:
+def test_a_disposition_may_not_attest_a_preservation_claim() -> None:
     """No disposition may carry "what worked still works": that is how regressions ship green."""
-    invariants = _INVARIANT_1 + "\n" + _INVARIANT_2.replace("KIND: HARD", f"KIND: {kind}")
+    invariants = _INVARIANT_1 + "\n" + _INVARIANT_2
 
     assert _rule(lambda: plan_graph(invariants=invariants, slice_body=_PRESERVING_SLICE)) == (
         "preservation-without-executable-evidence"
     )
 
 
-@pytest.mark.parametrize(
-    ("kind", "evidence"),
-    [("HARD", "TEST_REQUIRED"), ("SOFT", "TEST_REQUIRED"), ("HARD", "NON_EXECUTABLE"), ("SOFT", "NON_EXECUTABLE")],
-)
-def test_a_preservation_claim_is_refused_whatever_the_invariant_says(kind: str, evidence: str) -> None:
+@pytest.mark.parametrize("evidence", ["TEST_REQUIRED", "NON_EXECUTABLE"])
+def test_a_preservation_claim_is_refused_whatever_the_invariant_says(evidence: str) -> None:
     """The class rule is independent of the invariant: no mode makes it attestable."""
-    invariant = _INVARIANT_2.replace("KIND: HARD", f"KIND: {kind}").replace(
-        "EVIDENCE: NON_EXECUTABLE", f"EVIDENCE: {evidence}"
-    )
+    invariant = _INVARIANT_2.replace("EVIDENCE: NON_EXECUTABLE", f"EVIDENCE: {evidence}")
     if evidence == "TEST_REQUIRED":
         invariant = invariant.replace("DISPOSITION-REASON: HOST_READINESS\n", "")
     invariants = _INVARIANT_1 + "\n" + invariant
@@ -816,11 +1066,18 @@ def test_a_tested_contract_does_not_count_against_the_cluster_bound() -> None:
     assert attested_contracts(graph) == ("CT-1.2",)  # CT-1.3 is executable, so it is not attested
 
 
-def test_a_soft_invariant_may_still_stay_uncovered() -> None:
-    """The matrix tightens PRESERVATION and clusters; it does not make SOFT executable."""
-    graph = plan_graph(invariants=_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+def test_an_untested_invariant_can_no_longer_leave_its_contract_uncovered() -> None:
+    """D-V2-10 supersedes the "a soft invariant needs no executable evidence" reading of R3."""
+    assert _rule(lambda: plan_graph(invariants=_INVARIANT_1 + "\n" + _UNTESTED_INVARIANT_2)) == (
+        "contract-without-evidence"
+    )
 
-    assert contract_evidence(graph)["CT-1.2"] is EvidenceMode.UNCOVERED
+
+def test_a_document_that_still_writes_kind_is_told_the_field_is_gone() -> None:
+    """The deletion has to be actionable: the prompt told models to write this field."""
+    stale = _INVARIANT_1.replace("TEXT:", "KIND: SOFT\nTEXT:")
+
+    assert _rule(lambda: plan_graph(invariants=stale)) == "invariant-kind-removed"
 
 
 # --- P1-1 second half: the grant must survive the read-back (E585) ----------
@@ -860,13 +1117,11 @@ def test_the_grant_is_bound_to_the_graph_that_is_admitted_not_a_read_back() -> N
 
 
 _REUSED_REASON_INVARIANTS = """### INV-1
-KIND: HARD
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
 
 ### INV-2
-KIND: HARD
 TEXT: The operator signed off the dashboard copy.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS

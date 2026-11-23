@@ -1583,6 +1583,18 @@ class ReadOnlyManagedBashExecutor:
         self._root = controller_root
         self._active = True
 
+    @property
+    def view_revision_id(self) -> str | None:
+        """The revision this view was cut from -- the authority's answer to "which code ran".
+
+        F5: a caller's ``candidate_revision_id`` was an assertion because nothing could be asked
+        whether the pinned view actually sat at it. The view carries ``base_revision``, so the
+        executor can answer; ``None`` (before a view is pinned, or after ``suspend``) is the honest
+        answer for "no view", and callers must refuse it rather than read it as agreement.
+        """
+        view = self._view
+        return None if view is None else view.base_revision
+
     def suspend(self) -> None:
         """Disarm the reader executor before STOP_VIEW is attempted."""
         self._active = False

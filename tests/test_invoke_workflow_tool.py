@@ -1616,8 +1616,11 @@ def test_the_select_route_still_delegates_without_a_coder(tmp_path: Path) -> Non
 def _grant(**overrides: object) -> dict[str, object]:
     record: dict[str, object] = {
         "reason": "HOST_READINESS",
+        # D-V2-12: a host claim is discharged by a probe, and the probe names the
+        # host it is owed to. A document here would be refused by the route matrix
+        # long before the child ever saw the grant.
+        "evidence": "probe:worklogs/demo-project/acceptance/probes/host_readiness.sh@host:w4-ubuntu",
         "owner": "W4",
-        "evidence": "doc:worklogs/demo-project/notes/readiness.md@sha256:" + "a" * 64,
         "reviewed_at": "2026-11-20",
     }
     record.update(overrides)
@@ -1669,7 +1672,10 @@ def test_a_valid_grant_reaches_the_child_as_the_caller_granted_it(
     (declaration,) = workflow.calls[0]["acquisition"].dispositions
     assert declaration.reason == "HOST_READINESS"
     assert declaration.owner == "W4"
-    assert declaration.evidence.text() == "doc:worklogs/demo-project/notes/readiness.md@sha256:" + "a" * 64
+    assert declaration.evidence.text() == (
+        "probe:worklogs/demo-project/acceptance/probes/host_readiness.sh@host:w4-ubuntu"
+    )
+    assert declaration.evidence.host == "w4-ubuntu"
     assert declaration.reviewed_at.isoformat() == "2026-11-20"
 
 
@@ -1830,6 +1836,10 @@ class TestCreatNewRouteFailureMapping:
             ("hash-mismatch", "durability_unknown", False),
             ("project-route-mismatch", "project_route_mismatch", False),
             ("disposition-evidence-mismatch", "invalid_dispositions", True),
+            ("disposition-evidence-route-mismatch", "invalid_dispositions", True),
+            # D-V2-10/P4-1: the plan asked for a waiver and the caller gave none. Only the
+            # caller can fix that, so the code says what to send and the call is retryable.
+            ("disposition-undeclared", "disposition_required", True),
             ("bootstrap-unavailable", "workspace_unavailable", True),
             ("backend-unavailable", "workspace_unavailable", True),
             # Anything the table does not name still fails, and fails closed.

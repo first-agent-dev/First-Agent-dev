@@ -25,11 +25,15 @@ import pytest
 
 import fa.inner_loop.slice_verification as slice_verification
 from fa.execution.client import (
+    ExecutionClient,
     ExecutionRejectedError,
     ExecutionUnavailableError,
     ExecutionUncertainError,
+    ReadOnlyManagedBashExecutor,
 )
 from fa.execution.primitives import ExecutionContractError
+from fa.execution.profiles import ExecutionProfile
+from fa.execution.types import Access, GrantReply, NamespaceRef, Operation, ViewPurpose, ViewRef
 from fa.inner_loop.slice_verification import (
     DEFAULT_VERIFY_TIMEOUT_SECONDS,
     JUNIT_BLOCK_END,
@@ -593,6 +597,91 @@ class _FakeManagedExecutor:
         return []
 
 
+# -- F5: the substrate names the revision, the wrapper only forwards ---------
+
+
+def _reader_executor(tmp_path: Path, *, base_revision: str = "rev-" + "3" * 32) -> ReadOnlyManagedBashExecutor:
+    """A real ``ReadOnlyManagedBashExecutor`` around a real (unconnected) client.
+
+    Nothing connects until a command runs: the view, the grant and the profile are the
+    constructor's actual contract, so this exercises the object rather than a stand-in.
+    """
+    namespace = NamespaceRef("session-1", "run-1")
+    view = ViewRef(
+        "ws-" + "1" * 32,
+        "view-" + "2" * 32,
+        base_revision,
+        "run-1",
+        1,
+        Access.READ,
+        ViewPurpose.PROJECT,
+    )
+    grant = GrantReply(Operation.PIN_READER, "5" * 64, view, None, None, input_tree_sha256="4" * 64)
+    profile = ExecutionProfile(
+        "verifier",
+        "example.invalid/fa@sha256:" + "4" * 64,
+        1000,
+        1000,
+        1_000_000_000,
+        256 * 1024 * 1024,
+        32,
+        30_000,
+        False,
+        "fa-test.slice",
+        '{"defaultAction": "SCMP_ACT_ERRNO", "syscalls": []}',
+    )
+    return ReadOnlyManagedBashExecutor(
+        ExecutionClient(tmp_path / "missing.sock", server_uid=os.getuid(), rpc_timeout_ms=100),
+        namespace=namespace,
+        view=view,
+        grant=grant,
+        profile=profile,
+        plan_ref=None,
+        controller_root=tmp_path,
+    )
+
+
+def test_the_reader_executor_names_the_revision_of_its_pinned_view(tmp_path: Path) -> None:
+    """F5 — the authority's view is the only honest answer to "which revision ran"."""
+    executor = _reader_executor(tmp_path)
+
+    assert executor.view_revision_id == "rev-" + "3" * 32
+
+
+def test_a_suspended_reader_executor_no_longer_names_a_revision(tmp_path: Path) -> None:
+    """F5 EDGE — after ``suspend`` there is no view, so there is no revision to claim."""
+    executor = _reader_executor(tmp_path)
+
+    executor.suspend()
+
+    assert executor.view_revision_id is None
+
+
+def test_the_managed_verify_executor_forwards_the_named_revision(tmp_path: Path) -> None:
+    executor = _reader_executor(tmp_path)
+    managed = ManagedVerifyCommandExecutor(executor, root=tmp_path)
+
+    assert managed.view_revision_id == "rev-" + "3" * 32
+
+
+def test_a_wrapped_executor_that_cannot_name_a_revision_yields_none(tmp_path: Path) -> None:
+    """F5 — the wrapper never invents an identity: no name stays no name."""
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(), root=tmp_path)
+
+    assert managed.view_revision_id is None
+
+
+def test_a_wrapped_executor_with_a_blank_revision_yields_none(tmp_path: Path) -> None:
+    """A blank string must not compare equal to a caller's blank revision by accident."""
+
+    class _BlankRevision(_FakeManagedExecutor):
+        view_revision_id = ""
+
+    managed = ManagedVerifyCommandExecutor(_BlankRevision(), root=tmp_path)
+
+    assert managed.view_revision_id is None
+
+
 def test_managed_verify_never_opens_a_session(tmp_path: Path) -> None:
     """C1 — an interactive session would keep state between verify commands.
 
@@ -710,11 +799,18 @@ def test_managed_verify_leaves_no_host_trace(tmp_path: Path) -> None:
 # ── Q142 option A: the report travels in the receipt ─────────────────────────
 
 
-def _inband_executor(*, writes_visible: bool, prepared: dict[str, Any] | None = None) -> Any:
-    """A substrate that runs the actual in-band command inside a scratch $TMPDIR."""
+def _inband_executor(
+    *, writes_visible: bool, prepared: dict[str, Any] | None = None, revision: str | None = None
+) -> Any:
+    """A substrate that runs the actual in-band command inside a scratch $TMPDIR.
+
+    ``revision`` is the F5 answer to "which revision is pinned"; ``None`` models a substrate that
+    cannot name one, which the sealed verifier must refuse.
+    """
 
     class _InBand:
         writes_are_visible = writes_visible
+        view_revision_id = revision
 
         def run_verify_command(
             self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]

@@ -29,6 +29,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -39,13 +40,25 @@ from .acceptance_closure import (
     collect_acceptance_closure,
     read_closure_payload,
 )
-from .plan_v2 import Acceptance, PlanGraph, attested_contracts, is_contract_id, resolve_selectors
+from .plan_v2 import (
+    DISPOSITION_REASONS,
+    DISPOSITION_ROUTES,
+    Acceptance,
+    Attestation,
+    EvidenceMode,
+    PlanGraph,
+    attested_contracts,
+    contract_attestations,
+    contract_evidence,
+    is_contract_id,
+    pending_contracts,
+    resolve_selectors,
+)
 
 __all__ = [
     "MAX_ATTESTED",
     "MAX_SEAL_BYTES",
     "SCHEMA_VERSION",
-    "SEAL_FILENAME",
     "VISIBILITY_MODES",
     "AcceptanceBundle",
     "AcceptanceBundleError",
@@ -53,6 +66,8 @@ __all__ = [
     "SealedSelector",
     "load_seal",
     "mint_seal",
+    "require_revision_id",
+    "require_sealed_root",
     "seal_bytes",
     "seal_payload",
     "verify_plan",
@@ -62,9 +77,11 @@ __all__ = [
 ]
 
 #: The seal record schema the loader accepts. Unknown versions are refused.
-SCHEMA_VERSION = 1
-#: Seal file name; it sits beside ``acceptance/``, never inside it.
-SEAL_FILENAME = "acceptance.seal.json"
+#: 2 (2026-11-22): carries the attestation record -- route, artifact, owner,
+#: reviewed date and scope digest -- plus ``contracts_total`` and ``pending``
+#: (D-V2-12, P4-8, S2). Version 1 described *which* contracts were attested and
+#: nothing about who carried them, so it had to change shape, not gain a field.
+SCHEMA_VERSION = 2
 #: Same read cap the authority already applies to its own bundle manifests.
 MAX_SEAL_BYTES = 1024**2
 #: One seal cannot describe more selectors than the closure can hold tests.
@@ -125,6 +142,16 @@ class AcceptanceBundle:
     #: Contracts the plan covers only by an out-of-sandbox disposition. The seal
     #: states them so no reader can mistake them for proven ones (R2).
     attested: tuple[str, ...] = ()
+    #: Every contract in the plan: ``selectors``-covered + ``attested`` must equal
+    #: this, which is the seal's whole claim. Recorded, never inferred on read.
+    contracts_total: int = 0
+    #: The ``attested`` subset owed to a host that has not run it (route
+    #: ``HOST_PROBE``): a debt, not a decision (D-V2-12).
+    pending: tuple[str, ...] = ()
+    #: Who carried each attested claim, on what artifact, when, over which text
+    #: (P4-8). Ordered by contract id; ``load_seal`` refuses a block that does not
+    #: describe exactly ``attested``.
+    attestations: tuple[Attestation, ...] = ()
 
     def nodeids(self) -> dict[str, str]:
         """``TEST-ID`` -> nodeid, the mapping the verifier executes against."""
@@ -186,7 +213,13 @@ def _plan_digest(plan_bytes: object) -> str:
     return _sha256(plan_bytes)
 
 
-def _require_sealed_root(sealed_root: object) -> str:
+def require_sealed_root(sealed_root: object) -> str:
+    """The closed shape of a sealed root, usable *before* a seal exists.
+
+    Minting needs a collection report, and a collection report needs the sealed root, so the rule
+    has to be callable on the way in rather than only from :func:`mint_seal`. Kept as the single
+    definition so the pre-mint collector cannot accept a root the seal would refuse.
+    """
     if not isinstance(sealed_root, str) or not _SEALED_ROOT_RE.match(sealed_root):
         raise AcceptanceBundleError("sealed-root-invalid")
     return sealed_root
@@ -278,7 +311,22 @@ def _record(bundle: AcceptanceBundle) -> dict[str, Any]:
             {"test_id": item.test_id, "ct_id": item.ct_id, "selector": item.selector, "nodeid": item.nodeid}
             for item in sorted(bundle.selectors, key=lambda item: item.test_id)
         ],
+        "contracts_total": bundle.contracts_total,
         "attested": list(_require_contract_ids(bundle.attested)),
+        "pending": list(_require_contract_ids(bundle.pending)),
+        "attestations": [
+            {
+                "contract_id": item.contract_id,
+                "invariant_id": item.invariant_id,
+                "reason": item.reason,
+                "route": item.route,
+                "artifact": item.artifact,
+                "owner": item.owner,
+                "reviewed_at": item.reviewed_at,
+                "scope_sha256": item.scope_sha256,
+            }
+            for item in bundle.attestations
+        ],
         "identity": [{"name": item.name, "sha256": item.sha256} for item in bundle.identity],
         "supersedes_sha256": bundle.supersedes_sha256,
     }
@@ -291,6 +339,82 @@ def seal_bytes(bundle: AcceptanceBundle) -> bytes:
     record = _record(bundle)
     record["seal_sha256"] = _sha256(_canonical(record))
     return _canonical(record)
+
+
+_PROBE_ARTIFACT = re.compile(r"\Aprobe:(?P<path>\S+?)@host:(?P<host>[a-z][a-z0-9._-]{0,63})\Z")
+
+
+def _attestations(
+    graph: PlanGraph,
+    selectors: Sequence[SealedSelector],
+    closure_paths: Mapping[str, str],
+    sealed_root: str,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[Attestation, ...], int]:
+    """The seal's totality claim, proved before a byte is written (S2, D-V2-12).
+
+    Three refusals, each aimed at a way the seal could otherwise assert less than it
+    appears to:
+
+    * a contract that is neither selected nor attested is ``UNCOVERED`` -- the plan
+      does not say how it is checked, so there is nothing to seal;
+    * an attested contract whose invariant carries no owner is a request, not a
+      grant, and a seal recording it would publish a verdict nobody gave;
+    * a ``HOST_PROBE`` artifact that is not inside this closure is a promise to run
+      something that does not exist -- the existence check can only happen here,
+      because admission reads plan bytes and never the tree.
+    """
+    graded = contract_evidence(graph)
+    uncovered = sorted(contract_id for contract_id, mode in graded.items() if mode is EvidenceMode.UNCOVERED)
+    if uncovered:
+        raise AcceptanceBundleError("seal-uncovered-contracts")
+    records = contract_attestations(graph)
+    for record in records:
+        if not record.owner or not record.reviewed_at or not record.artifact:
+            raise AcceptanceBundleError("seal-attestation-unowned")
+        if record.route == "HOST_PROBE":
+            probe = _PROBE_ARTIFACT.match(record.artifact)
+            # Closure paths are relative to the sealed root, the artifact is
+            # repo-relative: the same projection selectors go through.
+            if (
+                probe is None
+                or _relative_to(probe["path"], sealed_root, "seal-attestation-artifact-missing") not in closure_paths
+            ):
+                raise AcceptanceBundleError("seal-attestation-artifact-missing")
+        elif record.route != "APPROVAL":
+            raise AcceptanceBundleError("seal-attestation-route-invalid")
+    attested = tuple(record.contract_id for record in records)
+    if attested != attested_contracts(graph):
+        raise AcceptanceBundleError("seal-attestation-mismatch")
+    covered = {selector.ct_id for selector in selectors}
+    total = len(graph.contracts())
+    if len(covered) + len(attested) != total:
+        raise AcceptanceBundleError("seal-totality-mismatch")
+    pending = pending_contracts(graph)
+    return attested, pending, records, total
+
+
+def _bind_graph_to_bytes(graph: PlanGraph, plan_bytes: bytes) -> None:
+    """Refuse a graph that does not describe the plan bytes it is sealed with.
+
+    ``mint_seal`` is handed both a graph and the increment bytes, and until now it
+    only digested the bytes: a caller could seal a graph for one plan beside the
+    bytes of another, and ``plan_sha256`` would name a plan the graph never
+    described. The roadmap is not part of ``plan_bytes``, so the check is what the
+    bytes can prove on their own -- every authored sentence of every invariant and
+    contract appears in them, and the heading count matches.
+    """
+    try:
+        text = plan_bytes.decode("utf-8")
+    except UnicodeError:
+        raise AcceptanceBundleError("seal-plan-graph-mismatch") from None
+    if text.count("\n### INV-") + text.startswith("### INV-") != len(graph.invariants):
+        raise AcceptanceBundleError("seal-plan-graph-mismatch")
+    for invariant in graph.invariants:
+        if invariant.text not in text:
+            raise AcceptanceBundleError("seal-plan-graph-mismatch")
+    for contract in graph.contracts().values():
+        if contract.text not in text or contract.id not in text:
+            raise AcceptanceBundleError("seal-plan-graph-mismatch")
 
 
 def mint_seal(
@@ -316,14 +440,17 @@ def mint_seal(
     plan_sha256 = _plan_digest(plan_bytes)
     revision = _require_revision(revision_id)
     visibility = _require_mode(mode)
-    root = _require_sealed_root(sealed_root)
+    root = require_sealed_root(sealed_root)
     if not isinstance(acceptance_root, Path) or acceptance_root.name != "acceptance":
         raise AcceptanceBundleError("sealed-root-invalid")
     if supersedes_sha256 is not None:
         _require_sha256(supersedes_sha256, "supersedes-invalid")
     closure = _collect(acceptance_root)
+    closure_paths = _closure_paths(closure)
+    _bind_graph_to_bytes(graph, plan_bytes)
     resolved = resolve_selectors(graph, collected)
-    selectors = _bind_selectors(graph, resolved, _closure_paths(closure), root)
+    selectors = _bind_selectors(graph, resolved, closure_paths, root)
+    attested, pending, attestations, contracts_total = _attestations(graph, selectors, closure_paths, root)
     bundle = AcceptanceBundle(
         plan_sha256=plan_sha256,
         revision_id=revision,
@@ -334,7 +461,10 @@ def mint_seal(
         identity=_bind_identity(identity),
         supersedes_sha256=supersedes_sha256,
         seal_sha256="",
-        attested=attested_contracts(graph),
+        attested=attested,
+        contracts_total=contracts_total,
+        pending=pending,
+        attestations=attestations,
     )
     return AcceptanceBundle(
         plan_sha256=bundle.plan_sha256,
@@ -347,6 +477,9 @@ def mint_seal(
         supersedes_sha256=bundle.supersedes_sha256,
         seal_sha256=_sha256(_canonical(_record(bundle))),
         attested=bundle.attested,
+        contracts_total=bundle.contracts_total,
+        pending=bundle.pending,
+        attestations=bundle.attestations,
     )
 
 
@@ -405,6 +538,77 @@ def _load_identity(raw: object) -> tuple[PinnedIdentity, ...]:
     return tuple(identity)
 
 
+_ATTESTATION_FIELDS = frozenset(
+    {"contract_id", "invariant_id", "reason", "route", "artifact", "owner", "reviewed_at", "scope_sha256"}
+)
+
+
+def _load_attestations(raw: object) -> tuple[Attestation, ...]:
+    """Parse the attestation block; every field is checked, none is defaulted."""
+    if not isinstance(raw, list) or len(raw) > MAX_ATTESTED:
+        raise AcceptanceBundleError("seal-malformed")
+    records: list[Attestation] = []
+    for item in raw:
+        if not isinstance(item, dict) or set(item) != _ATTESTATION_FIELDS:
+            raise AcceptanceBundleError("seal-malformed")
+        contract_id = _require_text(item["contract_id"], "seal-malformed", limit=128)
+        if not is_contract_id(contract_id):
+            raise AcceptanceBundleError("seal-malformed")
+        reason = _require_text(item["reason"], "seal-malformed", limit=64)
+        route = _require_text(item["route"], "seal-malformed", limit=64)
+        # The route is a function of the reason, so a record that disagrees with
+        # itself is refused here rather than trusted as two independent claims.
+        if reason not in DISPOSITION_REASONS or DISPOSITION_ROUTES.get(reason) != route:
+            raise AcceptanceBundleError("seal-attestation-route-invalid")
+        reviewed_at = _require_text(item["reviewed_at"], "seal-malformed", limit=32)
+        try:
+            date.fromisoformat(reviewed_at)
+        except ValueError:
+            raise AcceptanceBundleError("seal-malformed") from None
+        records.append(
+            Attestation(
+                contract_id=contract_id,
+                invariant_id=_require_text(item["invariant_id"], "seal-malformed", limit=128),
+                reason=reason,
+                route=route,
+                artifact=_require_text(item["artifact"], "seal-malformed"),
+                owner=_require_text(item["owner"], "seal-malformed", limit=64),
+                reviewed_at=reviewed_at,
+                scope_sha256=_require_sha256(item["scope_sha256"], "seal-malformed"),
+            )
+        )
+    return tuple(records)
+
+
+def _require_totality(
+    selectors: Sequence[SealedSelector],
+    attested: tuple[str, ...],
+    pending: tuple[str, ...],
+    attestations: tuple[Attestation, ...],
+    contracts_total: object,
+) -> int:
+    """The record's own arithmetic, re-proved on read (S2).
+
+    A digest proves a seal was not edited; it cannot prove the seal *says*
+    something complete. These four identities are what make it complete: the
+    attestation block describes exactly ``attested`` (no extra, no missing), the
+    ``pending`` list is exactly the host-owed subset, the ids are unique, and the
+    covered-plus-attested total equals the contract count the plan had.
+    """
+    if isinstance(contracts_total, bool) or not isinstance(contracts_total, int) or contracts_total < 1:
+        raise AcceptanceBundleError("seal-malformed")
+    if len({selector.ct_id for selector in selectors}) + len(attested) != contracts_total:
+        raise AcceptanceBundleError("seal-totality-mismatch")
+    ids = tuple(item.contract_id for item in attestations)
+    if ids != attested or len(set(ids)) != len(ids):
+        raise AcceptanceBundleError("seal-attestation-mismatch")
+    if len(set(pending)) != len(pending) or not set(pending) <= set(attested):
+        raise AcceptanceBundleError("seal-attestation-mismatch")
+    if tuple(item.contract_id for item in attestations if item.route == "HOST_PROBE") != pending:
+        raise AcceptanceBundleError("seal-attestation-mismatch")
+    return contracts_total
+
+
 def load_seal(raw: bytes) -> AcceptanceBundle:
     """Parse and verify one seal record, or refuse with a closed rule."""
     if not isinstance(raw, bytes) or not raw or len(raw) > MAX_SEAL_BYTES:
@@ -428,15 +632,23 @@ def load_seal(raw: bytes) -> AcceptanceBundle:
         digest=_require_sha256(body.get("closure_sha256"), "seal-malformed"),
     )
     supersedes = body.get("supersedes_sha256")
+    selectors = _load_selectors(body.get("selectors"))
+    attested = _require_contract_ids(body.get("attested"))
+    pending = _require_contract_ids(body.get("pending"))
+    attestations = _load_attestations(body.get("attestations"))
+    contracts_total = _require_totality(selectors, attested, pending, attestations, body.get("contracts_total"))
     return AcceptanceBundle(
         plan_sha256=_require_sha256(body.get("plan_sha256"), "seal-malformed"),
         revision_id=_require_revision(body.get("revision_id")),
-        sealed_root=_require_sealed_root(body.get("sealed_root")),
+        sealed_root=require_sealed_root(body.get("sealed_root")),
         closure=closure,
-        selectors=_load_selectors(body.get("selectors")),
+        selectors=selectors,
         mode=_require_mode(body.get("mode")),
         identity=_load_identity(body.get("identity")),
-        attested=_require_contract_ids(body.get("attested")),
+        attested=attested,
+        contracts_total=contracts_total,
+        pending=pending,
+        attestations=attestations,
         supersedes_sha256=None if supersedes is None else _require_sha256(supersedes, "supersedes-invalid"),
         seal_sha256=recorded,
     )
@@ -510,6 +722,16 @@ def verify_plan(bundle: AcceptanceBundle, plan_bytes: bytes) -> None:
         raise AcceptanceBundleError("seal-invalid")
     if _plan_digest(plan_bytes) != bundle.plan_sha256:
         raise AcceptanceBundleError("plan-digest-mismatch")
+
+
+def require_revision_id(value: object) -> str:
+    """A well-formed revision identity, or the closed ``revision-invalid`` refusal.
+
+    Public so a caller that has to *record* a revision it did not seal (the current
+    candidate revision in CT-3.6) validates it with the same rule the seal uses,
+    instead of copying the pattern and letting the two drift.
+    """
+    return _require_revision(value)
 
 
 def verify_revision(bundle: AcceptanceBundle, revision_id: str) -> None:
