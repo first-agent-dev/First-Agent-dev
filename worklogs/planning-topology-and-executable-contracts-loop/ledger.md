@@ -14682,3 +14682,37 @@ killed. All restored. No code here implements the E683 lifecycle; E657 stays act
 Final combined execution/client/service/bootstrap/seal/publication/verify/acquisition/child
 bank after E684: 714 passed. Ruff/format and scoped mypy (two modules), environment check,
 394 doc links and planned E2E coverage pass; full E674 gate remains unrun.
+
+### E685 — prevent identity-changing seal load and stale in-memory store (2026-11-23)
+
+While preparing E683 incarnation/lineage, a source review found that the record loader
+accepted a rehashed unknown top-level field, duplicate JSON keys, duplicate identity names,
+and noncanonical bytes. A C3 test reproduced the concrete first case with private state,
+real authority, service and client over AF_UNIX: the pointer named the forged digest,
+but the service serialized the parsed object after dropping the unknown field and the
+client accepted a *different* digest. This required alteration of authority-private state;
+we do not claim an unprivileged coder could perform it. The tests failed before the fix.
+
+`acceptance_bundle.load_seal` now requires the exact canonical bytes of the validated
+returned bundle, refuses duplicate identity labels and noncanonical identity ordering,
+and classifies parser recursion as malformed. Thus no ignored field, duplicate key,
+alternate encoding or sorted-field normalization can silently change the seal on read.
+`SealStore.store` also checks the serialized bundle round-trip equals the incoming object
+before any directory, record or pointer write: a stale `seal_sha256` previously permitted a
+record under the wrong name/pointer. Tests cover fresh and existing pointers with no extra
+or modified artifacts. This tightens the stated canonical-record contract; manually
+pretty-printed or otherwise noncanonical old records now fail closed rather than being
+silently normalized. The canonical writer already emits accepted bytes; no migration for
+noncanonical external records is claimed.
+
+C3 real-service/UDS tests prove unknown field, duplicate key, duplicate identity and
+noncanonical records return CORRUPT_STATE without changing pointer/record; the origin is a
+synthetic fixture and not fresh-project evidence. C0 adds unordered identity; both fresh
+and existing store cases assert no mutation. TEST-EDITS: extended existing bundle, seal
+store, and service tests; existing assertions retained. Four manual mutants killed:
+canonical validation at UDS caller edge, duplicate identity at UDS, ordering guard, and
+store pre-effect roundtrip. Restored all. Final 16-module bank **1067 passed**;
+Ruff/format, scoped mypy for the two production modules, environment check and diff pass.
+This hardens identity integrity needed for E683 but does **not** issue an incarnation,
+authorize recovery, wire controller private custody or prove mode A. STEP9A, E657, full
+`just check`, all-module mutation sweep and W4 remain open.

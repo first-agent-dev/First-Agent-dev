@@ -11,7 +11,8 @@ recovery policy in E683: explicit trusted deletion closes an incarnation and fre
 slug; explicit trusted recovery after seal loss revalidates current inputs and establishes
 a new evidence lineage. No silent coder-triggered reset; old verification/mutation
 results cannot carry over. Coordinated backup/restore remains for exact history and W4.
-See [ledger E683/E684](planning-topology-and-executable-contracts-loop/ledger.md) and the
+E685 hardens canonical seal identity and stale-digest rejection; it does not implement
+incarnation issuance or reset. See [ledger E683–E685](planning-topology-and-executable-contracts-loop/ledger.md) and the
 [V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next

@@ -102,6 +102,10 @@ class SealStore:
         if not isinstance(bundle, AcceptanceBundle):
             raise AcceptanceBundleError("seal-invalid")
         raw = seal_bytes(bundle)
+        # seal_bytes derives a digest from fields; an in-memory object may still
+        # carry a stale digest. Refuse before making a record or swinging a pointer.
+        if load_seal(raw) != bundle:
+            raise AcceptanceBundleError("seal-record-mismatch")
         record = self._record_path(bundle.seal_sha256)
         # Validate the pointer move *before* writing the record: a refused supersede that had
         # already appended a record would leave an orphan seal nobody's pointer names, and the

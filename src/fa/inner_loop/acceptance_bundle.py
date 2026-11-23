@@ -534,6 +534,8 @@ def _load_identity(raw: object) -> tuple[PinnedIdentity, ...]:
         if not _LABEL_RE.match(name):
             raise AcceptanceBundleError("seal-malformed")
         identity.append(PinnedIdentity(name=name, sha256=_require_sha256(item["sha256"], "seal-malformed")))
+    if len({item.name for item in identity}) != len(identity):
+        raise AcceptanceBundleError("seal-malformed")
     return tuple(identity)
 
 
@@ -614,7 +616,7 @@ def load_seal(raw: bytes) -> AcceptanceBundle:
         raise AcceptanceBundleError("seal-malformed")
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeError, ValueError):
+    except (UnicodeError, ValueError, RecursionError):
         raise AcceptanceBundleError("seal-malformed") from None
     if not isinstance(payload, dict):
         raise AcceptanceBundleError("seal-malformed")
@@ -636,7 +638,7 @@ def load_seal(raw: bytes) -> AcceptanceBundle:
     pending = _require_contract_ids(body.get("pending"))
     attestations = _load_attestations(body.get("attestations"))
     contracts_total = _require_totality(selectors, attested, pending, attestations, body.get("contracts_total"))
-    return AcceptanceBundle(
+    bundle = AcceptanceBundle(
         plan_sha256=_require_sha256(body.get("plan_sha256"), "seal-malformed"),
         revision_id=_require_revision(body.get("revision_id")),
         sealed_root=require_sealed_root(body.get("sealed_root")),
@@ -651,6 +653,12 @@ def load_seal(raw: bytes) -> AcceptanceBundle:
         supersedes_sha256=None if supersedes is None else _require_sha256(supersedes, "supersedes-invalid"),
         seal_sha256=recorded,
     )
+    # The raw identity must be the identity of the object the loader returns.
+    # This rejects ignored fields, duplicate keys, noncanonical ordering, and
+    # alternate encodings instead of silently changing a seal at the read edge.
+    if seal_bytes(bundle) != raw or tuple(sorted(bundle.identity, key=lambda item: item.name)) != bundle.identity:
+        raise AcceptanceBundleError("seal-malformed")
+    return bundle
 
 
 def _fsync_directory(directory: Path) -> None:

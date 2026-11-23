@@ -2054,3 +2054,71 @@ def test_private_seal_store_interrupt_before_pointer_fences_restart(
             restarted, Operation.ACQUIRE_WRITER, {"workspace_id": ids["workspace_id"]}, request_id="f" * 32
         )
         assert _error(writer) == "WORKSPACE_BUSY" and not pointer.exists()
+
+
+@pytest.mark.parametrize("damage", ["unknown-field", "duplicate-field", "duplicate-identity", "noncanonical"])
+def test_private_seal_read_refuses_ambiguous_or_noncanonical_record(site: Site, damage: str) -> None:
+    """C3: the UDS reply cannot silently change the identity of a private seal."""
+    from fa.execution.client import ExecutionUncertainError
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import _acceptance_store_case, _private_plan, _register_acceptance_fixture
+
+    root, plan_ref = _acceptance_store_case(site)
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        service.authority.store_acceptance_seal(
+            PEER,
+            ACTOR,
+            capability=grant.capability,
+            project_slug="demo",
+            plan_ref=plan_ref,
+            seal_record=seal_bytes(bundle),
+            deadline=until(),
+        )
+        private = _private_plan(site, ids, plan_ref)
+        pointer = private / ".fa/seal-current.json"
+        data = json.loads(seal_bytes(bundle))
+        if damage in {"unknown-field", "duplicate-identity"}:
+            del data["seal_sha256"]
+            if damage == "unknown-field":
+                data["fabricated_lineage"] = "replacement"
+            else:
+                row = {"name": "runner", "sha256": "a" * 64}
+                data["identity"] = [row, row]
+            body = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+            digest = hashlib.sha256(body).hexdigest()
+            data["seal_sha256"] = digest
+            raw = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        elif damage == "duplicate-field":
+            digest = bundle.seal_sha256
+            raw = seal_bytes(bundle).replace(b'{"attestations":', b'{"kind":"ACCEPTANCE-BUNDLE","attestations":', 1)
+        else:
+            digest = bundle.seal_sha256
+            raw = json.dumps(data).encode("utf-8")
+        record = private / ".fa/seals" / f"{digest}.json"
+        record.write_bytes(raw)
+        pointer.write_text(json.dumps({"schema_version": 1, "seal_sha256": digest}), encoding="utf-8")
+        before = pointer.read_bytes(), record.read_bytes()
+        client = ExecutionClient(service.socket_path, server_uid=os.getuid(), rpc_timeout_ms=5000)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            with pytest.raises(ExecutionUncertainError) as error:
+                client.read_acceptance_seal(
+                    ACTOR,
+                    grant=grant,
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    expected_revision=ids["revision_id"],
+                    deadline=until(),
+                )
+            assert error.value.code == "CORRUPT_STATE"
+            assert (pointer.read_bytes(), record.read_bytes()) == before
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()

@@ -1023,3 +1023,21 @@ def test_oversized_record_is_not_read_beyond_limit(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(module.os, "read", observed)
     assert _store_rule(store.current) == "seal-malformed"
     assert total == MAX_SEAL_BYTES + 1
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_store_refuses_a_bundle_whose_digest_does_not_describe_its_fields(tmp_path: Path, existing: bool) -> None:
+    """No record, pointer, or directory may be created from a stale in-memory digest."""
+    bundle = _seal(tmp_path)
+    forged = replace(bundle, revision_id="rev-" + "f" * 32)
+    store = SealStore(tmp_path)
+    if existing:
+        store.store(bundle)
+        before = store.pointer_path.read_bytes()
+    assert _store_rule(lambda: store.store(forged)) == "seal-record-mismatch"
+    if existing:
+        assert store.pointer_path.read_bytes() == before
+        assert store.current() == bundle
+        assert len(list(store.directory.iterdir())) == 1
+    else:
+        assert not store.pointer_path.exists() and not store.directory.exists()

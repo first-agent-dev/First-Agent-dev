@@ -951,3 +951,23 @@ def test_a_report_from_outside_the_closure_is_refused(tmp_path: Path) -> None:
         )
         == "collection-nodeid-outside-closure"
     )
+
+
+@pytest.mark.parametrize(
+    "damage", ["unknown-field", "duplicate-field", "duplicate-identity", "unordered-identity", "noncanonical"]
+)
+def test_seal_loader_refuses_ambiguous_or_noncanonical_record(tmp_path: Path, damage: str) -> None:
+    """C0: a seal digest must identify exactly the object the loader exposes."""
+    bundle = _mint(_sealed_tree(tmp_path))
+    if damage == "unknown-field":
+        raw = _hostile(bundle, fabricated_lineage="replacement")
+    elif damage == "duplicate-field":
+        raw = seal_bytes(bundle).replace(b'{"attestations":', b'{"kind":"ACCEPTANCE-BUNDLE","attestations":', 1)
+    elif damage == "duplicate-identity":
+        row = {"name": "runner", "sha256": "a" * 64}
+        raw = _hostile(bundle, identity=[row, row])
+    elif damage == "unordered-identity":
+        raw = _hostile(bundle, identity=[{"name": "z", "sha256": "a" * 64}, {"name": "a", "sha256": "b" * 64}])
+    else:
+        raw = json.dumps(json.loads(seal_bytes(bundle))).encode("utf-8")
+    assert _rule(lambda: load_seal(raw)) == "seal-malformed"

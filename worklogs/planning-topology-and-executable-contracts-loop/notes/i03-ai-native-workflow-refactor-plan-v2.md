@@ -1517,3 +1517,10 @@ implemented**. Fixed SHA-only `AcceptanceBundle` and `VerificationIdentity` curr
 no incarnation identity: identical plan/revision/closure inputs mint identical seal bytes,
 so a new seal must have an authority-controlled distinct lineage or all evidence consumers
 must bind a separate authority-proved lineage. Component mocks cannot prove this lifecycle.
+
+**E685:** exact canonical private seal read is enforced: rehashed unknown fields,
+duplicate keys/identity, and noncanonical records can no longer turn one pointer digest
+into a different client-visible digest; stale in-memory digest cannot create a store
+record or pointer. Real service/UDS, no-effect tests and four killed mutants are recorded
+in ledger. This is identity-integrity preparation only, not issuance of E683's distinct
+lineage or authorization of reset; staged origin and E657 remain open.
