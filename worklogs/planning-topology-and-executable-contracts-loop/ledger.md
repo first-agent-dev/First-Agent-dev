@@ -13236,3 +13236,63 @@ address.
 the stage reader, the scaffold's `acceptance/pytest.ini`, `kill_declared` (N2) and the sealed `attestations` in the
 artifact and eval block (N3), evidenced then by a 19-test bank, an affected bucket of 675, the full suite at 8411
 passed / 1 pre-existing red, the live bank at 581 passed, and 14/14 mutants.
+
+### E627 — Q-V2-SLICE3-5 grew a second axis, and Q-V2-SLICE3-6 was opened without a runner (2026-11-22, recorded 2026-11-23)
+
+**Why this entry exists late:** commit `c4d528d` changed the plan and nothing else, and a documentation-only change still
+has provenance. Two edits, both forcing.
+
+**The obligation axis.** The row `Q-V2-SLICE3-5` asked only what shape `TARGET-ID` should have. But the V2 grammar
+requires, for every declared row, a valid `CT`/`TEST-ID` — and requires **no row at all**: `plan_v2._admit_kill_targets`
+(`:610–615`) validates the rows it is given, while V1's `slice_verification.validate_kill_directives` (`:1177+`) emits
+`kill-directive-missing` for every `FUNCTIONAL` contract and exempts `CONSTRAINT`/`PRESERVATION` (CT54). So a `FUNCTIONAL`
+contract on the V2 route can reach `proven` without a mutation ever being declared, which is **strictly weaker** than the
+frozen legacy route. A shape decision that ignores that would name a field nobody is obliged to fill; the axis is now in
+the row, next to the options.
+
+**The new blocker.** Scoping "option D" (the executable mutation operator the operator prioritised) exposed a question
+that precedes it: the sealed verifier runs on a pinned read-only cell, and the mutation engine's overlay is built on the
+controller host, so the two cannot meet without a decision. Filed as `Q-V2-SLICE3-6` with three options — (a) a
+harness-owned cell-side bootstrap reusing the pure AST transform and `_PROVENANCE_PROBE`, (b) a second pinned view of a
+mutated tree, which needs the immutable payload store `D-V2-5` forbids, (c) host execution, the substrate F10 removed —
+and (d) deferring, which is where the code stands.
+
+**Measured, not assumed:** `KillOperator` has exactly two members and `KillDirective` is `(operator, path, symbol,
+callee, line)`; `_MUTATION_ROOTS = {"src","scripts"}` (`slice_verification.py:228`); `parse_kill_directives` accepts only
+`kill: <operator> <path>::<symbol> [-> <callee>]` (`:1049`); the authoring prompt teaches `TARGET-ID:
+src/widget.py::parse` (`prompt.py:1299–1300`) while every fixture writes a dotted id; and `PlanGraph.kill_targets()` is
+the only accessor that lets a report tell "declared" from "none declared". No code changed in `c4d528d`.
+
+### E628 — the two open questions got a brief another agent can start from, and three documentation defects died with it (2026-11-23)
+
+**The brief.** `notes/q-v2-slice3-5-6-blockers-and-context-brief-2026-11-23.md` states both blockers with addresses, the
+option comparison and criteria for "done", the order of work after the answers, the gate debt this branch carries, the
+list of settled decisions that must not be re-opened, a reading list in priority order, and the dead ends already paid
+for. It exists because the plan is 193 KB and the next reader should not have to rediscover which parts already hold.
+
+**One premise in the plan was wrong, so the plan was corrected rather than contradicted.** `Q-V2-SLICE3-6` said the
+existing mutation engine is "host-side by construction". Measured: `slice_verification._run_kill_check` (`:2061`)
+dispatches to `_run_inband_kill_check` (`:1992`) whenever `executor.writes_are_visible is False` (`:2101–2114`), and that
+path already builds one self-contained cell-side command (`_build_inband_kill_command`, `:1873`) that copies `src`
+(+`scripts`) into the cell's own scratch, writes the mutated bytes, proves with `_PROVENANCE_PROBE` that the overlay is
+the imported module, runs pytest and returns JUnit in-band between the `<<<FA-JUNIT-REPORT>>>` markers. Option (a) is
+therefore a **generalisation of landed code**, not a new substrate. What is actually missing is five named things, now
+in the row and in the brief §3.2: no baseline run inside the cell; `KILL_CHECK_COMMAND` (`:1781`) instead of the sealed
+argv; no `WorkspacePort` on the sealed route (`acceptance_collection.verify_sealed_acceptance`, `:406`); and
+`kill_attribution.run_node_oracle` (`:247`) writes its report to a host temp directory (`:265`), so through a managed
+executor every baseline reads as `MISSING` — a landed defect the 35-test bank cannot see, because all of it runs against
+`FakeHost` (`tests/test_ai_native_kill_attribution.py:155`); and `_junit_block` (`:832`) refuses more than one block, so
+two runs must be two commands.
+
+**Three documentation defects, all measurable, all fixed in the same change.** (1) `Q-V2-SLICE3-6` said "the operator the operator
+prioritised" — the noun survived from the sentence the clause was rewritten out of, so the row named the person twice and the
+option zero times. (2) The plan's §7 and ratified-decisions tables
+declared three columns while four `Q-V2-*`/`D-V2-*` rows carried four cells, and a renderer drops the extra cell — so
+the "Measured" evidence of every kill-target row was invisible to the reader the row exists for. Both tables now declare
+the fourth column (`Evidence (measured)`) and every row is padded to it: 10 + 8 rows. (3) CT-2.1's cell carried
+`AUTO_SELECT_EXISTING (default) | CREATE_NEW` inside one code span, and the literal pipe split the row; it is escaped.
+A cell-count scan over both tables and the new brief returns zero ragged rows.
+
+**Not claimed here:** no test ran for these changes (documentation only), and the full suite for `c4d528d` was still
+running when this entry was written — the gate recording (`gate_tracker.py record`, `ruff-format` included per E613) and
+pyrefly remain owed for the branch, as E623 already says for the 3.11-era verification.
