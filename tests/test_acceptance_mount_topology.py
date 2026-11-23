@@ -284,3 +284,117 @@ def test_top_level_readonly_bind_blocks_ancestor_and_file_changes(tmp_path: Path
         "chmod": errno.EROFS,
         "hardlink": errno.EXDEV,
     }
+
+
+_LANDLOCK = r"""
+import ctypes, errno, json, os, sys
+from pathlib import Path
+
+libc = ctypes.CDLL(None, use_errno=True)
+CREATE, ADD, RESTRICT = 444, 445, 446
+WRITE, REMOVE, MAKE, REFER = 1 << 1, 1 << 5, 1 << 8, 1 << 13
+handled = WRITE | REMOVE | MAKE | REFER
+class Ruleset(ctypes.Structure):
+    _fields_ = [("handled", ctypes.c_uint64)]
+class PathRule(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [("allowed", ctypes.c_uint64), ("fd", ctypes.c_int32)]
+def call(number, *args):
+    value = libc.syscall(number, *args)
+    if value < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return value
+project = Path(sys.argv[1]); mode = sys.argv[2]
+attr = Ruleset(handled)
+ruleset = call(CREATE, ctypes.byref(attr), ctypes.sizeof(attr), 0)
+def allow(path, rights):
+    fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+    try:
+        rule = PathRule(rights, fd)
+        call(ADD, ruleset, 1, ctypes.byref(rule), 0)
+    finally:
+        os.close(fd)
+allow(project, REMOVE | MAKE | REFER | (WRITE if mode == "wide" else 0))
+allow(project / "ledger.md", WRITE)
+allow(project / "notes", handled)
+if libc.prctl(38, 1, 0, 0, 0) != 0:
+    error = ctypes.get_errno()
+    raise OSError(error, os.strerror(error))
+call(RESTRICT, ruleset, 0)
+os.close(ruleset)
+status = Path("/proc/self/status").read_text().splitlines()
+cap_eff = next(line.split()[1] for line in status if line.startswith("CapEff:"))
+results = {"effective_caps": int(cap_eff, 16)}
+def attempt(name, action):
+    try:
+        action()
+    except OSError as exc:
+        results[name] = exc.errno
+    else:
+        results[name] = 0
+attempt("ledger_append", lambda: (project / "ledger.md").open("a").write("append\n"))
+attempt("project_temp", lambda: (project / "ledger.tmp").write_text("replacement\n"))
+results["project_temp_exists"] = (project / "ledger.tmp").exists()
+attempt("other_write", lambda: (project / "other.md").write_text("changed\n"))
+(project / "notes" / "temp").write_text("replacement\n")
+attempt("note_to_ledger", lambda: os.replace(project / "notes" / "temp", project / "ledger.md"))
+attempt("ledger_append_after_replace", lambda: (project / "ledger.md").open("a").write("again\n"))
+(project / "notes" / "other-temp").write_text("forged\n")
+attempt("note_to_other", lambda: os.replace(project / "notes" / "other-temp", project / "other.md"))
+results["ledger"] = (project / "ledger.md").read_text()
+results["other"] = (project / "other.md").read_text()
+print(json.dumps(results))
+"""
+
+
+@pytest.mark.parametrize("mode", ["narrow", "wide"])
+def test_landlock_directory_rights_and_atomic_ledger_edit(tmp_path: Path, mode: str) -> None:
+    import ctypes
+
+    if shutil.which("setpriv") is None:
+        pytest.skip("Landlock diagnostic requires setpriv")
+    if os.uname().machine not in {"x86_64", "aarch64"}:
+        pytest.skip("Landlock syscall numbers in this diagnostic are x86_64/aarch64 only")
+    libc = ctypes.CDLL(None, use_errno=True)
+    abi = libc.syscall(444, 0, 0, 1)
+    if abi < 2:
+        pytest.skip(f"Landlock ABI 2 unavailable: {abi}, errno {ctypes.get_errno()}")
+    project = tmp_path / mode
+    (project / "notes").mkdir(parents=True)
+    (project / "ledger.md").write_text("initial\n")
+    (project / "other.md").write_text("other\n")
+    run = subprocess.run(
+        [
+            "setpriv",
+            "--bounding-set=-all",
+            "--inh-caps=-all",
+            "--ambient-caps=-all",
+            "--no-new-privs",
+            sys.executable,
+            "-c",
+            _LANDLOCK,
+            str(project),
+            mode,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=20,
+    )
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result == {
+        "effective_caps": 0,
+        "ledger_append": 0,
+        "project_temp": errno.EACCES if mode == "narrow" else 0,
+        "project_temp_exists": True,
+        "other_write": errno.EACCES if mode == "narrow" else 0,
+        "note_to_ledger": 0,
+        "ledger_append_after_replace": errno.EACCES if mode == "narrow" else 0,
+        "note_to_other": 0,
+        "ledger": "replacement\n" if mode == "narrow" else "replacement\nagain\n",
+        "other": "forged\n",
+    }
+    assert (project / "ledger.md").read_text() == result["ledger"]
+    assert (project / "other.md").read_text() == "forged\n"

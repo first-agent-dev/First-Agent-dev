@@ -1729,3 +1729,35 @@ No production producer/EDGE claim. Related topology/view-IO/purposes/views/publi
 architecture that enforces the complete current-project working-path allowlist for shell
 *before* user work is lost while retaining both atomic ledger editing and source continuity;
 no new broad project permission is authorized. E657/E674/W4 remain open.
+
+### E690 — Landlock path-rights probe (local diagnostic, not selected architecture)
+
+`tests/test_acceptance_mount_topology.py` now runs two real Landlock ABI-2 rulesets in
+capability-free subprocesses on this Linux host (x86_64, kernel 6.1.158+). The narrow
+ruleset gives the project directory MAKE_REG/REMOVE_FILE/REFER, grants WRITE_FILE only
+to the existing ledger inode and grants the notes directory the handled rights. Direct
+ledger append succeeds, direct other-file write and ordinary sibling-temp write return
+EACCES; importantly the failed temp write leaves an empty file. A temp prepared in notes
+can nevertheless be renamed over *either* ledger or another existing project file: parent
+reads confirm the other file is actually overwritten. After the ledger replacement, a
+second append returns EACCES. The wide ruleset grants WRITE_FILE to the project directory;
+ordinary temp/write and the second append succeed, but direct other-file write and the same
+rename-over-other also succeed. The tests assert errno and actual external file contents.
+
+These outcomes reject **these two** rulesets as complete implementations of E686/Q-V2-
+WRITE-SCOPE-1=A; they do not prove every combination of Landlock, mounts, filesystem and
+supervisor mediation impossible. Landlock has its own ABI, inherited-FD and supported-right
+constraints; Docker seccomp/host preflight and lifecycle integration have not been proved.
+`/dev/fuse` exists and can be opened here, but that does not prove a FUSE filesystem is
+installed, mountable, safe, available on the deployment host, or an accepted new dependency.
+No FUSE implementation or policy change is selected by this audit. Further exploration
+must preserve early denial, atomic working edits and authority snapshot identity, and should
+compare realistic deployment requirements before selecting any new production dependency.
+
+C3 syscall/component diagnostic only; not authority/UDS, C1, Docker or host proof. Three
+manual diagnostic mutants killed/restored: remove ledger file grant, project MAKE_REG, or
+project REFER. No production producer/EDGE claim. Targeted five-module bank 281 passed,
+scoped Ruff/format and `MYPYPATH=src` mypy pass; environment and diff check pass. On an
+unsupported ABI/architecture or absent `setpriv`, these tests explicitly skip and must not
+count as proof for E674 or W4. TEST-EDITS: extend `tests/test_acceptance_mount_topology.py`;
+existing assertions retained. E657 remains active; STEP9A and W4 remain open.

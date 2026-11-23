@@ -14814,3 +14814,25 @@ Four manual diagnostic mutants killed/restored: project bind, acceptance bind, i
 bind, and real rooted ledger write; these are not production producer/EDGE kills. Related
 bank 279 passed; scoped Ruff/format, `MYPYPATH=src` mypy and diff passed. E657/STEP9A and
 E674 remain open; W4 ledger host E2E is planned only.
+
+### E690 — Landlock path rights versus ledger atomic replacement (2026-11-23)
+
+Two actual Landlock ABI-2 rulesets were tested in capability-free subprocesses, not Docker.
+The narrow policy grants MAKE_REG/REMOVE_FILE/REFER to the project, WRITE_FILE to the
+existing ledger, and handled rights to notes. Ledger append succeeds, direct sibling write
+and a sibling-temp write fail EACCES, but the failed temp write leaves a file. Renaming a
+writable notes temp over ledger succeeds; subsequently ledger append fails EACCES. More
+importantly, renaming another notes temp over an existing otherwise write-protected project
+file also succeeds; parent reads verify the overwrite. A broad project WRITE_FILE grant
+allows ordinary temp writes and later ledger append but also directly writes the other file.
+This rejects the two tested policies, not every Landlock configuration or combined design.
+The test checks actual side effects in the parent namespace as well as errno and zero caps.
+
+`/dev/fuse` is present and openable here, not proof of a safe installed/mountable FUSE
+implementation or production-host prerequisite. Landlock seccomp/ABI, FD and metadata
+rights, host deployment, alias/ABA, authority snapshot/publication and real workflow remain
+unproved. No production mechanism, producer/EDGE or host PASS claimed; E657 still blocks.
+TEST-EDITS: extended existing topology diagnostic. Three hand mutants removing file WRITE,
+project MAKE_REG, or REFER killed/restored. Target bank 281 passed; scoped Ruff/format,
+source-path mypy, environment and diff pass. Unsupported-ABI/platform cases explicitly skip,
+not a passing E674/W4 result. The W4 ledger-append E2E obligation remains planned.
