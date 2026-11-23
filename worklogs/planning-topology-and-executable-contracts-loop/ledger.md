@@ -14569,3 +14569,67 @@ operations), concurrent invocation ordering, pending candidate-publication inter
 and durable state across controller loss need separate audit; this does not establish a
 universal atomic fence. Origin/fresh-project, independent collection and custody blockers
 remain as E679/E680; keep E657 closed to V2 coder stages.
+
+### E682 — source audit: project freshness, origin and STEP9A remainder (2026-11-23)
+
+Source review, not an implementation or new runtime/mutation result. `register_new` creates
+an absent workspace root but can copy an approved seed; `register_existing` snapshots an
+existing root, and `_register` writes the initial revision/current/workspace metadata
+without any project history. Neither a new workspace binding nor the present absence of a
+`worklogs/<slug>` directory establishes that the slug has never had a seal. In particular,
+a state-lost, re-registered existing workspace must not acquire a fresh-history proof just
+because its current snapshot is empty. Coherent rollback of all coordinated state remains
+outside the already-ratified MVP scope; state loss or unprovable provenance is not evidence
+of freshness.
+
+The authoring path seeds through the stage's WRITE port (`cli.py::_seed_scaffold_if_authoring`)
+and finishes via ordinary REVISION publication; the immutable REVISION intent explicitly has
+`target_relative=None`, and recovery distinguishes pre/post pointer using `current.json`.
+`_record_acceptance_origin` is called only by completed BOOTSTRAP install/recovery, not that
+REVISION path. E679 is a real-service witness for the resulting refusal. The controller's
+`_seal_published_project` and `_stage_acceptance_bundle` still use `SealStore(ctx.workspace)`;
+private store/read transport does not yet replace them and E657 remains false.
+
+BOOTSTRAP's `RENAME_NOREPLACE` establishes absence at the instant of install, not absence
+throughout a workspace's history. `install_project` checks the live destination and
+`_record_acceptance_origin` creates the per-project origin if absent; the current source
+has no independent workspace-wide tombstone/history check on this branch. **Potential
+loss/recreate gap, source inference only:** if an old project is validly removed by a
+permitted unbound publication and its origin/private evidence is lost, a later install of
+the same slug appears able to create a fresh origin. Existing real-bootstrap loss test
+covers loss followed by re-registration while the project still exists, not this sequence.
+Before claiming or fixing the gap, reproduce the full public authority lifecycle and any
+applicable publication restrictions; do not call it experimentally confirmed yet.
+Likewise the acceptance-boundary validator is conditional on a plan-bound ordinary seal,
+not a global proof of all project creation/deletion routes.
+
+Recommended candidate (subject to implementation proof): a durable authority-private,
+workspace-bound monotonic project-history/coverage anchor, initialized only at a trusted
+registration/provisioning boundary and never auto-created for an already-existing binding
+with unknown history. Registration snapshots every relevant pre-existing project as
+historical/unknown, including seed contents; treat untrusted re-registration/legacy
+bindings as unknown, not fresh, unless restored/recovered with adequate independent proof.
+A history entry/tombstone is never deleted when a project disappears. Authority-controlled
+creation is allowed only against complete valid history and reserves a never-seen slug;
+its durable operation identity, base/next revision and history transition must be tied to
+REVISION and BOOTSTRAP forward/recovery semantics. All creation/deletion paths, malformed
+entries, bounds, replay, concurrent and crash paths need coverage; choose exact storage
+representation after checking existing constraints, not a second independent trust service.
+If history/coverage is lost, refuse automatic mint/provisioning; preserve the ratified
+coordinated backup/restore and W4 witness. No guarantee against a coherent rollback of the
+entire coordinated state is implied. An explicit authority-scoped bootstrap operation for
+staged authoring is an alternative, but cannot avoid historical-slug proof or recovery by
+itself, and must preserve the staged authoring/repair workflow.
+
+STEP9A remainder: (1) project history/origin and recovery plus real fresh-stage private
+store/read integration and uncertainty fences; (2) independently trustworthy collection,
+complete closure/runner binding and authority semantic provenance; (3) actual coder-visible
+mode-A shell/file read-only projection, ancestor/alias/ABA defenses and same-closure
+verification, with isolated immutable-payload fallback when revision strategy cannot be
+proved; (4) pre-code exact-assertion sensitivity and baseline/error classification;
+(5) production exact mutation attribution, evidence, observe/enforce integrity routing;
+(6) TEST-DEFECT authorization, planner disposition, new seal/revision and retained evidence;
+(7) real-route positive/adversarial and durable-effect/no-effect tests including mode-B
+refusal; (8) E674 full `just check` and complete per-module mutation sweep/review. Some
+component tests and transport already exist but none alone establishes end-to-end custody.
+STEP9B, new slices and W4 are subsequent distinct gates, not extra STEP9A closure claims.
