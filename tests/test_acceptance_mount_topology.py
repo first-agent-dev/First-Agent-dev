@@ -45,7 +45,7 @@ if kind == "nested":
     accepted.write_text("forged")
     result["visible"] = accepted.read_text()
     result["original"] = (worklogs / "moved" / "acceptance" / "test.py").read_text()
-elif kind == "selective":
+elif kind in {"selective", "anchored"}:
     ledger = project / "ledger.md"
     with ledger.open("a") as stream:
         stream.write("shell append\n")
@@ -56,12 +56,26 @@ elif kind == "selective":
     attempt("ledger_tempfile", lambda: (project / "ledger.tmp").write_text("replacement"))
     attempt("write_accepted", lambda: accepted.write_text("forged"))
     attempt("rename_project", lambda: project.rename(worklogs / "moved"))
+    if kind == "anchored":
+        attempt("rename_worklogs", lambda: worklogs.rename(w / "moved"))
+        attempt("rename_acceptance", lambda: (project / "acceptance").rename(project / "moved"))
+        attempt("link_accepted", lambda: os.link(accepted, project / "linked.py"))
+        attempt("write_plan", lambda: (project / "increments/plan.md").write_text("forged"))
+        attempt("rename_increments", lambda: (project / "increments").rename(project / "other"))
+        attempt("write_roadmap", lambda: (project / "roadmap.md").write_text("forged"))
+        attempt("rename_roadmap", lambda: (project / "roadmap.md").rename(project / "moved.md"))
+        attempt("outside_scope", lambda: (project / "other.md").write_text("outside scope"))
+        attempt("write_questions", lambda: (project / "open-questions.md").write_text("changed"))
     # The parent outside this namespace runs the real rooted atomic writer.
     print("ready", flush=True)
     if sys.stdin.readline().strip() != "continue":
         raise RuntimeError("parent did not complete replacement")
     result.update(visible=accepted.read_text(), shell_ledger=ledger.read_text())
-    attempt("shell_atomic_replace", lambda: os.replace(project / "notes" / "new.md", ledger))
+    if kind == "anchored":
+        (project / "ledger.tmp").write_text("shell replacement\n")
+        attempt("shell_atomic_replace", lambda: os.replace(project / "ledger.tmp", ledger))
+    else:
+        attempt("shell_atomic_replace", lambda: os.replace(project / "notes" / "new.md", ledger))
     def append_again():
         with ledger.open("a") as stream:
             stream.write("second append\n")
@@ -87,13 +101,18 @@ source = root / "source"; workspace = root / "workspace"
 (source / "src").mkdir(); workspace.mkdir()
 (source / "worklogs/demo/acceptance/test.py").write_text("original")
 (source / "src/code.py").write_text("code")
-if kind == "selective":
+if kind in {"selective", "anchored"}:
     (source / "worklogs/demo/notes").mkdir()
     (source / "worklogs/demo/e2e").mkdir()
     (source / "worklogs/demo/ledger.md").write_text("initial\n")
+if kind == "anchored":
+    (source / "worklogs/demo/increments").mkdir()
+    (source / "worklogs/demo/increments/plan.md").write_text("plan")
+    (source / "worklogs/demo/roadmap.md").write_text("roadmap")
+    (source / "worklogs/demo/open-questions.md").write_text("questions")
 subprocess.run(["mount", "--make-rprivate", "/"], check=True)
 subprocess.run(["mount", "--bind", str(source), str(workspace)], check=True)
-relative = "worklogs" if kind in {"top", "selective"} else "worklogs/demo/acceptance"
+relative = "worklogs" if kind in {"top", "selective", "anchored"} else "worklogs/demo/acceptance"
 target = workspace / relative
 subprocess.run(["mount", "--bind", str(source / relative), str(target)], check=True)
 subprocess.run(["mount", "-o", "remount,bind,ro", str(target)], check=True)
@@ -101,6 +120,14 @@ if kind == "selective":
     for name in ("notes", "e2e", "ledger.md"):
         relative = f"worklogs/demo/{name}"
         subprocess.run(["mount", "--bind", str(source / relative), str(workspace / relative)], check=True)
+if kind == "anchored":
+    relative = "worklogs/demo"
+    subprocess.run(["mount", "--bind", str(source / relative), str(workspace / relative)], check=True)
+    for name in ("acceptance", "increments", "roadmap.md"):
+        relative = f"worklogs/demo/{name}"
+        target = workspace / relative
+        subprocess.run(["mount", "--bind", str(source / relative), str(target)], check=True)
+        subprocess.run(["mount", "-o", "remount,bind,ro", str(target)], check=True)
 subprocess.run(["setpriv", "--bounding-set=-all", "--inh-caps=-all", "--ambient-caps=-all", "--no-new-privs",
                 python, "-c", os.environ["FA_MOUNT_ATTACK"], str(workspace), kind], check=True)
 """
@@ -115,7 +142,7 @@ def _run_topology(tmp_path: Path, kind: str) -> dict[str, object]:
         pytest.skip(f"user/mount namespace unavailable: {probe.stderr.strip()}")
     command = ["unshare", "-Urnm", sys.executable, "-c", _SETUP, str(tmp_path), kind, sys.executable]
     env = {**os.environ, "FA_MOUNT_ATTACK": _ATTACK}
-    if kind == "selective":
+    if kind in {"selective", "anchored"}:
         if os.getuid() == 0 or os.getgid() == 0:
             pytest.skip("RootedViewIO requires non-root view uid and gid")
         with subprocess.Popen(
@@ -169,6 +196,9 @@ def _run_topology(tmp_path: Path, kind: str) -> dict[str, object]:
             authority_note=(source / "notes/new.md").read_text(),
             authority_e2e=(source / "e2e/new.md").read_text(),
         )
+        if kind == "anchored":
+            result["authority_questions"] = (source / "open-questions.md").read_text()
+            result["authority_outside_scope"] = (source / "other.md").read_text()
     else:
         completed = subprocess.run(command, env=env, capture_output=True, text=True, check=False, timeout=20)
         assert completed.returncode == 0, completed.stderr
@@ -186,6 +216,36 @@ def test_nested_acceptance_bind_can_be_hidden_by_ancestor_rename(tmp_path: Path)
         "rename_project": 0,
         "visible": "forged",
         "original": "original",
+    }
+
+
+def test_anchored_writable_project_protects_mounts_but_exceeds_nested_scope(tmp_path: Path) -> None:
+    result = _run_topology(tmp_path, "anchored")
+    assert result == {
+        "before": "original",
+        "effective_caps": 0,
+        "code": "changed",
+        "ledger_tempfile": 0,
+        "write_accepted": errno.EROFS,
+        "rename_project": errno.EROFS,
+        "rename_worklogs": errno.EBUSY,
+        "rename_acceptance": errno.EBUSY,
+        "link_accepted": errno.EXDEV,
+        "write_plan": errno.EROFS,
+        "rename_increments": errno.EBUSY,
+        "write_roadmap": errno.EROFS,
+        "rename_roadmap": errno.EBUSY,
+        "outside_scope": 0,
+        "write_questions": 0,
+        "authority_questions": "changed",
+        "authority_outside_scope": "outside scope",
+        "visible": "original",
+        "shell_ledger": "file tool replacement\n",
+        "shell_atomic_replace": 0,
+        "second_append": 0,
+        "authority_ledger": "shell replacement\nsecond append\n",
+        "authority_note": "note",
+        "authority_e2e": "e2e",
     }
 
 

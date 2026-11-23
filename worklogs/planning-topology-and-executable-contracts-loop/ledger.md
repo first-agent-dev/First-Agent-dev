@@ -14791,3 +14791,26 @@ projection. Final bank: 278 passed (topology, rooted IO, purposes, views, public
 Ruff/format, mypy with `MYPYPATH=src`, environment and diff pass. The initial plain scoped
 mypy could not resolve package typing; the source path setting resolved it. E657, E674 and W4
 remain open; host ledger E2E remains planned, not run.
+
+### E689 — anchored writable project candidate still violates nested scope (2026-11-23)
+
+A second kernel namespace prototype used read-only `worklogs`, a writable mountpoint for
+the current project, and read-only acceptance/increments/roadmap mounts. The cap-free child
+was denied protected writes and ancestor/mountpoint rename, and hardlinking the protected
+test failed EXDEV in this experiment. Unlike E688, the child sees an actual `RootedViewIO`
+atomic ledger replacement from the parent namespace, performs its own temp-file/atomic
+replacement and appends successfully; the source path holds resulting bytes, as well as
+notes/e2e writes. The initial expected project rename EBUSY was corrected to observed EROFS.
+
+Negative control: shell also rewrites `open-questions.md` and creates `other.md` in the
+same project, both visible in source. This violates Q-V2-WRITE-SCOPE-1=A, and existing
+MUTATION publication would refuse the out-of-scope changes late. The candidate is not a
+usable production boundary even though the tested ledger sequence works. This is kernel
+plus real rooted-writer evidence only, not Docker, alias/ABA, authority UDS/publish,
+reconciliation, complete closure or host proof; the child can see the host filesystem.
+
+TEST-EDITS: extended `tests/test_acceptance_mount_topology.py`, previous cases retained.
+Four manual diagnostic mutants killed/restored: project bind, acceptance bind, increment
+bind, and real rooted ledger write; these are not production producer/EDGE kills. Related
+bank 279 passed; scoped Ruff/format, `MYPYPATH=src` mypy and diff passed. E657/STEP9A and
+E674 remain open; W4 ledger host E2E is planned only.

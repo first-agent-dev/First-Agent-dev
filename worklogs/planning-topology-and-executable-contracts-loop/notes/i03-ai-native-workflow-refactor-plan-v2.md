@@ -1698,3 +1698,34 @@ scoped Ruff/format and `MYPYPATH=src` mypy pass, environment and diff check pass
 TEST-EDITS: `tests/test_acceptance_mount_topology.py` — extend the existing diagnostic without
 removing the two original assertions. Continue investigating a topology/merge that supports
 atomic shell edits and durable authority snapshots; E657 remains active, E674 and W4 open.
+
+### E689 — anchored writable project diagnostic: continuity versus scope
+
+A second E672-based C3 experiment binds `worklogs` read-only, binds the current project
+writable as a mountpoint, then binds its `acceptance`, `increments` and `roadmap.md`
+read-only. In this specific capability-free child namespace, direct accepted/plan/roadmap
+writes fail EROFS; renaming the project fails EROFS, `worklogs`/protected mountpoints fail
+EBUSY, and hardlinking a protected test into the writable project fails EXDEV. The real
+`RootedViewIO` outside the namespace atomically replaces ledger while the child is paused;
+the child reads the new content, atomically replaces ledger in the writable project and
+appends afterward. Parent source reads show the final bytes and notes/e2e writes. Unlike
+E688, the tested ledger sequence works.
+
+**Counterexample to Q-V2-WRITE-SCOPE-1=A:** the same child can create `other.md` and
+rewrite existing `open-questions.md` under the project; both changed bytes appear in the
+source the authority would later inspect. Thus this is not a complete nested-coder
+projection: permitted shell surface exceeds ledger/notes/e2e. The current publication
+MUTATION check would refuse non-source changes at seal, not prevent them early, and it has
+not yet been updated for the selected exception. Do not deploy this scheme alone or claim
+it enforces plan or custody generally. The diagnostic has an external host alias and is not
+Docker, authority/service publication, ABA, malicious alias, recovery, or W4 proof. First
+expected project-rename errno was corrected from EBUSY to observed EROFS.
+
+TEST-EDITS: `tests/test_acceptance_mount_topology.py` adds this candidate to the existing
+namespace harness without removing prior cases. Four diagnostic mutants killed/restored:
+omit project bind, acceptance bind, increment bind, or change real rooted ledger write.
+No production producer/EDGE claim. Related topology/view-IO/purposes/views/publication bank
+**279 passed**, scoped Ruff/format and `MYPYPATH=src` mypy pass. Next determine an
+architecture that enforces the complete current-project working-path allowlist for shell
+*before* user work is lost while retaining both atomic ledger editing and source continuity;
+no new broad project permission is authorized. E657/E674/W4 remain open.
