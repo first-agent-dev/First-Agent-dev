@@ -14716,3 +14716,29 @@ Ruff/format, scoped mypy for the two production modules, environment check and d
 This hardens identity integrity needed for E683 but does **not** issue an incarnation,
 authorize recovery, wire controller private custody or prove mode A. STEP9A, E657, full
 `just check`, all-module mutation sweep and W4 remain open.
+
+### E686 — operator selects writable working artifacts; nested scope question (2026-11-23)
+
+Operator accepted the adversarial review: agents should edit/append project ledger, notes
+and e2e without reseal or undeserved file-tool denials; shell and file tools must agree,
+and design must minimize late seal/publication refusal and lost unrelated work. Project
+ledger and editable E2E documents are not authoritative PASS: a live verdict requires a
+recorded execution and an assigned reviewer. Planner authors acceptance before sealing;
+coder reads but cannot edit it, and TEST-DEFECT creates a new revision. Seal demonstrates
+identity, not test quality. The operator accepts the risk of plans referencing mutable
+notes; this does not prove closure integrity or let mutable reports forge PASS.
+
+Source audit: `sealed_project_paths` protects all of `worklogs/<slug>` for file IO;
+WRITE profile mounts the workspace RW for shell, while ordinary publication protects
+plan path and acceptance, so the interfaces are not equivalent. E672 demonstrates that
+an acceptance-only nested RO bind loses against writable ancestor rename; broad worklogs
+RO prevents requested working writes. `publication._validate_mutation_roots` separately
+limits nested `MUTATION` coder to src/scripts, per ratified Q141=C (E527). Thus universal
+working writes conflict with existing nested boundary; **Q-V2-WRITE-SCOPE-1 is OPEN**
+with options and recommendation in V2 plan. No silent weakening or exception has landed.
+
+V2 plan, parent STEP9A and custody design record policy, selective-projection experiment,
+fallback, early prevention, recovery/no-loss obligations, C1/C3 and producer/EDGE kills,
+and W4 ledger-append plus no-forged-PASS host cases. Q-V2-LEDGER-1 policy is resolved;
+implementation/host witness are not. No runtime, test, mount, Docker or live-host proof
+is claimed. E657 remains active; E683/E674, STEP9A/9B and W4 remain open.

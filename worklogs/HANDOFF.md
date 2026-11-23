@@ -11,20 +11,24 @@ recovery policy in E683: explicit trusted deletion closes an incarnation and fre
 slug; explicit trusted recovery after seal loss revalidates current inputs and establishes
 a new evidence lineage. No silent coder-triggered reset; old verification/mutation
 results cannot carry over. Coordinated backup/restore remains for exact history and W4.
-E685 hardens canonical seal identity and stale-digest rejection; it does not implement
-incarnation issuance or reset. See [ledger E683–E685](planning-topology-and-executable-contracts-loop/ledger.md) and the
+E686 selects writable ledger/notes/e2e and narrow custody; Q-V2-WRITE-SCOPE-1 blocks
+reconciling nested coder Q141=C with that policy. E685 hardens canonical seal identity
+and stale-digest rejection; it does not implement
+incarnation issuance or reset. See [ledger E683–E686](planning-topology-and-executable-contracts-loop/ledger.md) and the
 [V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next
 
-1. Implement and prove the trusted lifecycle/authorization and distinct evidence lineage;
+1. Resolve Q-V2-WRITE-SCOPE-1 with the operator before implementing nested working-artifact
+   writes; E686 records selective-projection, early-denial, work-recovery and W4 E2E tasks.
+2. Implement and prove the trusted lifecycle/authorization and distinct evidence lineage;
    an OWNER run grant alone has no role distinction, and deterministic seal hashes alone
    do not distinguish identical inputs after reset. Cover real staged creation, deletion,
    reset, old evidence denial, crashes/replay and manual drift. Do not lift E657.
-2. Finish independent collection, complete closure and true mode-A shell/file read-only
+3. Finish independent collection, complete closure and true mode-A shell/file read-only
    projection or mandatory immutable-payload fallback, exact mutation attribution,
    pre-code and TEST-DEFECT production routes.
-3. Complete the mandatory E674 full `just check` and per-module mutation gate before
+4. Complete the mandatory E674 full `just check` and per-module mutation gate before
    STEP9A close; STEP9B and W4 remain subsequent gates. No live-host PASS is claimed.
 
 ## Historical state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E258

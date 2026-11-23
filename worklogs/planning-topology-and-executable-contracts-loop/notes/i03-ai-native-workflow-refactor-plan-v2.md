@@ -59,7 +59,7 @@ The current `artifact-schema-and-grammar.md` is the V1 artifact contract; it is 
 | Path | Writer / authority | V2 role |
 |---|---|---|
 | `roadmap.md` | Harness writes fixed metadata/version; planner writes semantic body | Exactly one roadmap, explicit `Plan-Format: AI-NATIVE-PLAN-V2`, project slug and creation date. Any status/active-increment display is a deterministic authority projection under Q-V2-STATUS-1, not a post-seal planner edit. |
-| `ledger.md` | Harness initializes before seal | Immutable after admission; run/evaluation evidence is stored in controller-owned run artifacts and referenced by ID, not appended into sealed project bytes. Any desired post-seal project-ledger update requires explicit new revision/re-admission/seal. |
+| `ledger.md` | Harness initializes; agents maintain working content | Writable without re-admission/reseal; a working journal, not an authoritative PASS or admission input. Runtime evidence remains independently bound to its run, plan, seal and candidate. Nested MUTATION scope conflict is Q-V2-WRITE-SCOPE-1. |
 | `open-questions.md` | Planner writes/resolves before admission; harness validates | Required root artifact; bounded Q records; no interactive ask dependency. Post-seal changes are a new plan revision and require re-admission/re-seal; otherwise the dependent scope stays blocked. |
 | `increments/increment-01-initial-plan.md` | Harness writes fixed metadata; planner writes semantic plan; tick mutation is gated by Q-V2-STATUS-1 | `initial-plan` is harness-fixed, not a planner field. Explicit same `Plan-Format` marker; one active new-format increment. Contains invariants, optional scenarios, SLICE/CT/STEP declarations, acceptance selectors and kill-target mappings. Semantic bytes stay immutable after seal; any update requires new revision/re-admission/seal. |
 | `acceptance/tests/` plus all referenced `acceptance/` support/fixture/driver files | **Planner writes them directly** (D-V2-9), confined to `worklogs/<slug>/acceptance/` by the stage allowlist; immutable after seal | New, project-scoped acceptance root; selected to avoid mixing these sources with repository harness tests. V2 selectors are workspace-relative `worklogs/<project_slug>/acceptance/tests/<path>.py::nodeid`, formed by the planner under the scaffold's front matter (no renderer expands anything). The only paths written are beneath `worklogs/<slug>/acceptance/`; the closure's own `pytest.ini` is written by the scaffold **inside** that root and is bound by the seal's digest like every other closure file (Q-V2-ACC-1: keys are allowlisted, `acceptance_closure.py:266`), while the runner itself is a trusted existing workspace input, never planner-overwritten. The authority refuses absolute paths, `..`, dot components and symlinks at the write boundary (`view_io.py:226–234`, `_BLOCKED_COMPONENTS` `:28`); admission additionally refuses selectors resolving outside the closure. `TEST-ID` selectors are the sole source of nodeid membership; legacy slice-wide `TESTS:` lists are not accepted on this route. |
@@ -133,7 +133,7 @@ Authoring split (the whole design):
 |---|---|---|
 | `roadmap.md`, `open-questions.md` | planner | path allowlist `worklogs/<slug>/`; metadata cross-check (§D-V2-9.3) |
 | `increments/increment-01-initial-plan.md` | planner (repair rewrites only this file) | same |
-| `ledger.md` | planner, body only | harness owns the header; body append-only |
+| `ledger.md` | planner and agents | Working journal; ordinary edits/appends do not require reseal (E686). Harness-created scaffold is not an authority for later verdicts. |
 | `acceptance/tests/**` (+ support it imports) | planner | confined under `worklogs/<slug>/acceptance/` |
 | `notes/**`, `reviews/**` | planner | free-form; nothing reads them in admission |
 
@@ -275,10 +275,12 @@ behaviour, not a new state machine:
   end state, and CT-2.9 requires that no coder ever sees it.
 - **Collision** → `project_exists` on the first create-only write; nothing published (D-V2-9.2).
 
-Once admitted, `roadmap.md`, `ledger.md`, `open-questions.md`, increment semantics and acceptance sources are
-immutable inputs to that admission/seal; any semantic change creates a new authoritative revision and must repeat
-validation/admission/seal. Runtime evidence is run-scoped and status projection is governed by Q-V2-STATUS-1;
-neither may silently rewrite the sealed semantic inputs.
+Once admitted, roadmap/increment semantics, the admission decision and acceptance oracle remain protected;
+semantic changes require a new authoritative revision and repeat validation/admission/seal. E686 supersedes the
+former project-wide immutability of `ledger.md`, `notes/` and `e2e/`: they are working artifacts, writable without
+reseal and not authoritative verdicts. Question records continue to block dependent scope as specified; the safe
+mechanism for their post-admission evolution must not silently change admitted semantics. Runtime evidence remains
+run-scoped and status projection follows Q-V2-STATUS-1; neither may silently rewrite sealed semantic inputs.
 
 **What D-V2-5 still governs:** the revision-bound `AcceptanceBundle` mint (closure inside the installed revision,
 seal derived from the committed bytes + plan bytes + revision receipt) is unchanged — only the way the revision is
@@ -714,11 +716,11 @@ existing E530/STEP9A and B1–B6 gates, not a new step or permission to bypass S
   determinate failure is advisory only in observe and repairable in enforce. Check artifact
   history, declared versus executed mutation and no missing/duplicate evidence.
 - [ ] **W4 live and ledger E2E (INV-10/12):** after W3 and approved deploy, add/run reviewed
-  host cases for actual workflow and append-only ledger: assert authoritative old+new records
-  and producer/consumer-visible identity, no append on refusal/uncertainty, no duplicate on
-  replay, correct ordering and retained previous evidence across TEST-DEFECT and mutation.
-  Respect Q-V2-LEDGER-1 writer policy; until resolved no post-seal writer is inferred. These
-  are planned, not executed or host acceptance.
+  host cases for actual workflow and writable project ledger: observe old+new content in the
+  published revision and fresh read, plus fail-closed publication/reconciliation and retained
+  authority evidence across TEST-DEFECT and mutation. Ledger is editable working content, not
+  an append-only authority; verify that forged PASS there cannot satisfy the gate. Q-V2-WRITE-
+  SCOPE-1 remains open for nested coder. These cases are planned, not host acceptance.
 
 **E644 adversarial review:** TEST-DEFECT correction validates report identity and
 conservatively re-proves all closure tests/targets; workflow integration remains open.
@@ -980,10 +982,10 @@ Before final W4 suite freeze, STEP10's package owner must:
 
 **Ledger append host E2E obligation (NEW, not registered):** add a reviewed live-host case to the W4 package
 that observes a real permitted ledger append through its production author/authority path and verifies the durable
-revision, exact appended content and preservation of prior entries after a fresh read; include unauthorized write,
-rewrite/truncation and failed/uncertain publication controls with authoritative no-effect or explicit uncertainty.
-Prove producer and caller/EDGE via local mutation tests. Whether the case can append *after* admission and which
-ledger is authoritative is gated by Q-V2-LEDGER-1; do not invent a post-seal writer or waive custody. Record actual
+revision, exact appended content and preservation of prior entries after a fresh read; include protected-plan/oracle
+write refusals and failed/uncertain publication controls with authoritative no-effect or explicit uncertainty.
+Prove producer and caller/EDGE via local mutation tests. The ledger is a writable working journal per E686, not
+authoritative test evidence; do not waive custody. Record actual
 host evidence in the worklog ledger, distinguish test artifacts from project ledger, and map the actual producers
 through the reviewed protocol above.
 
@@ -1055,7 +1057,7 @@ This linked plan fixes a lightweight V2 `open-questions.md` table (6 compact fie
 | Q-V2-ROLLING-1 | **WITHDRAWN 2026-11-23** — active-slice scope was incorrectly inferred from rolling wave. Operator clarified that planning detail advances increment by increment, with later increments outlined. No partial-seal or scoped-verification authority is selected. | Current-increment pre-code collection remains a source-grounded diagnostic in D-V2-13, not an open policy decision about future increments. | `parse_plan` parses one increment; `collect_sealed_tree` runs the current closure before mint. |
 | Q-V2-SEQUENCE-1 | **RESOLVED 2026-11-23 — operator: remove ownership ceremony; actively resolve dependencies toward I03 MVP.** Do the necessary custody/attribution work on existing seams to satisfy STEP9A, preserving its DoD and predecessor order; reconcile new grammar and remaining slice obligations as they are implemented. No review, STEP or host gate is silently marked complete. | Graph/plan binding now has a scoped implementation; seal-to-binding tuple, runner/composition and associated evidence remain open. Finish STEP9A, then recorded independent STEP9B review and remaining local slices/W3, then W4. | Operator clarification and E634; parent I03 STEP9A/STEP9B exit clauses. |
 | Q-V2-PRECODE-1 | **DIRECTION SELECTED 2026-11-23 — retain full pinned pre-code run and classify outcomes honestly.** A planner-authored suitable no-op/known-bad witness can support an assertion-sensitivity claim; a fake is not proof of production behavior, and skip, unexpected exception or absent producer are not sensitivity evidence. The complete STEP9A gate and actual receipt identity remain to be implemented/proven. | Future concrete fresh-project fixture must test viability without planner knowledge of future private seams. If impossible, scope a replan for an explicit producer-absent state and later mandatory checks; do not silently switch to collect-only or relax custody. This direction does not close STEP9A, B1 or the later workflow. | E638 diagnostic, source audit and E639 operator decision. |
-| Q-V2-LEDGER-1 | **OPEN — ledger append after admission.** D-V2-9 calls the planner ledger body append-only, while the same section treats the admitted ledger as immutable and CT-3.3 protects the project tree from coder writes. A host test cannot infer who may append after seal or whether this changes the admitted revision. | Blocks any claim that post-seal project-ledger append is supported, not ordinary run-scoped verification evidence. A: only planner-owned pre-admission appends, later changes use a new validated revision; B: a distinct authority-owned append-only runtime evidence journal outside sealed semantic bytes, projected as needed; C: another explicit lifecycle retaining seal identity and custody. Select only after source audit; no automatic writable exception. | D-V2-9 authoring split and post-admission immutability; CT-3.3; operator request for live-host ledger-append E2E. |
+| Q-V2-LEDGER-1 | **RESOLVED in policy (E686):** project ledger is a freely editable working journal; ordinary append/edit needs no reseal and is not authoritative verification evidence. E2E plans/run sheets are editable; host verdict depends on a recorded execution and assigned reviewer. | Implementation and host E2E are open; nested coder scope is independently blocked by Q-V2-WRITE-SCOPE-1. No new authority journal is required merely to append project ledger. | Supersedes the earlier blanket ledger immutability and options A/B/C. |
 | D-V2-12 | **Evidence routes: "cannot be tested here" must name where it can be tested** (ratified 2026-11-22; answers Q-V2-EVIDENCE-1 = A). The four disposition reasons are not one bucket. `HOST_READINESS`, `DEPLOYMENT_IDENTITY` and `DURABILITY_POWER_LOSS` name a place where the claim *is* checkable — a host probe, an image identity, a fault-injection case — while only `OWNER_APPROVAL` is untestable by construction. Under one bucket a reviewer's "we cannot run this in the sandbox" and a planner's "nobody can ever test this" cost the same signature, and a cheap signature is the `KIND: SOFT` hole with better syntax. So the route is a closed axis derived from the reason — `HOST_READINESS`/`DEPLOYMENT_IDENTITY`/`DURABILITY_POWER_LOSS` → `HOST_PROBE`, `OWNER_APPROVAL` → `APPROVAL` — and the route decides the **kind** of artifact the caller must name: for `HOST_PROBE` a probe path inside the sealed acceptance closure plus a host label (`probe:<path>@host:<label>`), for `APPROVAL` a doc digest, an issue or a review (`doc:|issue:|review:`). `plan_admission.parse_dispositions` enforces the reason↔kind pairing, so "host readiness" cannot be discharged by a document that says nothing about a host; `mint_seal` proves the probe path is in the closure, records route, artifact, owner, `reviewed_at` and a scope digest over the invariant and contract text it attested, and lists such contracts as **`pending`** — a debt that blocks deploy — beside `attested`, which stays the set of contracts a named party carries. Invalidation is the rule that keeps this from being a bypass: a plan edit invalidates the seal through `plan_sha256`, `mint_seal` now refuses a graph whose bytes are not the plan bytes handed to it (so a scope digest can never describe a plan nobody sealed), and the scope digest names exactly which sentence was attested, so a re-review can be shown to cover the new text. The authoring surface (`ROUTE:` on invariants) is S6/D-V2-11; no route removes the requirement that a named party carries the claim, and `APPROVAL` is the only route with no artifact to check — which is what makes it the expensive one. |
 
 Two consequences of D-V2-1/D-V2-2 that the implementation slices must state explicitly: the legacy module
@@ -1364,8 +1366,8 @@ not claim B1/STEP9A or recovery closure. A sound authorized fresh-install proof 
 intent/replay design remain required whichever option is chosen. The immutable-payload fallback
 C is not by itself a history/rollback authority and cannot resolve this question merely by
 copying bytes. W4 must test the chosen boundary, failure and evidence retention; no early host
-run is implied. Existing Q-V2-LEDGER-1 remains separately open only for its dependent ledger
-append scope.
+run is implied. Q-V2-LEDGER-1 policy was subsequently resolved by E686; implementation and
+host proof remain open.
 
 **E668 risk calibration:** this is an exceptional state-loss/restore problem, not an
 observed normal-run failure. The repository's current backup script omits the spec's
@@ -1393,8 +1395,8 @@ edits or arbitrary missing files, and recover durable operations idempotently. N
 external anti-rollback registry is mandated; detecting a coherent rollback of all state
 remains outside MVP. This amends E669's blanket no-remint/fresh-versus-existing policy:
 no **silent** remint remains mandatory, but explicitly authorized reset is allowed.
-It is a decision, not implemented or host proof; E657 remains active. Q-V2-LEDGER-1 is
-separate.
+It is a decision, not implemented or host proof; E657 remains active. Q-V2-LEDGER-1 was
+subsequently resolved in policy by E686.
 
 **E671 partial custody hardening:** the authority's BOOTSTRAP origin now records a durable
 first-mint transition; losing both the separate marker and project seal directory cannot
@@ -1524,3 +1526,68 @@ into a different client-visible digest; stale in-memory digest cannot create a s
 record or pointer. Real service/UDS, no-effect tests and four killed mutants are recorded
 in ledger. This is identity-integrity preparation only, not issuance of E683's distinct
 lineage or authorization of reset; staged origin and E657 remain open.
+
+
+### E686 — narrow protected boundary, usable agent workspace (operator policy; implementation open)
+
+**Decided:** coder/planner working `ledger.md`, `notes/` and `e2e/` are writable via file tools and
+shell without reseal. E2E verdict requires recorded execution and an assigned reviewer, not editable
+Markdown alone. Plan/admission and planner-authored acceptance oracle remain protected; coder sees
+the same closure read-only and `TEST-DEFECT` uses a new revision/seal. A seal proves identity, not
+test quality. A free note may supply context; operator accepts the risk that a plan can reference
+mutable notes, but mutable notes cannot silently become an authoritative PASS or excuse closure
+integrity. This does not relax E657, E683, E674, or pre-code/mutation/observe-enforce requirements.
+
+**Source gap:** `sealed_project_paths` protects the complete project for rooted file IO, while the
+WRITE container mounts the workspace writable and publication validates the plan path and acceptance
+subtree; no uniform early protection exists. `MUTATION` is separately confined to `src/`/`scripts/`
+(Q141=C), so direct and nested coder cannot both satisfy the requested write behavior as-is. No
+production behavior or Docker host proof is claimed. The E672 kernel experiment proves an acceptance-only
+nested read-only bind is bypassable by ancestor rename; it does not prove a finer safe topology.
+
+**Q-V2-WRITE-SCOPE-1 — OPEN, blocking nested-coder write-policy implementation:** the operator's
+request that agents write the three working surfaces conflicts with Q141=C, ratified and locally
+closed for nested coder. (A, recommended) amend that purpose for the current project only, with
+explicit working-surface paths and no other project writes; independently preserve the single-target
+mutation executor's confinement. (B) retain Q141=C and use an independently scoped journal/notes
+capability with explicit merge/reconciliation back into the parent project; this adds infrastructure
+and agent-visible coordination. (C) retain Q141=C and restrict the new promise to top-level coder;
+nested agents remain unable to write working artifacts. Selection requires operator clarification;
+no implementation should silently weaken the older security boundary or present C as full compliance.
+
+**STEP9A tasks (all open):**
+
+1. Define one authority-derived policy for protected plan/admission/acceptance paths and writable
+   working paths, roles and purposes, including Q141 resolution; use it consistently across tools,
+   cell projection and publication. Preserve independent write scopes and authority-private state.
+2. Prototype a selective projection: read-only protected ancestor skeleton, writable binds only for
+   designated working locations and editable source, while excluding alternate writable aliases;
+   treat regular-file ledger replacement/append, missing/new files, writable parent directory metadata,
+   nested mounts, safe stop/snapshot and publication as explicit feasibility questions. Do not claim
+   it works based on mount declarations. If revision strategy cannot be proven, use the mandatory
+   isolated immutable-payload fallback with equivalent usability and custody, not a hash-only sidecar.
+3. Prove before dispatch that shell and file tools agree on allowed working writes and protected-path
+   denial. Defend ancestor rename/replacement, symlink/hardlink aliases, mount/remount, transient ABA,
+   additions/deletions, and stale/incorrect projection. Retain end-of-stage check as defense-in-depth,
+   not the first point a normal protected write is detected. Audit semantic roadmap binding separately.
+4. Minimize late rejection and preserve user work: verify known configuration and projection before
+   coder, provide actionable bounded reasons, and design/test safe recovery of unrelated candidate
+   edits on rejection or uncertain publication without publishing unvalidated changes or bypassing
+   reconciliation. Do not promise universal recovery across crash or state loss without proof.
+5. C1/C3 through real workflow/composition and production authority: file tool and shell both edit
+   and append ledger, notes, E2E; committed bytes survive publish and a fresh pin while seal/plan
+   identity remains valid; protected write/unlink/rename/ancestor substitution fails immediately on
+   both surfaces; an attempted protected edit plus valid code/notes edits cannot silently publish
+   protected changes and has the specified no-loss/recovery behavior. Include conflict, crash/replay,
+   concurrent stages, missing paths, nested/direct scope and plan/evidence drift. Kill producer and
+   caller EDGE guards and relevant bypass mutants. No local test counts as host proof.
+6. Plan W4 live host E2E: real agent file-tool and shell appends to project ledger after admission,
+   edit notes/E2E, publish and fresh-read authoritative revision, seal identity unchanged; negative
+   oracle attempts protected edits through both paths, checks retained work and correct refusal; forged
+   PASS in editable E2E/ledger cannot satisfy the host gate. Record actual host run, SHA/image/profile,
+   evidence and assigned reviewer; NOT RUN until performed. Existing run-scoped verification store is
+   a reuse candidate, not an unproved independent authority or a requirement for a new journal.
+
+Mutable-note references are an accepted semantic ambiguity, not a proof that mutable test helpers
+are safe: transitive execution dependencies and exact oracle identity remain unresolved technical
+proof obligations. E686 is policy and work specification only, not closure.

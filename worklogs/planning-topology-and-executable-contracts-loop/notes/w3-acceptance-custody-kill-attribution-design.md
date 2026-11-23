@@ -111,3 +111,19 @@ The design is ratified, not yet implemented. See the E683 lifecycle and test mat
 ## 7. Remaining implementation gates
 
 The storage decision is complete: workspace-revision strategy C is selected, with isolated immutable payload as the fail-closed storage fallback; this is distinct from visibility mode B. Before STEP9A can close, implementation must prove the complete closure and controller-minted seal, the coder-visible mode-A read-only projection against both shell and file tools, unchanged-closure enforcement at seal/publication, verifier execution of the same pin/digest, pre-code outcome classification, and claim-appropriate authoritative-effect checks. STEP9 remains the predecessor; no W3 candidate `fa update` is authorized until STEP9, STEP9A and the other local/review gates close.
+
+
+## E686 — working artifacts and selective custody (policy, not implementation)
+
+The operator accepts editable `ledger.md`, `notes/` and `e2e/` without reseal; they are
+working artifacts, not machine-authoritative verification or host PASS. A host verdict
+requires recorded execution and an assigned reviewer. Mutable notes may provide context;
+the operator accepts the semantic-reference risk, but custody still requires the same
+complete oracle and runner bytes. Agent writes through shell and file tools must agree;
+prevention must precede stage-close where possible, with safe recovery of unrelated work.
+Broad read-only `worklogs/` fails the working-artifact usability target. Selective projection
+is only a candidate until ancestor, alias, ABA, mount, snapshot and production Docker tests
+prove it; immutable-payload fallback remains mandatory when revision-backed custody cannot
+be proven. E657 remains active. Nested MUTATION confinement conflicts with universal working
+writes: Q-V2-WRITE-SCOPE-1 remains open in the [V2 plan](i03-ai-native-workflow-refactor-plan-v2.md),
+which also records acceptance tests, W4 E2E, recovery, and semantic-boundary work.
