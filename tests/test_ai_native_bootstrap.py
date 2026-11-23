@@ -711,6 +711,28 @@ def test_the_authoring_stage_publishes_and_admits_the_project(
             f"worklogs/{slug}/increments/increment-01-{INITIAL_INCREMENT_SLUG}.md"
         )
 
+        # The current route still writes the legacy workspace-local pointer; the
+        # authority's fresh-install origin is not made by REVISION publication.
+        # Prove the resulting fail-closed boundary through the real client/UDS.
+        from fa.execution.client import ExecutionRejectedError
+        from fa.inner_loop.acceptance_seal_store import SealStore
+
+        legacy = SealStore(site.source).current()
+        binding_root = case_site.state / "workspaces" / managed.binding.workspace_id
+        origin = binding_root / f"acceptance-origin-{slug}.json"
+        assert not origin.exists()
+        with pytest.raises(ExecutionRejectedError) as missing_origin:
+            managed.client.store_acceptance_seal(
+                managed.binding.namespace,
+                grant=managed.grant,
+                project_slug=slug,
+                plan_ref=bound.managed_plan_ref,
+                bundle=legacy,
+                request_id="e" * 32,
+            )
+        assert missing_origin.value.code == "INPUT_POLICY"
+        assert not origin.exists() and not (binding_root / "acceptance" / slug).exists()
+
 
 def test_admission_calls_the_metadata_check_it_documents(tmp_path: Path) -> None:
     """D-V2-9.3, pinned: the cross-check runs *inside* admission.

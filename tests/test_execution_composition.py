@@ -4167,3 +4167,144 @@ def test_reconcile_publication_determinate_refusal_clears_pending_fence(
             assert managed.publication_pending is False
             assert managed.close() is True
             assert _status(site, workspace_id)["status"] == "AVAILABLE"
+
+
+def test_managed_seal_lost_reply_fences_writer_until_exact_replay(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import _acceptance_store_case, _private_plan, _register_acceptance_fixture
+    from tests.test_execution_service import _config, _writer_grant
+    from tests.test_execution_workspace import ACTOR
+
+    root, plan_ref = _acceptance_store_case(site)
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)  # synthetic origin, not fresh provisioning proof
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        with _serving_supervisor(service):
+            client = ExecutionClient(service.socket_path, server_uid=os.getuid(), rpc_timeout_ms=5000)
+            managed = ManagedExecution(client, ExecutionBinding(ACTOR, ids["workspace_id"]), grant)
+            bundle = _mint(root, revision_id=ids["revision_id"])
+            reader = managed.pin_reader()
+            original_request = client.request
+            sent: list[str] = []
+
+            def lose_store_reply(operation: Operation, **kwargs: Any) -> dict[str, Any]:
+                result = original_request(operation, **kwargs)
+                if operation is Operation.STORE_ACCEPTANCE_SEAL:
+                    sent.append(kwargs["request_id"])
+                    if len(sent) == 1:
+                        raise ExecutionUncertainError("op-" + kwargs["request_id"])
+                return result
+
+            monkeypatch.setattr(client, "request", lose_store_reply)
+            with pytest.raises(ExecutionUncertainError) as lost:
+                managed.store_acceptance_seal(project_slug="demo", plan_ref=plan_ref, bundle=bundle)
+            assert managed.acceptance_seal_pending and lost.value.operation_id == "op-" + sent[0]
+            pointer = _private_plan(site, ids, plan_ref) / ".fa/seal-current.json"
+            before = (pointer.read_bytes(), pointer.stat().st_ino, pointer.stat().st_mtime_ns)
+            assert managed.close() is False
+            assert _status(site, ids["workspace_id"])["status"] == "OWNED"
+            assert managed.stop_view(reader) is True  # cleanup remains available
+            assert managed.acceptance_seal_pending
+            with pytest.raises(ExecutionUncertainError):
+                managed.handoff_to(NamespaceRef(ACTOR.session_id, "child-run", ACTOR.run_id))
+            with pytest.raises(ExecutionUncertainError):
+                managed.open_view(access=Access.WRITE, purpose=ViewPurpose.PROJECT, base_revision=ids["revision_id"])
+            with pytest.raises(ExecutionUncertainError):
+                managed.store_acceptance_seal(project_slug="demo", plan_ref=plan_ref, bundle=bundle)
+            assert managed.reconcile_acceptance_seal() == bundle.seal_sha256
+            assert sent == [sent[0], sent[0]]
+            assert (pointer.read_bytes(), pointer.stat().st_ino, pointer.stat().st_mtime_ns) == before
+            assert not managed.acceptance_seal_pending and managed.close() is True
+            assert _status(site, ids["workspace_id"])["status"] == "AVAILABLE"
+
+
+def test_managed_seal_later_refusal_does_not_erase_prior_uncertainty(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import _acceptance_store_case, _register_acceptance_fixture
+    from tests.test_execution_service import _config, _writer_grant
+    from tests.test_execution_workspace import ACTOR
+
+    root, plan_ref = _acceptance_store_case(site)
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        with _serving_supervisor(service):
+            client = ExecutionClient(service.socket_path, server_uid=os.getuid(), rpc_timeout_ms=5000)
+            managed = ManagedExecution(client, ExecutionBinding(ACTOR, ids["workspace_id"]), grant)
+            bundle = _mint(root, revision_id=ids["revision_id"])
+            original = client.store_acceptance_seal
+            calls: list[str] = []
+
+            def uncertain_then_refused(*args: Any, **kwargs: Any) -> str:
+                calls.append(kwargs["request_id"])
+                if len(calls) == 1:
+                    original(*args, **kwargs)  # actual authority effect precedes lost answer
+                    raise ExecutionUncertainError("op-" + calls[0])
+                raise ExecutionRejectedError("UNAUTHORIZED", None)
+
+            monkeypatch.setattr(client, "store_acceptance_seal", uncertain_then_refused)
+            with pytest.raises(ExecutionUncertainError):
+                managed.store_acceptance_seal(project_slug="demo", plan_ref=plan_ref, bundle=bundle)
+            with pytest.raises(ExecutionUncertainError) as later:
+                managed.reconcile_acceptance_seal()
+            assert later.value.code == "UNAUTHORIZED" and later.value.operation_id == "op-" + calls[0]
+            assert calls == [calls[0], calls[0]] and managed.acceptance_seal_pending
+            assert not managed.close() and _status(site, ids["workspace_id"])["status"] == "OWNED"
+            monkeypatch.setattr(client, "store_acceptance_seal", original)
+            assert managed.reconcile_acceptance_seal() == bundle.seal_sha256
+            assert managed.close()
+
+
+def test_managed_seal_clean_refusal_releases_but_restart_cannot_clear_lost_reply(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import _acceptance_store_case, _register_acceptance_fixture
+    from tests.test_execution_service import _config, _writer_grant
+    from tests.test_execution_workspace import ACTOR
+
+    root, plan_ref = _acceptance_store_case(site)
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        with _serving_supervisor(service):
+            client = ExecutionClient(service.socket_path, server_uid=os.getuid(), rpc_timeout_ms=5000)
+            managed = ManagedExecution(client, ExecutionBinding(ACTOR, ids["workspace_id"]), grant)
+            # A local invalid scope never sends a request and leaves no fence.
+            with pytest.raises(ExecutionContractError):
+                managed.store_acceptance_seal(project_slug="seals", plan_ref=plan_ref, bundle=bundle)
+            assert not managed.acceptance_seal_pending
+            # A determinate refusal before any seal history leaves no fence.
+            with pytest.raises(ExecutionRejectedError) as refused:
+                managed.store_acceptance_seal(
+                    project_slug="demo",
+                    plan_ref=replace(plan_ref, workspace_relative_path="worklogs/demo/increments/missing.md"),
+                    bundle=bundle,
+                )
+            assert refused.value.code == "INPUT_POLICY" and not managed.acceptance_seal_pending
+            original = client.request
+
+            def drop_committed(operation: Operation, **kwargs: Any) -> dict[str, Any]:
+                result = original(operation, **kwargs)
+                if operation is Operation.STORE_ACCEPTANCE_SEAL:
+                    raise ExecutionUncertainError("op-" + kwargs["request_id"])
+                return result
+
+            monkeypatch.setattr(client, "request", drop_committed)
+            with pytest.raises(ExecutionUncertainError) as lost:
+                managed.store_acceptance_seal(project_slug="demo", plan_ref=plan_ref, bundle=bundle)
+            operation_id = lost.value.operation_id
+            assert managed.acceptance_seal_pending and not managed.close()
+            monkeypatch.setattr(client, "request", original)
+    # The operation is DONE but the original reply cache died with the service.
+    with SupervisorService(_config(site)) as restarted:
+        with _serving_supervisor(restarted):
+            with pytest.raises(ExecutionUncertainError) as unreconciled:
+                managed.reconcile_acceptance_seal()
+            assert unreconciled.value.code == "EXECUTION_UNKNOWN"
+            assert unreconciled.value.operation_id == operation_id
+            assert managed.acceptance_seal_pending and not managed.close()
+            assert _status(site, ids["workspace_id"])["status"] == "QUARANTINED"

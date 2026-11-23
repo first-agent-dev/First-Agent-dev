@@ -1456,3 +1456,26 @@ authority mint transport, trusted collection, mode-A and E657 guard remain open.
 transport with exact request replay and crash uncertainty, plus V2 journalled response
 handling. See ledger E678 for C3/negative/mutation evidence and limits. Controller use,
 trusted collection, correction/reseal, mode A and dispatch readiness remain open.
+
+**E679/E680 — next custody dependency, not a closure:** the real staged CREATE_NEW_PROJECT
+publishes a REVISION rather than an INSTALL_PROJECT/BOOTSTRAP, so it produces no authority
+origin; its current success is backed only by the legacy workspace-local store. A real
+managed-stage/UDS test confirms private store refuses without effect. ManagedExecution now
+retains uncertain private-seal request identity for same-ID reconciliation and withholds
+close/handoff; current direct `managed.client` paths bypass this composition fence and
+must be audited before wiring the controller. See ledger for exact tests and limits.
+
+**Next engineering increment:** establish an authority-owned proof of project first
+provisioning for the staged REVISION route, including projects present at registration,
+project additions and deletions, missing/invalid history, concurrent/stale publication,
+crash recovery on both sides of the revision pointer, and loss of a per-project origin or
+started marker. One possible direction is a workspace-bound, monotonic project history
+initialized atomically with the registered revision and updated/recovered by every relevant
+forward publication/install intent; it must distinguish historical/unknown projects from
+fresh ones and fail closed if its own provenance is absent or inconsistent. This is a
+candidate engineering design, not proof or a ratified new product policy. Reuse existing
+private durable primitives; prove real CREATE_NEW_PROJECT→publication→origin→private seal,
+loss/restart/no-remint and producer/EDGE tests before replacing E679's diagnostic or wiring
+controller store/read. Existing deployments and origin formats need an explicit safe
+recovery story; no automatic adoption based only on an absent current path. Preserve E657,
+trusted-collection work, mode A/fallback and the E674 full gate.

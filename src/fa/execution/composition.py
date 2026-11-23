@@ -45,6 +45,7 @@ from fa.execution.types import (
     ViewPurpose,
     _hex_id,
 )
+from fa.inner_loop.acceptance_bundle import AcceptanceBundle
 from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 from fa.session.manager import RunContext, SessionManagerError
 from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, ProvisionRequest
@@ -87,6 +88,15 @@ class _PendingHandoff:
     uncertain: bool = False
 
 
+@dataclass(frozen=True, repr=False)
+class _PendingAcceptanceSeal:
+    request_id: str
+    project_slug: str
+    plan_ref: PlanRef
+    bundle: AcceptanceBundle
+    uncertain: bool = False
+
+
 @dataclass
 class ManagedExecution:
     """One run's client, binding and the single writer grant it holds.
@@ -109,6 +119,7 @@ class ManagedExecution:
     # While this is set the writer is not releasable, and reconciliation is the
     # only operation allowed to name it.
     _pending_publication: PendingCandidatePublication | None = field(default=None, init=False, repr=False)
+    _pending_acceptance_seal: _PendingAcceptanceSeal | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -149,8 +160,8 @@ class ManagedExecution:
         operation, including RELEASE, is allowed until :meth:`reconcile_handoff`
         proves the result.
         """
-        if self._pending_handoff is not None:
-            self._raise_handoff_uncertain()
+        self._require_handoff_resolved()
+        self._require_publication_resolved()
         if (
             not isinstance(target, NamespaceRef)
             or target.session_id != self.binding.namespace.session_id
@@ -216,12 +227,97 @@ class ManagedExecution:
     def _require_handoff_resolved(self) -> None:
         if self._pending_handoff is not None:
             self._raise_handoff_uncertain()
+        if self._pending_acceptance_seal is not None:
+            raise ExecutionUncertainError("op-" + self._pending_acceptance_seal.request_id, code="DURABILITY_UNKNOWN")
 
     def _raise_handoff_uncertain(self) -> None:
         pending = self._pending_handoff
         if pending is None:
             raise ExecutionContractError
         raise ExecutionUncertainError("op-" + pending.request_id, code="DURABILITY_UNKNOWN")
+
+    @property
+    def acceptance_seal_pending(self) -> bool:
+        """An unresolved private-seal write still fences this writer."""
+        return self._pending_acceptance_seal is not None
+
+    def store_acceptance_seal(
+        self,
+        *,
+        project_slug: str,
+        plan_ref: PlanRef,
+        bundle: AcceptanceBundle,
+        deadline: float | None = None,
+    ) -> str:
+        """Start one authority seal write, retaining exact input on uncertainty."""
+        self._require_handoff_resolved()
+        self._require_publication_resolved()
+        if (
+            not isinstance(plan_ref, PlanRef)
+            or not isinstance(bundle, AcceptanceBundle)
+            or not isinstance(project_slug, str)
+        ):
+            raise ExecutionContractError
+        if bundle.revision_id != self.current_revision_id:
+            raise ExecutionContractError
+        self._pending_acceptance_seal = _PendingAcceptanceSeal(uuid4().hex, project_slug, plan_ref, bundle)
+        return self._attempt_acceptance_seal(deadline=deadline)
+
+    def reconcile_acceptance_seal(self, *, deadline: float | None = None) -> str:
+        """Replay only the exact unresolved request; a refusal cannot undo uncertainty."""
+        if self._pending_handoff is not None:
+            self._raise_handoff_uncertain()
+        self._require_publication_resolved()
+        if self._pending_acceptance_seal is None:
+            raise ExecutionContractError
+        return self._attempt_acceptance_seal(deadline=deadline)
+
+    def _attempt_acceptance_seal(self, *, deadline: float | None) -> str:
+        pending = self._pending_acceptance_seal
+        if pending is None:
+            raise ExecutionContractError
+        try:
+            digest = self.client.store_acceptance_seal(
+                self.binding.namespace,
+                grant=self.grant,
+                project_slug=pending.project_slug,
+                plan_ref=pending.plan_ref,
+                bundle=pending.bundle,
+                request_id=pending.request_id,
+                deadline=deadline,
+            )
+        except ExecutionRejectedError as error:
+            if pending.uncertain:
+                raise ExecutionUncertainError("op-" + pending.request_id, code=error.code) from None
+            self._pending_acceptance_seal = None
+            raise
+        except ExecutionContractError:
+            # ExecutionClient validates and encodes before sending; malformed
+            # replies after send are already reported as ExecutionUncertainError.
+            if pending.uncertain:
+                raise ExecutionUncertainError("op-" + pending.request_id, code="DURABILITY_UNKNOWN") from None
+            self._pending_acceptance_seal = None
+            raise
+        except ExecutionUnavailableError as error:
+            if pending.uncertain or error.operation_id is not None:
+                self._pending_acceptance_seal = _PendingAcceptanceSeal(
+                    pending.request_id, pending.project_slug, pending.plan_ref, pending.bundle, uncertain=True
+                )
+                raise ExecutionUncertainError("op-" + pending.request_id, code="DURABILITY_UNKNOWN") from None
+            self._pending_acceptance_seal = None
+            raise
+        except BaseException:
+            self._pending_acceptance_seal = _PendingAcceptanceSeal(
+                pending.request_id, pending.project_slug, pending.plan_ref, pending.bundle, uncertain=True
+            )
+            raise
+        if digest != pending.bundle.seal_sha256:
+            self._pending_acceptance_seal = _PendingAcceptanceSeal(
+                pending.request_id, pending.project_slug, pending.plan_ref, pending.bundle, uncertain=True
+            )
+            raise ExecutionUncertainError("op-" + pending.request_id, code="DURABILITY_UNKNOWN")
+        self._pending_acceptance_seal = None
+        return digest
 
     def publish_plan(
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
@@ -397,7 +493,10 @@ class ManagedExecution:
         turned into a local assumption, because the authority still owns whatever
         the view holds.
         """
-        self._require_handoff_resolved()
+        # Closing an already-open view is cleanup, not new work. Preserve the
+        # handoff fence, but allow cleanup during an uncertain seal write.
+        if self._pending_handoff is not None:
+            self._raise_handoff_uncertain()
         if not isinstance(grant, GrantReply) or grant.view_ref is None:
             raise ExecutionContractError
         view = grant.view_ref
@@ -445,6 +544,9 @@ class ManagedExecution:
                 "managed execution: writer release withheld while HANDOFF is unresolved for %s",
                 self.binding.workspace_id,
             )
+            return False
+        if self._pending_acceptance_seal is not None:
+            _logger.warning("managed execution: writer release withheld while an acceptance seal is unresolved")
             return False
         if self._pending_publication is not None:
             # Releasing here would assert that a writer-owned publication is

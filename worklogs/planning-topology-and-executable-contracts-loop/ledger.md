@@ -14486,3 +14486,57 @@ E657, true read-only mode-A/immutable fallback, TEST-DEFECT correction, managed 
 attribution, controller C1 and the final full gate remain open. V2's closed health features
 require coordinated client/supervisor update, as in E677; no deployed migration or host run
 is claimed.
+
+### E679 — real staged-create origin gap (2026-11-23)
+
+The actual D-V2-9 CREATE_NEW_PROJECT stage in `cli.py` creates the scaffold in its
+PROJECT WRITE view and publishes it through a REVISION intent. Only authority
+`_install_finish/_recover_bootstrap` calls `_record_acceptance_origin`; REVISION
+publication/recovery does not. The existing controller `_seal_published_project` still
+writes a workspace-local `SealStore`, so its admission success does not prove private
+custody. The real managed child stage test now additionally obtains that legacy seal and
+sends it through the real client/UDS/store against the newly published project: authority
+returns INPUT_POLICY, and neither the project origin nor private seal directory is
+created. Collection remains the existing local pytest executor double; publication,
+client, service and authority are real. A mutant replacing the absent-origin proof with a
+fabricated fresh origin caused the test to fail. This assertion documents a **current
+defect**, not the desired final behavior: replace it with a positive authority-proven
+fresh-project assertion once that path exists. TEST-EDITS: extended the existing real
+bootstrap witness without deleting its existing authoring assertions.
+
+A missing directory in the immediately preceding revision is not sufficient proof of
+freshness: an old project could have been deleted and its origin lost. Do not create an
+origin merely because the current path is absent, or switch the controller to private
+store while claiming fresh viability. The existing origin/marker checks protect previously
+started plans only when their surviving authority history remains available; accepted
+coherent complete rollback remains outside MVP. A project-history mechanism, registration
+and publication/recovery integration, and explicit fail-closed treatment of legacy or lost
+registry are still needed; the exact implementation must be checked against all workspace
+creation, install, publication, recovery and loss paths before use.
+
+### E680 — managed pending-seal reconciliation (2026-11-23)
+
+As a prerequisite to controller integration, `ManagedExecution.store_acceptance_seal`
+retains immutable exact input and request ID before the client call. On uncertainty it
+withholds writer close/handoff and new work through the guarded managed methods; only
+same-ID reconciliation can clear the pending record. A later refusal cannot erase earlier
+uncertainty. Definite first refusal and pre-send validation errors clear it; an unavailable
+probe before any write is distinct from an unavailable result carrying an operation ID.
+Existing read-view cleanup remains permitted, and handoff now also respects an unresolved
+candidate publication. Real service/authority tests cover a deliberately lost successful
+reply, exact replay with unchanged pointer inode/mtime, blocked close/open/handoff, cleanup,
+later refusal and service restart (actual workspace QUARANTINED; reply cache absent); the
+origin in these tests is synthetic. Producer, close EDGE, handoff/open fence, exact-ID
+replay, later-refusal and read-view-cleanup mutants killed/restored; the origin-forgery
+mutant is recorded in E679. Initial clean-refusal fixture chose a client-invalid project
+and got `ExecutionContractError`, then was corrected to an authority-refused missing plan;
+the restart status assertion was corrected from OWNED to observed QUARANTINED. This is a
+composition seam, not controller C1 or durable pending state across controller process
+loss. Existing direct `managed.client` usages bypass the managed-method fence: audit and
+route/guard them before connecting a caller or claiming universal writer fencing.
+
+Related composition/client/service/bootstrap/seal/readers/publication bank: 663 passed
+before the final cleanup change; targeted 3 passed afterward. Ruff/format and scoped
+composition mypy/environment check passed. No controller custody, trusted collection,
+mode A, full gate or host PASS claimed; E657 and STEP9A remain open.
+Final rerun of that same 7-module bank after the cleanup change: 663 passed.
