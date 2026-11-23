@@ -391,6 +391,8 @@ def test_the_readonly_classification_covers_the_closed_enum() -> None:
             Operation.LIST_PROJECT_ARTIFACTS,
             Operation.DIFF_REVISIONS,
             Operation.LIST_PROJECTS,
+            Operation.INVENTORY_ACCEPTANCE,
+            Operation.READ_ACCEPTANCE_SEAL,
         }
     )
 

@@ -14408,3 +14408,39 @@ later checks; strengthened the test with an absent origin entry while a pointer 
 then killed it. Ruff and production workspace mypy passed. Final full STEP9A type/mutation
 gate, authority transport, independently trusted collection, correction/reseal, real mode-A
 projection and controller C1 remain open; no host proof or STEP9A closure claimed.
+
+### E677 — private seal read transport, not custody integration (2026-11-23)
+
+INV-04/08 CT-3.3/3.6: V2-only `read_acceptance_seal` is an OWNER-proof, view-less,
+non-journalled observation. The service forwards exact project, PlanRef, expected revision,
+peer, namespace and capability to the existing authority reader; it creates no seal state.
+The client probes V2 capability, has no host-file fallback, and loads/revalidates the
+canonical bounded seal, digest, project root, plan hash and absence of unauthorized
+supersession. Corrupt authority metadata stays a typed CORRUPT_STATE uncertainty; missing,
+stale and unauthorized requests refuse. The wire envelope is closed, while the nested seal
+object is checked semantically by `load_seal` (1 MiB) after the existing 4 MiB frame limit.
+The reply may contain an old seal revision when current candidate revision has changed: the
+authority re-proves both and the acceptance transition, it is not a claim that they coincide.
+This is read transport only: no write RPC, trusted collection, controller consumer, mode-A
+projection, TEST-DEFECT correction or guard removal is implied. The V2 health feature enum is
+closed: older V2 client binaries that do not know this added feature will reject the new
+health response; coordinated supervisor/client update is required. No deployed upgrade or
+migration has been proven.
+
+C0 protocol tests prove V2-only, null view, mandatory capability and closed reply envelope;
+C3 fixture endpoint tests exercise client digest/scope and feature refusals. C3 real UDS
+client → service → dispatcher → actual authority proves correct seal, no read journal entry,
+wrong owner, stale revision, corrupt pointer, missing metadata and no reconstruction. The
+fixture uses a synthetic authority-created origin and internal mint, not the actual BOOTSTRAP
+or controller C1. Mutants killed/restored: service producer removal, service revision
+forwarding, dispatcher read-only classification, client project-scope check and wire owner
+binding. Initial targeted protocol/service/client/dispatch/readers/publication bank 592
+passed. Broad bank initially reported 3 failures (two pre-existing omissions of the earlier
+inventory V2 operation plus new operation), then 1 additional stale readonly inventory list
+in `test_workspace_authorize.py`; TEST-EDITS update these literal closed enumerations to
+include both operations without changing behavioral expectations. Ruff/format and scoped
+production mypy pass; links 394, planned E2E mapping and environment check pass. The full
+repository type/mutation gate remains unrun and STEP9A remains open.
+Final broad rerun after those fixture updates: `tests/test_execution_*.py`,
+`tests/test_workspace_publication.py`, `tests/test_workspace_authorize.py` — 1760 passed,
+2 expected Q106 xfailed. A later client oversized-response assertion was run separately.

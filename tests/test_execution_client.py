@@ -146,7 +146,7 @@ def endpoint(
                             connection,
                             encode_json(
                                 {
-                                    "protocol_version": 1,
+                                    "protocol_version": req["protocol_version"],
                                     "request_id": req["request_id"],
                                     "status": "OK" if error is None else "ERROR",
                                     "result": body if error is None else None,
@@ -825,3 +825,64 @@ def test_publish_plan_treats_a_foreign_plan_ref_as_indeterminate(tmp_path: Path)
         assert caught.value.code == "DURABILITY_UNKNOWN"
         assert "release" not in [req["op"] for req in seen]
         assert written == [CANDIDATE.text]
+
+
+def test_private_seal_client_checks_feature_digest_and_scope(tmp_path: Path) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from fa.inner_loop.plan_admission import PlanRef
+    from tests.test_ai_native_acceptance_collection import _PLAN_BYTES, _mint, _tree
+
+    root = _tree(tmp_path / "source")
+    bundle = _mint(root, revision_id=VIEW_BASE)
+    plan = PlanRef("worklogs/demo/increments/increment-01-demo.md", "EXPLICIT", hashlib.sha256(_PLAN_BYTES).hexdigest())
+    grant = GrantReply(Operation.ACQUIRE_WRITER, CAP, None, 1, VIEW_BASE)
+    valid = json.loads(seal_bytes(bundle))
+    mode = ["valid"]
+
+    def handler(req: dict[str, Any]) -> dict[str, Any]:
+        if req["op"] == "health":
+            return {
+                "ready": True,
+                "protocol_version": 2,
+                "profile_set_sha256": SHA,
+                "features": [] if mode[0] == "unsupported" else ["read_acceptance_seal"],
+            }
+        assert req["op"] == "read_acceptance_seal" and req["view_ref"] is None
+        record = copy.deepcopy(valid)
+        if mode[0] == "tamper":
+            record["plan_sha256"] = "f" * 64
+        if mode[0] == "oversize":
+            record["extra_one"] = "x" * 600_000
+            record["extra_two"] = "x" * 600_000
+        return {"seal": record}
+
+    with endpoint(tmp_path, handler) as (client, seen):
+        assert (
+            client.read_acceptance_seal(
+                NS, grant=grant, project_slug="demo", plan_ref=plan, expected_revision=VIEW_BASE
+            )
+            == bundle
+        )
+        assert [entry["op"] for entry in seen] == ["health", "read_acceptance_seal"]
+        mode[0] = "tamper"
+        with pytest.raises(ExecutionContractError):
+            client.read_acceptance_seal(
+                NS, grant=grant, project_slug="demo", plan_ref=plan, expected_revision=VIEW_BASE
+            )
+        mode[0] = "valid"
+        with pytest.raises(ExecutionContractError):
+            client.read_acceptance_seal(
+                NS, grant=grant, project_slug="other", plan_ref=plan, expected_revision=VIEW_BASE
+            )
+        mode[0] = "oversize"
+        with pytest.raises(ExecutionContractError):
+            client.read_acceptance_seal(
+                NS, grant=grant, project_slug="demo", plan_ref=plan, expected_revision=VIEW_BASE
+            )
+        mode[0] = "unsupported"
+        count = len(seen)
+        with pytest.raises(ExecutionUnavailableError):
+            client.read_acceptance_seal(
+                NS, grant=grant, project_slug="demo", plan_ref=plan, expected_revision=VIEW_BASE
+            )
+        assert [entry["op"] for entry in seen[count:]] == ["health"]

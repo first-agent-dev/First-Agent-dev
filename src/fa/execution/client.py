@@ -8,6 +8,7 @@ that. No transport failure here triggers a resend or replacement operation ID.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import socket
@@ -52,6 +53,7 @@ from fa.execution.types import (
     _hex_id,
     _positive_integer,
 )
+from fa.inner_loop.acceptance_bundle import AcceptanceBundle, AcceptanceBundleError, load_seal, seal_bytes
 from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 from fa.inner_loop.tools.workspace_port import PORT_READ_MAX_BYTES
 from fa.runtime.pty_pool import PtyResult
@@ -354,6 +356,84 @@ class ExecutionClient:
             deadline=deadline,
         )
         return _grant(Operation.PIN_READER, result)
+
+    def read_acceptance_seal(
+        self,
+        namespace: NamespaceRef,
+        *,
+        grant: GrantReply,
+        project_slug: str,
+        plan_ref: PlanRef,
+        expected_revision: str,
+        deadline: float | None = None,
+    ) -> AcceptanceBundle:
+        """Read an authority-verified private seal; never consult workspace metadata."""
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or not isinstance(grant, GrantReply)
+            or grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}
+            or not isinstance(project_slug, str)
+            or not isinstance(plan_ref, PlanRef)
+        ):
+            raise ExecutionContractError
+        _hex_id(expected_revision, "rev-")
+        try:
+            health = self.request(
+                Operation.HEALTH,
+                request_id=uuid4().hex,
+                namespace=None,
+                view=None,
+                grant=None,
+                payload={},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+            features = health.get("features")
+            if (
+                health.get("ready") is not True
+                or health.get("protocol_version") != PROTOCOL_V2
+                or not isinstance(features, list)
+                or "read_acceptance_seal" not in features
+                or features != sorted(set(features))
+            ):
+                raise ExecutionUnavailableError
+            result = self.request(
+                Operation.READ_ACCEPTANCE_SEAL,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=None,
+                grant=grant,
+                payload={
+                    "project_slug": project_slug,
+                    "plan_ref": _plan_ref_dict(plan_ref),
+                    "expected_revision": expected_revision,
+                },
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError as error:
+            if error.code == "CORRUPT_STATE":
+                raise
+            raise ExecutionUnavailableError from None
+        try:
+            raw = json.dumps(result["seal"], sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+            bundle = load_seal(raw)
+            if (
+                seal_bytes(bundle) != raw
+                or bundle.plan_sha256 != plan_ref.sha256
+                or bundle.sealed_root != f"worklogs/{project_slug}/acceptance"
+                or bundle.supersedes_sha256 is not None
+            ):
+                raise ExecutionContractError
+            return bundle
+        except (AcceptanceBundleError, KeyError, TypeError, ValueError, UnicodeError, RecursionError):
+            raise ExecutionContractError from None
 
     def inventory_acceptance(
         self,

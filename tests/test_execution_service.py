@@ -238,7 +238,13 @@ def test_v2_health_negotiates_project_artifact_and_revision_diff_features(site: 
                 view_profile_id=native_profile().profile_id,
                 read_only_profile_id=read_only_profile().profile_id,
             ),
-            "features": ["diff_revisions", "inventory_acceptance", "list_project_artifacts", "list_projects"],
+            "features": [
+                "diff_revisions",
+                "inventory_acceptance",
+                "list_project_artifacts",
+                "list_projects",
+                "read_acceptance_seal",
+            ],
         }
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
 
@@ -1644,6 +1650,117 @@ def test_client_inventory_reaches_real_service_and_checks_grant_identity(site: S
                 client.inventory_acceptance(
                     ACTOR, view=grant.view_ref, grant=forged, project_slug="demo", deadline=until()
                 )
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+
+def test_private_seal_client_over_real_socket_requires_owner_and_never_recreates_lost_metadata(site: Site) -> None:
+    import shutil
+
+    from fa.execution.client import ExecutionRejectedError, ExecutionUncertainError
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import _acceptance_store_case, _private_plan, _register_acceptance_fixture
+
+    root, plan_ref = _acceptance_store_case(site)
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)  # synthetic origin; not bootstrap proof
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        revision = ids["revision_id"]
+        bundle = _mint(root, revision_id=revision)
+        service.authority.store_acceptance_seal(
+            PEER,
+            ACTOR,
+            capability=grant.capability,
+            project_slug="demo",
+            plan_ref=plan_ref,
+            seal_record=seal_bytes(bundle),
+            deadline=until(),
+        )
+        private = _private_plan(site, ids, plan_ref)
+        pointer = private / ".fa/seal-current.json"
+        before = pointer.read_bytes()
+        request_id = "c" * 32
+        reply = exchange(
+            service,
+            Operation.READ_ACCEPTANCE_SEAL,
+            {
+                "project_slug": "demo",
+                "plan_ref": {
+                    "workspace_relative_path": plan_ref.workspace_relative_path,
+                    "source_kind": plan_ref.source_kind,
+                    "sha256": plan_ref.sha256,
+                },
+                "expected_revision": revision,
+            },
+            request_id=request_id,
+            capability=grant.capability,
+            protocol_version=2,
+        )
+        assert reply["status"] == "OK" and reply["result"]["seal"]["seal_sha256"] == bundle.seal_sha256
+        assert service.authority.journal.lookup("op-" + request_id, ACTOR) is None
+        client = ExecutionClient(_config(site).socket_path, server_uid=os.getuid(), rpc_timeout_ms=5000)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            assert (
+                client.read_acceptance_seal(
+                    ACTOR,
+                    grant=grant,
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    expected_revision=revision,
+                    deadline=until(),
+                )
+                == bundle
+            )
+            assert pointer.read_bytes() == before
+            with pytest.raises(ExecutionRejectedError) as denied:
+                client.read_acceptance_seal(
+                    ACTOR,
+                    grant=replace(grant, capability="f" * 64),
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    expected_revision=revision,
+                    deadline=until(),
+                )
+            assert denied.value.code == "UNAUTHORIZED"
+            with pytest.raises(ExecutionRejectedError) as stale:
+                client.read_acceptance_seal(
+                    ACTOR,
+                    grant=grant,
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    expected_revision="rev-" + "f" * 32,
+                    deadline=until(),
+                )
+            assert stale.value.code == "STALE_REVISION"
+            assert pointer.read_bytes() == before
+            pointer.write_bytes(b"invalid")
+            with pytest.raises(ExecutionUncertainError) as corrupt:
+                client.read_acceptance_seal(
+                    ACTOR,
+                    grant=grant,
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    expected_revision=revision,
+                    deadline=until(),
+                )
+            assert corrupt.value.code == "CORRUPT_STATE" and pointer.read_bytes() == b"invalid"
+            shutil.rmtree(private)
+            with pytest.raises(ExecutionRejectedError) as missing:
+                client.read_acceptance_seal(
+                    ACTOR,
+                    grant=grant,
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    expected_revision=revision,
+                    deadline=until(),
+                )
+            assert missing.value.code == "INPUT_POLICY" and not private.exists()
         finally:
             stop.set()
             runner.join(timeout=5)

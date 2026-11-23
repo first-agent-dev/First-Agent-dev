@@ -269,6 +269,7 @@ READONLY_OPERATIONS = frozenset(
         Operation.INSPECT,
         Operation.LIST_PROJECT_ARTIFACTS,
         Operation.INVENTORY_ACCEPTANCE,
+        Operation.READ_ACCEPTANCE_SEAL,
         Operation.DIFF_REVISIONS,
         Operation.LIST_PROJECTS,
     }

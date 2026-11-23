@@ -338,6 +338,7 @@ def test_a_writer_view_still_names_the_bytes_it_mutates(purpose: str) -> None:
             Operation.DIFF_REVISIONS,
             Operation.LIST_PROJECTS,
             Operation.INVENTORY_ACCEPTANCE,
+            Operation.READ_ACCEPTANCE_SEAL,
         }
     ],
 )
@@ -351,6 +352,7 @@ def test_all_v1_operations_keep_their_complete_payloads_and_results(op: Operatio
             Operation.DIFF_REVISIONS,
             Operation.LIST_PROJECTS,
             Operation.INVENTORY_ACCEPTANCE,
+            Operation.READ_ACCEPTANCE_SEAL,
         }
     )
     req, res = request(op), response(op)
@@ -865,3 +867,42 @@ def test_acceptance_inventory_is_v2_only_and_has_closed_reply() -> None:
     reply["result"]["entries"][0]["extra"] = True
     with pytest.raises(ExecutionContractError):
         decode_reply(encode_json(reply), operation=Operation.INVENTORY_ACCEPTANCE, request_id=RID, protocol_version=2)
+
+
+def test_private_seal_read_is_v2_owner_only_and_reply_envelope_is_closed() -> None:
+    req = {
+        "protocol_version": 2,
+        "request_id": RID,
+        "op": Operation.READ_ACCEPTANCE_SEAL.value,
+        "namespace": NS,
+        "view_ref": None,
+        "capability": CAP,
+        "payload": {
+            "project_slug": "demo",
+            "plan_ref": {
+                "workspace_relative_path": "worklogs/demo/increments/increment-01.md",
+                "source_kind": "EXPLICIT",
+                "sha256": SHA,
+            },
+            "expected_revision": REV,
+        },
+    }
+    assert decode_request(encode_json(req)) == req
+    for malformed in ({**req, "protocol_version": 1}, {**req, "capability": None}, {**req, "view_ref": VIEW}):
+        with pytest.raises(InvalidRequestError):
+            decode_request(encode_json(malformed))
+    reply = {"protocol_version": 2, "request_id": RID, "status": "OK", "error": None, "result": {"seal": {}}}
+    assert (
+        decode_reply(encode_json(reply), operation=Operation.READ_ACCEPTANCE_SEAL, request_id=RID, protocol_version=2)
+        == reply
+    )
+    with pytest.raises(ExecutionContractError):
+        decode_reply(
+            encode_json({**reply, "protocol_version": 1}),
+            operation=Operation.READ_ACCEPTANCE_SEAL,
+            request_id=RID,
+            protocol_version=1,
+        )
+    reply["result"]["extra"] = True
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(reply), operation=Operation.READ_ACCEPTANCE_SEAL, request_id=RID, protocol_version=2)

@@ -85,6 +85,7 @@ from fa.execution.types import (
     _positive_integer,
 )
 from fa.execution.workspace import InputLimits, WorkspaceAuthority
+from fa.inner_loop.acceptance_bundle import seal_bytes
 from fa.inner_loop.plan_admission import PlanRef
 
 # The socket path is a `sun_path`; anything longer cannot be bound at all.
@@ -596,13 +597,35 @@ class SupervisorService:
                 "ready": self._authority.ready,
                 "protocol_version": PROTOCOL_V2,
                 "profile_set_sha256": self._profile_set_sha256,
-                "features": ["diff_revisions", "inventory_acceptance", "list_project_artifacts", "list_projects"],
+                "features": [
+                    "diff_revisions",
+                    "inventory_acceptance",
+                    "list_project_artifacts",
+                    "list_projects",
+                    "read_acceptance_seal",
+                ],
             }
         return {
             "ready": self._authority.ready,
             "protocol_version": 1,
             "profile_set_sha256": self._profile_set_sha256,
         }
+
+    def _read_acceptance_seal(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        payload = request["payload"]
+        plan = self._plan_ref(payload["plan_ref"])
+        if plan is None:
+            raise SupervisorError("INPUT_POLICY")
+        bundle = self._authority.read_acceptance_seal(
+            peer,
+            self._namespace(request),
+            capability=self._capability(request),
+            project_slug=payload["project_slug"],
+            plan_ref=plan,
+            expected_revision=payload["expected_revision"],
+            deadline=deadline,
+        )
+        return {"seal": json.loads(seal_bytes(bundle))}
 
     def _inventory_acceptance(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         view = self._view(request)
@@ -980,6 +1003,7 @@ _ROUTE_NAMES: dict[Operation, str] = {
     Operation.SEAL: "_seal",
     Operation.PUBLISH: "_publish",
     Operation.PREPARE_BUNDLE: "_prepare_bundle",
+    Operation.READ_ACCEPTANCE_SEAL: "_read_acceptance_seal",
     Operation.INVENTORY_ACCEPTANCE: "_inventory_acceptance",
     Operation.LIST_PROJECT_ARTIFACTS: "_list_project_artifacts",
     Operation.DIFF_REVISIONS: "_diff_revisions",

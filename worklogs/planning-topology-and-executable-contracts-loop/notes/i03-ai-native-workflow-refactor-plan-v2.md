@@ -1446,3 +1446,8 @@ results. See ledger E675. All STEP9A integration, multi-plan and custody obligat
 remove the internal one-plan-per-project restriction, subject to bounded registry capacity,
 no automatic migration and no supersession. Component evidence and TEST-EDITS are in ledger
 E676; production custody integration, C1, correction, projection and final gate remain open.
+
+**E677:** V2 OWNER-only private seal read transport is available through the real client,
+service and authority, with bounded semantic client validation; see ledger E677 for
+negative proof, compatibility and limitations. No production controller consumes it yet;
+authority mint transport, trusted collection, mode-A and E657 guard remain open.
