@@ -232,9 +232,11 @@ _ACCEPTANCE_ORIGIN = fastjsonschema.compile(
         project_slug=CONFIG_ID,
         operation_id=_id("op-"),
         revision_id=_id("rev-"),
-        seal_state={"enum": ["fresh", "started"]},
-        plan_relative=_nullable({"type": "string", "maxLength": 4096}),
-        plan_sha256=_nullable(SHA),
+        plans={
+            "type": "object",
+            "propertyNames": SHA,
+            "additionalProperties": _object(plan_relative={"type": "string", "maxLength": 4096}, plan_sha256=SHA),
+        },
     )
 )
 
@@ -3573,12 +3575,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             origin = self._require_acceptance_origin(binding, project_slug)
             # Only private descriptor-relative directories chosen by the authority are used.
             try:
-                with self._acceptance_store_directory(binding, project_slug) as directory:
+                with self._acceptance_store_directory(binding, project_slug, plan_ref) as directory:
                     _private(directory)
                     store = SealStore(Path(f"/proc/self/fd/{directory}"))
                     has_pointer = self._check_acceptance_store_before_write(store)
                     self._advance_acceptance_origin(binding, project_slug, origin, has_pointer, plan_ref)
-                    marker_created = self._mark_acceptance_store_started(binding, project_slug)
+                    marker_created = self._mark_acceptance_store_started(binding, project_slug, plan_ref)
                     if not has_pointer and not marker_created:
                         raise AcceptanceBundleError("seal-history-ambiguous")
                     store.store(bundle)
@@ -3639,14 +3641,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             except OSError:
                 raise SupervisorError("CORRUPT_STATE") from None
             origin = self._require_acceptance_origin(binding, project_slug)
-            if (
-                origin["seal_state"] != "started"
-                or origin["plan_relative"] != plan_ref.workspace_relative_path
-                or origin["plan_sha256"] != plan_ref.sha256
-            ):
+            identity = self._acceptance_plan_key(plan_ref)
+            plan_history = origin["plans"].get(identity)
+            if plan_history != {"plan_relative": plan_ref.workspace_relative_path, "plan_sha256": plan_ref.sha256}:
                 raise SupervisorError("INPUT_POLICY")
             try:
-                with self._acceptance_store_directory(binding, project_slug, create=False) as directory:
+                with self._acceptance_store_directory(binding, project_slug, plan_ref, create=False) as directory:
                     bundle = SealStore(Path(f"/proc/self/fd/{directory}")).current()
             except FileNotFoundError:
                 raise SupervisorError("INPUT_POLICY") from None
@@ -3732,30 +3732,40 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             raise SupervisorError("CORRUPT_STATE") from None
         if record["workspace_id"] != binding.metadata["workspace_id"] or record["project_slug"] != project_slug:
             raise SupervisorError("CORRUPT_STATE")
+        try:
+            if any(
+                hashlib.sha256(item["plan_relative"].encode("utf-8")).hexdigest() != key
+                for key, item in record["plans"].items()
+            ):
+                raise SupervisorError("CORRUPT_STATE")
+        except UnicodeError:
+            raise SupervisorError("CORRUPT_STATE") from None
         return record
+
+    @staticmethod
+    def _acceptance_plan_key(plan_ref: PlanRef) -> str:
+        try:
+            return hashlib.sha256(plan_ref.workspace_relative_path.encode("utf-8")).hexdigest()
+        except (AttributeError, UnicodeError):
+            raise SupervisorError("INPUT_POLICY") from None
 
     @staticmethod
     def _advance_acceptance_origin(
         binding: _Binding, project_slug: str, record: dict[str, Any], has_pointer: bool, plan_ref: PlanRef
     ) -> None:
-        # The same durable record proves both installation and the first-mint
-        # boundary. Losing an independent marker cannot turn STARTED into FRESH.
+        # This project-wide atomic registry survives loss of any individual plan
+        # directory or marker. One missing key authorizes only that exact plan.
+        key = WorkspaceAuthority._acceptance_plan_key(plan_ref)
+        expected = {"plan_relative": plan_ref.workspace_relative_path, "plan_sha256": plan_ref.sha256}
+        plans = record["plans"]
+        existing = plans.get(key)
         if has_pointer:
-            if (
-                record["seal_state"] != "started"
-                or record["plan_relative"] != plan_ref.workspace_relative_path
-                or record["plan_sha256"] != plan_ref.sha256
-            ):
+            if existing != expected:
                 raise AcceptanceBundleError("seal-history-ambiguous")
             return
-        if record["seal_state"] != "fresh" or record["plan_relative"] is not None or record["plan_sha256"] is not None:
+        if existing is not None:
             raise AcceptanceBundleError("seal-history-ambiguous")
-        updated = {
-            **record,
-            "seal_state": "started",
-            "plan_relative": plan_ref.workspace_relative_path,
-            "plan_sha256": plan_ref.sha256,
-        }
+        updated = {**record, "plans": {**plans, key: expected}}
         try:
             _check(_ACCEPTANCE_ORIGIN, updated)
             raw = encode_json(updated)
@@ -3782,9 +3792,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             "project_slug": parts[1],
             "operation_id": intent["operation_id"],
             "revision_id": intent["next_revision"],
-            "seal_state": "fresh",
-            "plan_relative": None,
-            "plan_sha256": None,
+            "plans": {},
         }
         _check(_ACCEPTANCE_ORIGIN, record)
         name = WorkspaceAuthority._acceptance_origin_name(parts[1])
@@ -3797,14 +3805,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             raise SupervisorError("CORRUPT_STATE")
 
     @staticmethod
-    def _mark_acceptance_store_started(binding: _Binding, project_slug: str) -> bool:
+    def _mark_acceptance_store_started(binding: _Binding, project_slug: str, plan_ref: PlanRef) -> bool:
         """Durably remember a mint started outside its removable project directory.
 
         A marker without a pointer is intentionally unrecoverable automatically: it
         can represent either an interrupted first mint or lost seal metadata. It is
         not a rollback-resistant anchor if the binding itself is lost or restored.
         """
-        name = "acceptance-started-" + project_slug
+        name = "acceptance-started-" + project_slug + "-" + WorkspaceAuthority._acceptance_plan_key(plan_ref)
         try:
             fd = os.open(
                 name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=binding.fd
@@ -3828,11 +3836,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     @staticmethod
     @contextmanager
-    def _acceptance_store_directory(binding: _Binding, project_slug: str, *, create: bool = True) -> Generator[int]:
+    def _acceptance_store_directory(
+        binding: _Binding, project_slug: str, plan_ref: PlanRef, *, create: bool = True
+    ) -> Generator[int]:
         with ExitStack() as stack:
             parent = binding.fd
             project_fd = -1
-            for index, name in enumerate(("acceptance", project_slug, ".fa", "seals")):
+            plan_key = WorkspaceAuthority._acceptance_plan_key(plan_ref)
+            for index, name in enumerate(("acceptance", project_slug, "plans", plan_key, ".fa", "seals")):
                 if create:
                     try:
                         os.mkdir(name, 0o700, dir_fd=parent)
@@ -3843,7 +3854,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 stack.callback(os.close, child)
                 _private(child)
                 parent = child
-                if index == 1:
+                if index == 3:
                     project_fd = child
             yield project_fd
 

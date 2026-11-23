@@ -14381,3 +14381,30 @@ sweep. One mypy issue in the touched reader test was subsequently corrected; sco
 of workspace plus reader test still reports **17 errors in 3 imported test files**, not in
 those two named files. Do not claim either full typecheck passed. STEP9A stays open; full gate
 and complete module mutation sweep are mandatory per E674, after implementation is complete.
+
+### E676 — experimental per-plan authority histories (2026-11-23)
+
+INV-04/08 CT-3.3/3.6 component slice: a BOOTSTRAP-created project origin now holds an
+atomic, bounded registry keyed by SHA-256 of the exact UTF-8 plan path; each plan has its
+own private store and independent started marker. Registry entries bind path and plan hash;
+all keys are checked against their paths before use. A started entry without its store
+cannot be silently reminted even if its marker is also lost. Supersession remains forbidden;
+this is an experimental format change, not a migration or recovery of prior-format origins.
+The 32 KiB bound is shared by all entries; exhausted capacity fails closed, and no claim of
+unlimited plans is made. The origin is still subject to the accepted coherent-rollback limit.
+
+TEST-EDITS: existing single-plan tests were retargeted to per-plan directories, markers and
+registry fields, retaining loss, interrupted first write, symlink, corruption and restart
+oracles; the former rejection of identical bytes at another plan path was replaced with
+independent-history behavior. Additional real-authority tests cover two same-content paths,
+read before mint, restart, one history plus marker loss without touching the other, distinct
+plan hashes and pointer substitution, and malformed registry key refusal before creating a
+new store. These are C0/C3 component tests, not controller C1 or mode-A proof. Related bank
+readers/publication/views/backend/topology: 314 passed before the final added read-origin
+assertions; that strengthened test separately passed. Three manual mutants killed/restored:
+registry key validation, started history rejection, and read origin binding. The initial read
+binding mutant survived because the chosen wrong-hash case was independently rejected by
+later checks; strengthened the test with an absent origin entry while a pointer remains and
+then killed it. Ruff and production workspace mypy passed. Final full STEP9A type/mutation
+gate, authority transport, independently trusted collection, correction/reseal, real mode-A
+projection and controller C1 remain open; no host proof or STEP9A closure claimed.

@@ -1441,3 +1441,8 @@ custody, recovery and ledger-append E2E remain separate.
 covers the declared path schema; a real escaped filename reproduced the old durability failure.
 Interim full mypy/pyrefly are red (89/65 errors before one test-type fix), not final-gate
 results. See ledger E675. All STEP9A integration, multi-plan and custody obligations remain open.
+
+**E676:** experimental authority-private per-plan origin registry and independent stores
+remove the internal one-plan-per-project restriction, subject to bounded registry capacity,
+no automatic migration and no supersession. Component evidence and TEST-EDITS are in ledger
+E676; production custody integration, C1, correction, projection and final gate remain open.
