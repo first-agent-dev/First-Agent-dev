@@ -1392,3 +1392,52 @@ first-mint transition; losing both the separate marker and project seal director
 make the surviving origin authorize a fresh mint. Interrupted or contradictory state fails
 closed. This does not detect a coherent rollback of that origin, implement recovery/backup,
 prove mode A, or authorize removal of E657. STEP9A remains open; see ledger E670–E671.
+
+**E672 mount-topology diagnostic:** a read-only bind at `acceptance` alone is not sufficient:
+a real namespace experiment moved its writable project ancestor and substituted the visible
+path. A top-level read-only `worklogs` bind under a separately mounted workspace resisted the
+same operations locally while permitting `src` writes. This is a candidate to investigate,
+not a production mount design or C1/host proof; full alias/race/closure and verifier binding
+remain open. Reproducible diagnostic and precise limitations: ledger E672 and
+`tests/test_acceptance_mount_topology.py`. E657 remains active.
+
+**E673 authority read component:** private seal read re-proves original and current revision,
+plan semantics and full subtree manifest, with exact path/SHA bound to the origin. It allows
+code-only revision advancement but refuses closure changes including modes and empty dirs.
+It is internal and not a trusted collection receipt or production caller; the current
+single-plan-per-project pointer and disabled supersession do **not** satisfy multi-increment
+or TEST-DEFECT lifecycle. E657 remains; see ledger E673 for tests and remaining obligations.
+
+
+### STEP9A final full gate — operator requirement (2026-11-23; NOT RUN)
+
+Before STEP9A closure, run `source .venv/bin/activate && just check` using the
+`./scripts/arena-env-build.sh` environment; report each constituent gate, including
+repository-wide mypy and pyrefly. Independently mutation-test every complete production
+module implemented or changed for STEP9A, not only the configured `[tool.mutmut]` scope,
+a selected line subset or the small producer/EDGE samples already in the ledger. Freeze the
+final source-grounded module/test inventory at the candidate SHA and extend it as work lands.
+Initial minimum inventory: `src/fa/execution/{workspace,publication,profiles,docker,backend,
+composition,primitives,protocol,service,client,view_io}.py`; `src/fa/inner_loop/{plan_v2,
+plan_admission,acceptance_bundle,acceptance_closure,acceptance_collection,acceptance_seal_store,
+acceptance_defect,kill_attribution,slice_verification,verification_attempt,junit_nodeid_plugin,
+junit_properties,workflow_controller,coder_loop}.py`; and `src/fa/cli.py` where STEP9A
+integration changes it. Include further STEP9A production files introduced or changed by
+implementation; omit no initial file without recorded source-grounded correction and owner
+review. Shard the full files through `scripts/run_slice_mutmut.py --source <file> --test
+<relevant-test> ...`, with `--also-copy` dependencies as needed; verify each test selection
+actually exercises that module, baseline passes, complete results reconcile, and producer +
+caller/EDGE mutants have meaningful oracles. Preserve full reports externally or in ignored
+artifacts; log commands, SHA, tool versions, denominators and counts per module. Triage all
+survivors under `/mutation-clearing`, repair meaningful gaps, record evidence for equivalents;
+No missing, timeout, infrastructure-failed, unreviewed or skipped shard counts as
+PASS. Type-invalid mutants are reported and reviewed as invalid rather than credited as killed;
+their presence alone is not a functional failure, but cannot hide incomplete execution. Targeted mutation checks remain required after each implementation slice and do not
+replace this final sweep. This STEP9A gate supersedes E544's best-effort language **only for
+STEP9A**; Q139 and unrelated broad-baseline dispositions are unchanged. W4 actual-host
+custody, recovery and ledger-append E2E remain separate.
+
+**E675:** origin JSON size is checked before the first-mint replace and the read bound now
+covers the declared path schema; a real escaped filename reproduced the old durability failure.
+Interim full mypy/pyrefly are red (89/65 errors before one test-type fix), not final-gate
+results. See ledger E675. All STEP9A integration, multi-plan and custody obligations remain open.

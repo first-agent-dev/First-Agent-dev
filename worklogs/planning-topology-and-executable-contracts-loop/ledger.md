@@ -14290,3 +14290,94 @@ started/no-pointer guard and the fresh/pointer guard each killed its targeted te
 passed across readers/publication/views/purposes/admission/backend before the final fault test;
 no C1 or host claim. Guard E657 and all remaining STEP9A custody/collection/projection,
 backup/recovery and integration obligations remain open.
+
+### E672 — real kernel mount topology diagnostic (2026-11-23; STEP9A remains open)
+
+STEP9A re-grounding confirms custody plus pre-code, exact managed mutation, TEST-DEFECT
+and production caller/edge evidence remain before independent STEP9B; E657 is still active.
+Sandbox has `unshare -Urnm`, `mount` and `setpriv` (but no Docker). In a fresh user/mount
+namespace a capability-free process renamed a writable project ancestor of a read-only
+`acceptance` bind, recreated the old path, and saw forged bytes while the original remained
+mounted at the moved path. Thus a nested acceptance-only bind is demonstrably insufficient.
+A separate layout with bind-mounted workspace and read-only bind of its top-level `worklogs`
+kept original bytes visible, permitted `src` writes, denied file write/unlink/chmod and
+project rename with EROFS, denied worklogs mountpoint rename with EBUSY, hardlink to `src`
+with EXDEV and remount with nonzero exit. `tests/test_acceptance_mount_topology.py` makes
+both experiments reproducible (2 passed locally; unavailable namespace/tools skip explicitly).
+These are kernel topology experiments, not a production implementation: the child still sees
+the host filesystem, the mount is manually constructed, Docker semantics and actual profile,
+authority input identity/races, existing aliases and full closure/verifier identity are not
+proved. The wider worklogs protection's product fit also needs integration review. The first
+manual shell experiment produced the above observations but exited 1 on its cleanup; its
+namespace exited and the temporary directory was removed subsequently. The pytest version
+exits cleanly. Mutations of the diagnostic (protect nested ancestor, omit read-only remount,
+replace negative layout with top-level layout) each failed the relevant test; these are not
+production producer/EDGE kills. Diagnostic+readers+Docker peer+views bank: 260 passed. No host,
+C1, B closure or STEP9A acceptance is claimed; C remains mandatory if B cannot be proved.
+
+### E673 — authority-private seal read and revision transition component (2026-11-23)
+
+`WorkspaceAuthority.read_acceptance_seal` reads without making private store directories,
+requires the actual OWNER grant, expected current revision, settled writer views/intent,
+canonical/current revision consistency, origin, and private pointer/record. It re-proves the
+seal's original revision and current revision using existing tree, canonical closure, and
+plan-semantic validators. It compares their entire acceptance subtree manifests, including
+logical modes and empty directories; byte-only closure collection normalizes file modes and
+does not by itself detect these changes. Successful real authority bootstrap→mint→read and
+code-only publication→read were exercised. Negative controls include alternate same-byte plan
+path, stale revision, foreign grant, lost/corrupt/link pointer, absent origin/store/views,
+unsettled view, altered/added/deleted files, mode changes, new empty directory, changed plan,
+and digest-valid foreign semantic mapping. Refusal preserves pointer/record; missing store is
+not recreated. Before this change the private origin did not bind the exact plan path: the
+first-mint transition now atomically binds path and SHA; a same-content different plan cannot
+reuse or replay it. Legacy experimental E670/E671 origin records lacking the new fields fail
+closed; no deployed migration or compatibility is claimed.
+
+Scoped producer/EDGE mutations killed/restored: subtree comparison and its reader caller,
+plan validator caller, origin path check, store path check, and read-only directory caller.
+`tests/test_execution_readers.py tests/test_workspace_publication.py tests/test_execution_views.py
+ tests/test_execution_backend.py tests/test_acceptance_mount_topology.py`: 310 passed; final
+missing-store no-directory assertion added after that bank. Ruff/format/mypy scoped pass.
+These are component tests including real authority and publication, not controller/UDS C1,
+trusted selector collection or actual Docker execution; the read method has no production
+caller yet. E657 remains, and no STEP9A closure is claimed. **Important remaining lifecycle
+limitation:** this experimental origin and pointer allow only one plan per project, and
+supersession is deliberately disabled. Separate per-plan history and planner-authorized
+TEST-DEFECT reseal must be implemented and proven before multiple increments/replanning can
+work; do not mistake fail-closed refusal for full project/plan lifecycle. Consistent backup
+and W4 restoration/ledger-append witnesses remain planned, not implemented or run.
+
+
+### E674 — operator-required full STEP9A gate planned (2026-11-23)
+
+Operator requested a full gate including mypy, pyrefly and mutation testing for all
+STEP9A modules. Parent STEP9A and V2 plan now make repository `just check` plus a full
+file-level, source-inventoried and reviewed per-module STEP9A mutation sweep mandatory
+before closure, overriding E544 best-effort only for this scope. Actual results must
+include candidate SHA, selected tests, commands, tool versions, per-shard denominators,
+statuses, survivor disposition and producer/EDGE checks; no missing or infrastructure
+result is PASS. Type-invalid mutants are classified and reviewed, never counted as killed. Inventory grows with implementation and final review precedes execution.
+This is planning only: no full gate, mutation sweep or host run is claimed in E674.
+
+### E675 — origin encoding bound and interim full typecheck (2026-11-23)
+
+A real authority diagnostic reproduced E673's origin bug: a legal 180-byte filename of
+JSON-escaped characters produces an origin larger than the 1024-byte read ceiling. The
+first-mint transition had already replaced the fresh record when read-back failed, returning
+DURABILITY_UNKNOWN and leaving no seal pointer. The new 32 KiB bounded origin limit covers
+the schema's 4096-character path under worst-case six-byte JSON escapes plus fixed fields;
+the fully encoded record is schema-checked and size-checked *before* replace. C0/C3 tests
+exercise the genuine path via authority mint/read and injected pre-write bound; oversized
+existing records still refuse. Scoped producer read-limit, post-replace read EDGE and
+prewrite-bound mutants killed/restored. Readers/publication/views/backend/topology bank:
+312 passed; targeted tests after a subsequent type-honesty edit: 3 passed. Ruff/format and
+production module mypy pass. A first mutation harness attempt executed the post-replace
+mutant but stopped on an incorrect string match; the remaining two were rerun and killed.
+
+Interim repository-wide `.venv/bin/mypy` exited 1: **89 errors in 14 files** (629 files
+checked); `.venv/bin/pyrefly check` exited 1: **65 errors**, with 238 suppressed and 83
+warnings not shown. These are actual diagnostics, not a full `just check` or final candidate
+sweep. One mypy issue in the touched reader test was subsequently corrected; scoped mypy
+of workspace plus reader test still reports **17 errors in 3 imported test files**, not in
+those two named files. Do not claim either full typecheck passed. STEP9A stays open; full gate
+and complete module mutation sweep are mandatory per E674, after implementation is complete.

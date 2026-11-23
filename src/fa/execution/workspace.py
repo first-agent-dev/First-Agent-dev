@@ -221,6 +221,9 @@ _VIEW_RECORD = fastjsonschema.compile(
     )
 )
 
+# JSON escaping can expand a 4096-character plan path up to six bytes per
+# character; leave bounded space for that plus workspace identity and fields.
+_ACCEPTANCE_ORIGIN_MAX_BYTES = 32 * 1024
 # First seal requires the authority's durable proof of a completed project install.
 _ACCEPTANCE_ORIGIN = fastjsonschema.compile(
     _object(
@@ -230,6 +233,8 @@ _ACCEPTANCE_ORIGIN = fastjsonschema.compile(
         operation_id=_id("op-"),
         revision_id=_id("rev-"),
         seal_state={"enum": ["fresh", "started"]},
+        plan_relative=_nullable({"type": "string", "maxLength": 4096}),
+        plan_sha256=_nullable(SHA),
     )
 )
 
@@ -3572,7 +3577,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     _private(directory)
                     store = SealStore(Path(f"/proc/self/fd/{directory}"))
                     has_pointer = self._check_acceptance_store_before_write(store)
-                    self._advance_acceptance_origin(binding, project_slug, origin, has_pointer)
+                    self._advance_acceptance_origin(binding, project_slug, origin, has_pointer, plan_ref)
                     marker_created = self._mark_acceptance_store_started(binding, project_slug)
                     if not has_pointer and not marker_created:
                         raise AcceptanceBundleError("seal-history-ambiguous")
@@ -3591,6 +3596,100 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 self._healthy = False
                 raise SupervisorError("DURABILITY_UNKNOWN") from None
             return bundle.seal_sha256
+
+    def read_acceptance_seal(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        capability: str,
+        project_slug: str,
+        plan_ref: PlanRef,
+        expected_revision: str,
+        deadline: float,
+    ) -> AcceptanceBundle:
+        """Read the private seal and re-prove both its source and current revision.
+
+        Internal authority component only: this is not a collection receipt, a
+        coder capability, a wire operation, or authorization to dispatch.
+        """
+        if (
+            not isinstance(project_slug, str)
+            or len(project_slug) > 48
+            or _SLUG.fullmatch(project_slug) is None
+            or not isinstance(plan_ref, PlanRef)
+            or plan_ref.workspace_relative_path.split("/")[:3] != ["worklogs", project_slug, "increments"]
+            or len(plan_ref.workspace_relative_path.split("/")) != 4
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        _hex_id(expected_revision, "rev-")
+        with self._transaction(peer, deadline):
+            binding = self._owner_only(peer, namespace, capability)
+            if binding.current["revision_id"] != expected_revision:
+                raise SupervisorError("STALE_REVISION")
+            try:
+                views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+                try:
+                    _private(views)
+                    if self._has_unsettled_views(binding, views) or self._read_intent(binding.fd) is not None:
+                        raise SupervisorError("WORKSPACE_BUSY")
+                finally:
+                    os.close(views)
+                self._unchanged(binding, deadline)
+            except OSError:
+                raise SupervisorError("CORRUPT_STATE") from None
+            origin = self._require_acceptance_origin(binding, project_slug)
+            if (
+                origin["seal_state"] != "started"
+                or origin["plan_relative"] != plan_ref.workspace_relative_path
+                or origin["plan_sha256"] != plan_ref.sha256
+            ):
+                raise SupervisorError("INPUT_POLICY")
+            try:
+                with self._acceptance_store_directory(binding, project_slug, create=False) as directory:
+                    bundle = SealStore(Path(f"/proc/self/fd/{directory}")).current()
+            except FileNotFoundError:
+                raise SupervisorError("INPUT_POLICY") from None
+            except (OSError, AcceptanceBundleError):
+                raise SupervisorError("CORRUPT_STATE") from None
+            if (
+                bundle.sealed_root != f"worklogs/{project_slug}/acceptance"
+                or bundle.plan_sha256 != plan_ref.sha256
+                or bundle.supersedes_sha256 is not None
+            ):
+                raise SupervisorError("INPUT_POLICY")
+            try:
+                original_tree: list[dict[str, Any]] | None = None
+                for revision in dict.fromkeys((bundle.revision_id, expected_revision)):
+                    with self._revision(binding, revision, deadline) as (data, tree, _child):
+                        if revision == expected_revision and tree["tree_sha256"] != binding.current["tree_sha256"]:
+                            raise SupervisorError("CORRUPT_STATE")
+                        self._validate_acceptance_seal_tree(bundle, plan_ref, tree["entries"])
+                        self._validate_acceptance_revision_closure(data, bundle)
+                        self._validate_acceptance_seal_plan(data, bundle, plan_ref)
+                        if original_tree is None:
+                            original_tree = tree["entries"]
+                        else:
+                            self._validate_acceptance_revision_transition(bundle, original_tree, tree["entries"])
+            except OSError:
+                raise SupervisorError("CORRUPT_STATE") from None
+            _budget(deadline)
+            return bundle
+
+    @staticmethod
+    def _validate_acceptance_revision_transition(
+        bundle: AcceptanceBundle, original: list[dict[str, Any]], current: list[dict[str, Any]]
+    ) -> None:
+        # Closure hashes omit directory membership and normalize file modes.
+        # Revision manifests retain both, including the root and empty dirs.
+        root = bundle.sealed_root
+        prefix = root + "/"
+        before = {
+            entry["path"]: entry for entry in original if entry["path"] == root or entry["path"].startswith(prefix)
+        }
+        after = {entry["path"]: entry for entry in current if entry["path"] == root or entry["path"].startswith(prefix)}
+        if before != after:
+            raise SupervisorError("INPUT_POLICY")
 
     @staticmethod
     def _check_acceptance_store_before_write(store: SealStore) -> bool:
@@ -3622,7 +3721,10 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     def _require_acceptance_origin(binding: _Binding, project_slug: str) -> dict[str, Any]:
         try:
             record = _read_json(
-                binding.fd, WorkspaceAuthority._acceptance_origin_name(project_slug), _ACCEPTANCE_ORIGIN, 1024
+                binding.fd,
+                WorkspaceAuthority._acceptance_origin_name(project_slug),
+                _ACCEPTANCE_ORIGIN,
+                _ACCEPTANCE_ORIGIN_MAX_BYTES,
             )
         except FileNotFoundError:
             raise SupervisorError("INPUT_POLICY") from None
@@ -3634,20 +3736,36 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     @staticmethod
     def _advance_acceptance_origin(
-        binding: _Binding, project_slug: str, record: dict[str, Any], has_pointer: bool
+        binding: _Binding, project_slug: str, record: dict[str, Any], has_pointer: bool, plan_ref: PlanRef
     ) -> None:
         # The same durable record proves both installation and the first-mint
         # boundary. Losing an independent marker cannot turn STARTED into FRESH.
         if has_pointer:
-            if record["seal_state"] != "started":
+            if (
+                record["seal_state"] != "started"
+                or record["plan_relative"] != plan_ref.workspace_relative_path
+                or record["plan_sha256"] != plan_ref.sha256
+            ):
                 raise AcceptanceBundleError("seal-history-ambiguous")
             return
-        if record["seal_state"] != "fresh":
+        if record["seal_state"] != "fresh" or record["plan_relative"] is not None or record["plan_sha256"] is not None:
             raise AcceptanceBundleError("seal-history-ambiguous")
-        updated = {**record, "seal_state": "started"}
+        updated = {
+            **record,
+            "seal_state": "started",
+            "plan_relative": plan_ref.workspace_relative_path,
+            "plan_sha256": plan_ref.sha256,
+        }
+        try:
+            _check(_ACCEPTANCE_ORIGIN, updated)
+            raw = encode_json(updated)
+        except ExecutionContractError:
+            raise AcceptanceBundleError("seal-origin-invalid") from None
+        if len(raw) > _ACCEPTANCE_ORIGIN_MAX_BYTES:
+            raise AcceptanceBundleError("seal-origin-invalid")
         name = WorkspaceAuthority._acceptance_origin_name(project_slug)
-        _replace_private_bytes(binding.fd, name, encode_json(updated))
-        if _read_json(binding.fd, name, _ACCEPTANCE_ORIGIN, 1024) != updated:
+        _replace_private_bytes(binding.fd, name, raw)
+        if _read_json(binding.fd, name, _ACCEPTANCE_ORIGIN, _ACCEPTANCE_ORIGIN_MAX_BYTES) != updated:
             raise SupervisorError("CORRUPT_STATE")
 
     @staticmethod
@@ -3665,14 +3783,16 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             "operation_id": intent["operation_id"],
             "revision_id": intent["next_revision"],
             "seal_state": "fresh",
+            "plan_relative": None,
+            "plan_sha256": None,
         }
         _check(_ACCEPTANCE_ORIGIN, record)
         name = WorkspaceAuthority._acceptance_origin_name(parts[1])
         try:
-            previous = _read_json(binding.fd, name, _ACCEPTANCE_ORIGIN, 1024)
+            previous = _read_json(binding.fd, name, _ACCEPTANCE_ORIGIN, _ACCEPTANCE_ORIGIN_MAX_BYTES)
         except FileNotFoundError:
             _replace_private_bytes(binding.fd, name, encode_json(record))
-            previous = _read_json(binding.fd, name, _ACCEPTANCE_ORIGIN, 1024)
+            previous = _read_json(binding.fd, name, _ACCEPTANCE_ORIGIN, _ACCEPTANCE_ORIGIN_MAX_BYTES)
         if previous != record or record["workspace_id"] != binding.metadata["workspace_id"]:
             raise SupervisorError("CORRUPT_STATE")
 
@@ -3708,16 +3828,17 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     @staticmethod
     @contextmanager
-    def _acceptance_store_directory(binding: _Binding, project_slug: str) -> Generator[int]:
+    def _acceptance_store_directory(binding: _Binding, project_slug: str, *, create: bool = True) -> Generator[int]:
         with ExitStack() as stack:
             parent = binding.fd
             project_fd = -1
             for index, name in enumerate(("acceptance", project_slug, ".fa", "seals")):
-                try:
-                    os.mkdir(name, 0o700, dir_fd=parent)
-                    os.fsync(parent)
-                except FileExistsError:
-                    pass
+                if create:
+                    try:
+                        os.mkdir(name, 0o700, dir_fd=parent)
+                        os.fsync(parent)
+                    except FileExistsError:
+                        pass
                 child = os.open(name, _DIRECTORY, dir_fd=parent)
                 stack.callback(os.close, child)
                 _private(child)
