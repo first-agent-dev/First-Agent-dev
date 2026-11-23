@@ -13296,3 +13296,23 @@ A cell-count scan over both tables and the new brief returns zero ragged rows.
 **Not claimed here:** no test ran for these changes (documentation only), and the full suite for `c4d528d` was still
 running when this entry was written — the gate recording (`gate_tracker.py record`, `ruff-format` included per E613) and
 pyrefly remain owed for the branch, as E623 already says for the 3.11-era verification.
+
+### E629 — the four cheap gates are recorded against the current head, and none of them is new (2026-11-23)
+
+**Recorded:** `notes/gates/2026-11-23-head-23d5d03` (label `2026-11-23-head-23d5d03`, CPython 3.13.16 from
+`scripts/arena-env-build.sh`) over the four gates that do not need a full suite: `ruff` 0, `ruff-format` 7, `mypy` 62
+lines / 29 unique findings, `authoring-check` 0.
+
+**Compared** against the last recorded head, `notes/gates/2026-11-22-head-n1n3`: `0 new, 0 gone` in every one of the
+four. That is the claim worth making: the code change between the two heads (`44f498c`, `Q-V2-SLICE3-3 = A`) added no
+finding to any gate, and the seven `ruff-format` files are the identical set (five of them untouched by this branch; two
+touched in `7b750f5`/`f932b13` but already flagged in the earlier `2f9924b` recording).
+
+**Not recorded, deliberately:** `pytest`. The suite was started on the 3.13 environment and the operator chose not to
+wait for it, so the recording is four gates and `gate_tracker compare` prints "pytest: not recorded — skipped, not
+counted" rather than a green. A `NEW TOTAL: 0` that silently omits a gate would be exactly the shaped-silence this
+ledger keeps rejecting, so the omission is written down here instead of being inferred from a missing line.
+
+**What remains owed for this branch, then, is one thing:** a pytest recording for the current head
+(`gate_tracker.py record ... --reuse pytest=/tmp/head-suite.log` once that run finishes). The other four gates are
+closed on `23d5d03`, which retires the non-pytest half of the debt E623 and E628 recorded.

@@ -221,28 +221,56 @@
 
 ---
 
-## 5. Долг гейтов этой ветки (не влияет на решения, влияет на «зелёный»)
+## 5. Гейты: что записано, что нет, и что из этого следует
 
-Измерено: полный набор на CPython 3.13.16 (`.venv`, собран `scripts/arena-env-build.sh`) **запущен в этом ходе**,
-результат на момент написания документа неизвестен. Остальное не сделано:
+Полный pytest-прогон для текущего головы **не записан**, и по решению оператора его не ждали: он шёл в фоне
+(лог `/tmp/head-suite.log`), вердикт на момент этого документа неизвестен, и ни одно утверждение ниже на него не
+опирается. Записанные гейты обновлены на текущем head — `23d5d03`, CPython 3.13.16 (`.venv`, собранный
+`scripts/arena-env-build.sh`):
+
+| Запись | Head | pytest | mypy | ruff | ruff-format | authoring-check |
+|---|---|---|---|---|---|---|
+| `gates/2026-11-22-base-1acb56b` | база ветки | 2 known | 30 known | 0 | не записан | 0 |
+| `gates/2026-11-22-head-2f9924b` | `2f9924b` | не записан | 62 строки / 29 уникальных | 0 | 8 | 0 |
+| `gates/2026-11-22-head-n1n3` | `n1n3` (сверено с базой: **NEW TOTAL 0**) | 1: `tests/test_pyrefly_import_topology.py::test_pyrefly_check_passes` | 62 / 29 | 0 | 7 | 0 |
+| `gates/2026-11-23-head-23d5d03` | **текущий** | **не записан** | 62 / 29 — **0 новых** | 0 — **0 новых** | 7 — **0 новых** | 0 — **0 новых** |
+
+`mypy` печатает по два сообщения на ошибку: 62 строки — это 29 уникальных findings, и множества на `n1n3` и
+`23d5d03` **совпадают** (`diff` пуст). `compare` нормализует и дедуплицирует, поэтому в его выводе числа 29 против
+29 и `NEW TOTAL: 0` — но только по четырём записанным гейтам: pytest в этой записи **не участвовал**, и
+`compare` честно печатает «skipped, not counted», а не «зелено».
+
+Что это значит практически:
+
+- `44f498c` (код `Q-V2-SLICE3-3`) **не добавил ни одного нового finding** ни в один из четырёх гейтов;
+- `ruff-format` красный по семи файлам, и это **ровно тот же набор**, что на `n1n3` (`0 новых, 0 ушедших`):
+  `tests/mutation/mut_step9.py`, `tests/test_admission_v2_provenance.py`, `tests/test_ai_native_bootstrap.py`,
+  `tests/test_invoke_workflow_tool.py`, `tests/test_managed_acquisition.py`, `tests/test_prompt_registry_coherence.py`,
+  `tests/test_s5p1_bootstrap.py`. Пять из семи ветка не трогала; два (`test_ai_native_bootstrap.py`,
+  `test_invoke_workflow_tool.py`) правились в `7b750f5`/`f932b13`, но их `would-reformat` уже стоял в записи
+  `2f9924b`, то есть до этих правок. Это тот самый дрейф, который E613 сделал гейтом;
+- единственный известный красный тест — `test_pyrefly_import_topology.py::test_pyrefly_check_passes`, то есть
+  топология pyrefly проверяется *внутри* набора: отдельный прогон pyrefly руками не нужен, чтобы увидеть его цвет;
+- **долг остаётся ровно один**: pytest-запись для текущего головы (`--reuse pytest=<лог>`). Всё остальное —
+  четыре гейта — закрыто на `23d5d03`.
+
+Воспроизведение (и то, как долг закрывается, когда прогон закончится):
 
 ```bash
+cd /home/user/First-Agent-dev
 source .venv/bin/activate
-python -m pytest tests -q -p no:cacheprovider --tb=no -rf > /tmp/head-suite.log   # идёт
-python scripts/gate_tracker.py record --label 2026-11-23-head-c4d528d \
-  --out worklogs/planning-topology-and-executable-contracts-loop/notes/gates/2026-11-23-head-c4d528d \
-  --reuse pytest=/tmp/head-suite.log            # D-12: ruff-format обязателен в записи (E613)
+python -m pytest tests -q -p no:cacheprovider --tb=no -rf > /tmp/head-suite.log
+python scripts/gate_tracker.py record --label 2026-11-23-head-23d5d03-full \
+  --out worklogs/planning-topology-and-executable-contracts-loop/notes/gates/2026-11-23-head-23d5d03-full \
+  --reuse pytest=/tmp/head-suite.log
 python scripts/gate_tracker.py compare \
-  worklogs/planning-topology-and-executable-contracts-loop/notes/gates/2026-11-22-head-2f9924b \
-  worklogs/planning-topology-and-executable-contracts-loop/notes/gates/2026-11-23-head-c4d528d
-# pyrefly — отдельным гейтом, не входит в GATES gate_tracker
+  worklogs/planning-topology-and-executable-contracts-loop/notes/gates/2026-11-22-head-n1n3 \
+  worklogs/planning-topology-and-executable-contracts-loop/notes/gates/2026-11-23-head-23d5d03-full
 ```
 
-Правило, из-за которого это записано: запись гейта — это доказательство «я не добавил нового красного», а счётчик
-ошибок такого не доказывает (E608). Записи в ledger за этот набор сделаны: `E627` (документальный `c4d528d`) и
-`E628` (эта заметка и три исправленных дефекта документа); сама запись гейта — нет, она и есть долг.
-
----
+Правило, из-за которого таблица вообще существует: запись гейта доказывает «я не добавил нового красного», а счётчик
+ошибок такого не доказывает (E608). Записи в ledger за этот набор: `E627` (документальный `c4d528d`), `E628`
+(эта заметка и три исправленных дефекта документа), `E629` (запись четырёх гейтов на `23d5d03`).
 
 ## 6. Что НЕ надо пересматривать (уже решено и оплачено)
 
