@@ -14872,3 +14872,21 @@ old-FD read returned `old`. A direct non-FUSE control likewise reported successf
 write absent from the new path, while its old-FD read included the append. This is a
 continuity warning, not an explanation of caching or proof of a FUSE-specific defect. No denial, Docker isolation, publication or crash proof.
 E657 and STEP9A remain open; all host/deployment conclusions remain untested.
+
+### E693 — relocated ledger directory mount diagnostic (2026-11-23)
+
+With the operator open to modest layout changes, tested `journal/ledger.md` inside a
+writable directory bind, along with writable notes/e2e, under read-only `worklogs`. In a
+capability-free local mount namespace the real outside-namespace `RootedViewIO` atomic
+replace, fresh shell append, same-directory temp rename and later append all reached the
+backing source; tested project/acceptance/plan/other-project changes were refused. A
+symlink can be created in writable notes although using it to write acceptance failed;
+publication compatibility, alias matrices, other workspace roots and cleanup remain open.
+Journal-directory writes are broader than exact ledger, so layout/scope is a candidate,
+not a silently adopted decision. Legacy root `ledger.md` remains unchanged. Full details,
+compatibility inventory and limitations in V2 plan E693. Not Docker, production C1,
+producer/EDGE, custody, publication, full threat-model or W4 proof; E657 still blocks.
+
+TEST-EDITS: `tests/test_acceptance_mount_topology.py` extended, prior assertions retained.
+Local five-module bank 282 passed; Ruff/format and source-path mypy passed; three
+local diagnostic mutants killed/restored (parent RO, journal bind, rooted replace).

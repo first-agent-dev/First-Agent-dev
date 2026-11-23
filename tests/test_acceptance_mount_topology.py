@@ -45,18 +45,19 @@ if kind == "nested":
     accepted.write_text("forged")
     result["visible"] = accepted.read_text()
     result["original"] = (worklogs / "moved" / "acceptance" / "test.py").read_text()
-elif kind in {"selective", "anchored"}:
-    ledger = project / "ledger.md"
+elif kind in {"selective", "anchored", "directory"}:
+    ledger = project / ("journal/ledger.md" if kind == "directory" else "ledger.md")
     with ledger.open("a") as stream:
         stream.write("shell append\n")
     (project / "notes" / "new.md").write_text("old note")
     (project / "notes" / "replacement.tmp").write_text("note")
     os.replace(project / "notes" / "replacement.tmp", project / "notes" / "new.md")
     (project / "e2e" / "new.md").write_text("e2e")
-    attempt("ledger_tempfile", lambda: (project / "ledger.tmp").write_text("replacement"))
+    temp = ledger.parent / "ledger.tmp"
+    attempt("ledger_tempfile", lambda: temp.write_text("replacement"))
     attempt("write_accepted", lambda: accepted.write_text("forged"))
     attempt("rename_project", lambda: project.rename(worklogs / "moved"))
-    if kind == "anchored":
+    if kind in {"anchored", "directory"}:
         attempt("rename_worklogs", lambda: worklogs.rename(w / "moved"))
         attempt("rename_acceptance", lambda: (project / "acceptance").rename(project / "moved"))
         attempt("link_accepted", lambda: os.link(accepted, project / "linked.py"))
@@ -66,14 +67,21 @@ elif kind in {"selective", "anchored"}:
         attempt("rename_roadmap", lambda: (project / "roadmap.md").rename(project / "moved.md"))
         attempt("outside_scope", lambda: (project / "other.md").write_text("outside scope"))
         attempt("write_questions", lambda: (project / "open-questions.md").write_text("changed"))
+    if kind == "directory":
+        attempt("rename_journal", lambda: (project / "journal").rename(project / "moved-journal"))
+        attempt("write_other_project", lambda: (worklogs / "other/ledger.md").write_text("changed"))
+        attempt("symlink_to_accepted", lambda: os.symlink(accepted, project / "notes/link"))
+        attempt("write_via_symlink", lambda: (project / "notes/link").write_text("forged"))
+        (project / "notes/attack.tmp").write_text("forged")
+        attempt("rename_over_accepted", lambda: os.replace(project / "notes/attack.tmp", accepted))
     # The parent outside this namespace runs the real rooted atomic writer.
     print("ready", flush=True)
     if sys.stdin.readline().strip() != "continue":
         raise RuntimeError("parent did not complete replacement")
     result.update(visible=accepted.read_text(), shell_ledger=ledger.read_text())
-    if kind == "anchored":
-        (project / "ledger.tmp").write_text("shell replacement\n")
-        attempt("shell_atomic_replace", lambda: os.replace(project / "ledger.tmp", ledger))
+    if kind in {"anchored", "directory"}:
+        temp.write_text("shell replacement\n")
+        attempt("shell_atomic_replace", lambda: os.replace(temp, ledger))
     else:
         attempt("shell_atomic_replace", lambda: os.replace(project / "notes" / "new.md", ledger))
     def append_again():
@@ -101,23 +109,29 @@ source = root / "source"; workspace = root / "workspace"
 (source / "src").mkdir(); workspace.mkdir()
 (source / "worklogs/demo/acceptance/test.py").write_text("original")
 (source / "src/code.py").write_text("code")
-if kind in {"selective", "anchored"}:
+if kind in {"selective", "anchored", "directory"}:
     (source / "worklogs/demo/notes").mkdir()
     (source / "worklogs/demo/e2e").mkdir()
-    (source / "worklogs/demo/ledger.md").write_text("initial\n")
-if kind == "anchored":
+    if kind == "directory":
+        (source / "worklogs/demo/journal").mkdir()
+    ledger_path = "worklogs/demo/journal/ledger.md" if kind == "directory" else "worklogs/demo/ledger.md"
+    (source / ledger_path).write_text("initial\n")
+if kind in {"anchored", "directory"}:
     (source / "worklogs/demo/increments").mkdir()
     (source / "worklogs/demo/increments/plan.md").write_text("plan")
     (source / "worklogs/demo/roadmap.md").write_text("roadmap")
     (source / "worklogs/demo/open-questions.md").write_text("questions")
+if kind == "directory":
+    (source / "worklogs/other").mkdir()
+    (source / "worklogs/other/ledger.md").write_text("other project")
 subprocess.run(["mount", "--make-rprivate", "/"], check=True)
 subprocess.run(["mount", "--bind", str(source), str(workspace)], check=True)
-relative = "worklogs" if kind in {"top", "selective", "anchored"} else "worklogs/demo/acceptance"
+relative = "worklogs" if kind in {"top", "selective", "anchored", "directory"} else "worklogs/demo/acceptance"
 target = workspace / relative
 subprocess.run(["mount", "--bind", str(source / relative), str(target)], check=True)
 subprocess.run(["mount", "-o", "remount,bind,ro", str(target)], check=True)
-if kind == "selective":
-    for name in ("notes", "e2e", "ledger.md"):
+if kind in {"selective", "directory"}:
+    for name in (("notes", "e2e", "journal") if kind == "directory" else ("notes", "e2e", "ledger.md")):
         relative = f"worklogs/demo/{name}"
         subprocess.run(["mount", "--bind", str(source / relative), str(workspace / relative)], check=True)
 if kind == "anchored":
@@ -142,7 +156,7 @@ def _run_topology(tmp_path: Path, kind: str) -> dict[str, object]:
         pytest.skip(f"user/mount namespace unavailable: {probe.stderr.strip()}")
     command = ["unshare", "-Urnm", sys.executable, "-c", _SETUP, str(tmp_path), kind, sys.executable]
     env = {**os.environ, "FA_MOUNT_ATTACK": _ATTACK}
-    if kind in {"selective", "anchored"}:
+    if kind in {"selective", "anchored", "directory"}:
         if os.getuid() == 0 or os.getgid() == 0:
             pytest.skip("RootedViewIO requires non-root view uid and gid")
         with subprocess.Popen(
@@ -175,10 +189,13 @@ def _run_topology(tmp_path: Path, kind: str) -> dict[str, object]:
                         protected_paths=(),
                         excluded_paths=(),
                     ) as io:
-                        before = io.read_file("worklogs/demo/ledger.md", offset_bytes=0, max_bytes=4096)
+                        ledger_path = (
+                            "worklogs/demo/journal/ledger.md" if kind == "directory" else "worklogs/demo/ledger.md"
+                        )
+                        before = io.read_file(ledger_path, offset_bytes=0, max_bytes=4096)
                         assert before["content"] == "initial\nshell append\n"
                         written = io.write_file(
-                            "worklogs/demo/ledger.md", "file tool replacement\n", expected_sha256=before["sha256"]
+                            ledger_path, "file tool replacement\n", expected_sha256=before["sha256"]
                         )
                         assert written["bytes"] == len("file tool replacement\n")
                 finally:
@@ -192,13 +209,16 @@ def _run_topology(tmp_path: Path, kind: str) -> dict[str, object]:
                     run.communicate()
         result = json.loads(stdout)
         result.update(
-            authority_ledger=(source / "ledger.md").read_text(),
+            authority_ledger=(source / ("journal/ledger.md" if kind == "directory" else "ledger.md")).read_text(),
             authority_note=(source / "notes/new.md").read_text(),
             authority_e2e=(source / "e2e/new.md").read_text(),
         )
-        if kind == "anchored":
+        if kind in {"anchored", "directory"}:
             result["authority_questions"] = (source / "open-questions.md").read_text()
-            result["authority_outside_scope"] = (source / "other.md").read_text()
+            other = source / "other.md"
+            result["authority_outside_scope"] = other.read_text() if other.exists() else None
+        if kind == "directory":
+            result["authority_other_project"] = (root / "worklogs/other/ledger.md").read_text()
     else:
         completed = subprocess.run(command, env=env, capture_output=True, text=True, check=False, timeout=20)
         assert completed.returncode == 0, completed.stderr
@@ -239,6 +259,42 @@ def test_anchored_writable_project_protects_mounts_but_exceeds_nested_scope(tmp_
         "write_questions": 0,
         "authority_questions": "changed",
         "authority_outside_scope": "outside scope",
+        "visible": "original",
+        "shell_ledger": "file tool replacement\n",
+        "shell_atomic_replace": 0,
+        "second_append": 0,
+        "authority_ledger": "shell replacement\nsecond append\n",
+        "authority_note": "note",
+        "authority_e2e": "e2e",
+    }
+
+
+def test_directory_bind_keeps_ledger_writable_without_writable_project(tmp_path: Path) -> None:
+    result = _run_topology(tmp_path, "directory")
+    assert result == {
+        "before": "original",
+        "effective_caps": 0,
+        "code": "changed",
+        "ledger_tempfile": 0,
+        "write_accepted": errno.EROFS,
+        "rename_project": errno.EROFS,
+        "rename_worklogs": errno.EBUSY,
+        "rename_acceptance": errno.EROFS,
+        "link_accepted": errno.EROFS,
+        "write_plan": errno.EROFS,
+        "rename_increments": errno.EROFS,
+        "write_roadmap": errno.EROFS,
+        "rename_roadmap": errno.EROFS,
+        "outside_scope": errno.EROFS,
+        "write_questions": errno.EROFS,
+        "authority_questions": "questions",
+        "authority_outside_scope": None,
+        "rename_journal": errno.EROFS,
+        "write_other_project": errno.EROFS,
+        "symlink_to_accepted": 0,
+        "write_via_symlink": errno.EROFS,
+        "rename_over_accepted": errno.EXDEV,
+        "authority_other_project": "other project",
         "visible": "original",
         "shell_ledger": "file tool replacement\n",
         "shell_atomic_replace": 0,

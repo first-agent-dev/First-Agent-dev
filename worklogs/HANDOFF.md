@@ -22,7 +22,10 @@ ledger append; wide permits direct other-file writes. Neither is selected.
 E691 research identifies AppArmor name-based rules as a promising but unproved candidate;
 Arena has no active AppArmor LSM or Docker executable. E692 mounts an unconfined FUSE
 example and finds fresh-path continuity but a successful old-FD write invisible at the fresh
-backing path after atomic replacement; no security boundary or Docker proof. See [ledger E683–E692](planning-topology-and-executable-contracts-loop/ledger.md) and the
+backing path after atomic replacement; no security boundary or Docker proof. E693 tests a
+relocated ledger in a writable directory bind under read-only worklogs: the local sequence
+works and selected out-of-scope writes fail, but broad directory writes, compatibility,
+full nested scope and Docker/publication remain open. See [ledger E683–E693](planning-topology-and-executable-contracts-loop/ledger.md) and the
 [V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next

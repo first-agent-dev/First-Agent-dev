@@ -1864,3 +1864,50 @@ any selected design against its actual concurrency and safe recovery contract.
 
 This is neither a FUSE security-policy experiment nor Docker/host C3 or C1 evidence.
 No producer or EDGE, production change, dependency decision, or E657/W4 closure is claimed.
+
+### E693 — directory-bound ledger layout candidate (local kernel diagnostic)
+
+The user is willing to consider a small `worklogs/<slug>` layout change; this is an
+invitation to investigate, not approval of a specific migration or broader write scope.
+A new diagnostic variant in `tests/test_acceptance_mount_topology.py` puts the ledger at
+`worklogs/demo/journal/ledger.md`, makes `worklogs` a read-only bind, and bind-mounts
+`journal`, `notes` and `e2e` directories writable from the same backing source. A
+capability-free child operates in a disposable Linux user/mount namespace; the authority
+outside that namespace runs the real `RootedViewIO` atomic replacement. The child succeeds
+at initial ledger append, sees the authority replacement, creates a sibling temp within
+journal, renames it over ledger and appends again; the parent sees the final bytes, notes,
+e2e and `src` changes. Tested writes/renames of acceptance, increment, roadmap, project
+and worklogs ancestors, project other file, open-questions and another project's ledger are
+refused; tested link/rename to acceptance and symlink-followed write cannot change it.
+The child can create the symlink in notes, however: current publication rejects newly
+introduced symlinks (and policy may reject other working changes), so this is still a
+possible late-refusal/recovery issue. A temporary attack file also remains in notes.
+
+This is the simplest promising mechanism observed so far, not an implementation or a
+complete boundary. An entire writable journal directory grants creation/rename/deletion of
+*other files in that directory*, not only ledger. A filename, temporary-file and cleanup
+contract must be reviewed; this may change Q-V2-WRITE-SCOPE-1=A and cannot be silently
+selected. The shell also still sees the rest of source writable in this diagnostic: it
+does **not** prove the full nested write scope beyond worklogs, other purposes, immutable
+closure, ABA, open FDs, concurrency, stop/publish, verifier or authority identity. Separate
+bind mounts can yield EXDEV for rename across working directories; test real workflows and
+file-tool staging before deciding. Producer/EDGE, no-host-alias isolation, recursive mounts,
+mount propagation, subprocesses, links, `renameat2`, failure recovery and W4 need coverage.
+No Docker, AppArmor, FUSE or new dependency is needed for this local experiment, but
+Docker/container integration and supported-host prerequisites remain unproven.
+
+Compatibility is substantive: `project_scaffold.py`, `project_metadata.py`, workflow and
+prompts, `publication.py` bootstrap paths, documentation, user links, existing projects,
+revision manifests and test fixtures reference the current root `ledger.md`. Do not add a
+symlink, silently relocate data or rewrite historical evidence. Plan versioned layout,
+explicit compatibility/migration, conflict/crash/replay and canonical single source; choose
+a policy after testing. A read-only compatibility copy would not be an automatically coherent
+ledger and cannot masquerade as one. Keep the existing layout until approved.
+
+**TEST-EDITS:** extended the existing local mount diagnostic; old assertions remain. Five
+module topology/view-IO/purposes/views/publication bank **282 passed**, scoped Ruff/format
+and source-path mypy passed. Three diagnostic mutants (drop parent RO, drop journal mount,
+alter real rooted ledger replacement) killed and restored; no production producer/EDGE
+claim. The diagnostic uses `unshare -Urnm`, `mount`, `setpriv`, non-root uid/gid, pytest and
+project environment; a skip is not PASS. E657, mandatory immutable-payload fallback, E674,
+STEP9A/9B and W4 remain open.
