@@ -1451,3 +1451,143 @@ def test_authority_refuses_invalid_bootstrap_origin_without_seal_writes(site: Si
         assert error.value.code in ("INPUT_POLICY", "CORRUPT_STATE")
         assert not (path.parent / "acceptance").exists()
         assert not (path.parent / "acceptance-started-demo").exists()
+
+
+def test_origin_prevents_remint_when_store_and_marker_are_both_lost(site: Site) -> None:
+    import shutil
+
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        args = {
+            "capability": grant.capability,
+            "project_slug": "demo",
+            "plan_ref": plan_ref,
+            "seal_record": seal_bytes(bundle),
+            "deadline": until(),
+        }
+        owner.store_acceptance_seal(PEER, ACTOR, **args)
+        site.release(owner, ids, grant)
+    binding = site.state / "workspaces" / ids["workspace_id"]
+    origin = binding / "acceptance-origin-demo.json"
+    before = origin.read_bytes()
+    assert json.loads(before)["seal_state"] == "started"
+    shutil.rmtree(binding / "acceptance" / "demo")
+    (binding / "acceptance-started-demo").unlink()
+    with site.owner() as owner:
+        assert site.register(owner) == ids
+        grant = site.claim(owner, ids)
+        args.update(capability=grant.capability, deadline=until())
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(PEER, ACTOR, **args)
+        assert error.value.code == "DURABILITY_UNKNOWN" and not owner.ready
+        assert origin.read_bytes() == before
+        assert not (binding / "acceptance/demo/.fa/seal-current.json").exists()
+        assert not (binding / "acceptance-started-demo").exists()
+
+
+def test_origin_started_is_durable_before_any_seal_store_write(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fa.inner_loop.acceptance_bundle import AcceptanceBundleError, seal_bytes
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        origin = site.state / "workspaces" / ids["workspace_id"] / "acceptance-origin-demo.json"
+        assert json.loads(origin.read_bytes())["seal_state"] == "fresh"
+
+        def interrupted(_store: SealStore, _bundle: Any) -> Any:
+            assert json.loads(origin.read_bytes())["seal_state"] == "started"
+            raise AcceptanceBundleError("injected")
+
+        monkeypatch.setattr(SealStore, "store", interrupted)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(
+                PEER,
+                ACTOR,
+                capability=grant.capability,
+                project_slug="demo",
+                plan_ref=plan_ref,
+                seal_record=seal_bytes(bundle),
+                deadline=until(),
+            )
+        assert error.value.code == "DURABILITY_UNKNOWN" and not owner.ready
+        assert json.loads(origin.read_bytes())["seal_state"] == "started"
+
+
+def test_origin_fresh_with_existing_pointer_is_refused(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        args = {
+            "capability": grant.capability,
+            "project_slug": "demo",
+            "plan_ref": plan_ref,
+            "seal_record": seal_bytes(bundle),
+            "deadline": until(),
+        }
+        owner.store_acceptance_seal(PEER, ACTOR, **args)
+        binding = site.state / "workspaces" / ids["workspace_id"]
+        origin = binding / "acceptance-origin-demo.json"
+        record = json.loads(origin.read_bytes())
+        record["seal_state"] = "fresh"
+        origin.write_text(json.dumps(record))
+        pointer = binding / "acceptance/demo/.fa/seal-current.json"
+        before = pointer.read_bytes()
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(PEER, ACTOR, **args)
+        assert error.value.code == "DURABILITY_UNKNOWN" and not owner.ready
+        assert pointer.read_bytes() == before
+
+
+def test_interrupted_origin_transition_cannot_retry_as_fresh(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fa.execution import workspace as workspace_module
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+
+    root, plan_ref = _acceptance_store_case(site)
+    with site.owner() as owner:
+        ids = _register_acceptance_fixture(site, owner)
+        grant = site.claim(owner, ids)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        args = {
+            "capability": grant.capability,
+            "project_slug": "demo",
+            "plan_ref": plan_ref,
+            "seal_record": seal_bytes(bundle),
+            "deadline": until(),
+        }
+        replace = workspace_module._replace_private_bytes
+
+        def lose_reply(fd: int, name: str, raw: bytes) -> None:
+            replace(fd, name, raw)
+            if name == "acceptance-origin-demo.json":
+                raise OSError(5, "injected post-replace failure")
+
+        monkeypatch.setattr(workspace_module, "_replace_private_bytes", lose_reply)
+        with pytest.raises(SupervisorError) as error:
+            owner.store_acceptance_seal(PEER, ACTOR, **args)
+        assert error.value.code == "DURABILITY_UNKNOWN" and not owner.ready
+        monkeypatch.undo()
+    binding = site.state / "workspaces" / ids["workspace_id"]
+    assert json.loads((binding / "acceptance-origin-demo.json").read_bytes())["seal_state"] == "started"
+    with site.owner() as owner:
+        assert site.register(owner) == ids
+        with pytest.raises(SupervisorError) as error:
+            site.claim(owner, ids)
+        # The interrupted writer remains fenced on restart; no automatic retry.
+        assert error.value.code == "WORKSPACE_BUSY"
+        assert not (binding / "acceptance/demo/.fa/seal-current.json").exists()

@@ -1386,3 +1386,9 @@ is mandated. This supersedes the historical audit E9 remint allowance and the fo
 recommendation to require an external registry. This is a decision, not implementation
 or host evidence: fresh-install provenance, crash recovery, backup protocol and guard
 E657 remain open until implemented and tested. Q-V2-LEDGER-1 remains separate.
+
+**E671 partial custody hardening:** the authority's BOOTSTRAP origin now records a durable
+first-mint transition; losing both the separate marker and project seal directory cannot
+make the surviving origin authorize a fresh mint. Interrupted or contradictory state fails
+closed. This does not detect a coherent rollback of that origin, implement recovery/backup,
+prove mode A, or authorize removal of E657. STEP9A remains open; see ledger E670–E671.

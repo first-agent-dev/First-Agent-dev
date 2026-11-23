@@ -229,6 +229,7 @@ _ACCEPTANCE_ORIGIN = fastjsonschema.compile(
         project_slug=CONFIG_ID,
         operation_id=_id("op-"),
         revision_id=_id("rev-"),
+        seal_state={"enum": ["fresh", "started"]},
     )
 )
 
@@ -3564,13 +3565,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 self._validate_acceptance_seal_plan(data, bundle, plan_ref)
             # The origin is produced only by a completed authority BOOTSTRAP.
             # Absence is a determinate refusal before creating any seal metadata.
-            self._require_acceptance_origin(binding, project_slug)
+            origin = self._require_acceptance_origin(binding, project_slug)
             # Only private descriptor-relative directories chosen by the authority are used.
             try:
                 with self._acceptance_store_directory(binding, project_slug) as directory:
                     _private(directory)
                     store = SealStore(Path(f"/proc/self/fd/{directory}"))
                     has_pointer = self._check_acceptance_store_before_write(store)
+                    self._advance_acceptance_origin(binding, project_slug, origin, has_pointer)
                     marker_created = self._mark_acceptance_store_started(binding, project_slug)
                     if not has_pointer and not marker_created:
                         raise AcceptanceBundleError("seal-history-ambiguous")
@@ -3617,7 +3619,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         return f"acceptance-origin-{project_slug}.json"
 
     @staticmethod
-    def _require_acceptance_origin(binding: _Binding, project_slug: str) -> None:
+    def _require_acceptance_origin(binding: _Binding, project_slug: str) -> dict[str, Any]:
         try:
             record = _read_json(
                 binding.fd, WorkspaceAuthority._acceptance_origin_name(project_slug), _ACCEPTANCE_ORIGIN, 1024
@@ -3627,6 +3629,25 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         except OSError:
             raise SupervisorError("CORRUPT_STATE") from None
         if record["workspace_id"] != binding.metadata["workspace_id"] or record["project_slug"] != project_slug:
+            raise SupervisorError("CORRUPT_STATE")
+        return record
+
+    @staticmethod
+    def _advance_acceptance_origin(
+        binding: _Binding, project_slug: str, record: dict[str, Any], has_pointer: bool
+    ) -> None:
+        # The same durable record proves both installation and the first-mint
+        # boundary. Losing an independent marker cannot turn STARTED into FRESH.
+        if has_pointer:
+            if record["seal_state"] != "started":
+                raise AcceptanceBundleError("seal-history-ambiguous")
+            return
+        if record["seal_state"] != "fresh":
+            raise AcceptanceBundleError("seal-history-ambiguous")
+        updated = {**record, "seal_state": "started"}
+        name = WorkspaceAuthority._acceptance_origin_name(project_slug)
+        _replace_private_bytes(binding.fd, name, encode_json(updated))
+        if _read_json(binding.fd, name, _ACCEPTANCE_ORIGIN, 1024) != updated:
             raise SupervisorError("CORRUPT_STATE")
 
     @staticmethod
@@ -3643,6 +3664,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             "project_slug": parts[1],
             "operation_id": intent["operation_id"],
             "revision_id": intent["next_revision"],
+            "seal_state": "fresh",
         }
         _check(_ACCEPTANCE_ORIGIN, record)
         name = WorkspaceAuthority._acceptance_origin_name(parts[1])

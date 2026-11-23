@@ -14274,3 +14274,19 @@ This is not a complete lifecycle: pre-existing projects cannot mint without a ye
 authorized recovery path, consistent backup/restore is not implemented, and the projection,
 trusted collection provenance, service/controller integration and W4 witness remain open.
 E657 stays in force; no STEP9A closure or live-host claim.
+
+### E671 — bind first-mint history to BOOTSTRAP origin (2026-11-23; STEP9A partial)
+
+E670's independent started-marker was insufficient if both it and the project seal directory
+were lost while the origin survived: the surviving origin still looked fresh. The authority
+now atomically/fsync transitions its schema-checked origin from `fresh` to `started` before
+first seal write. `started` without pointer and `fresh` with pointer both refuse; interruption
+is durability-unknown and fences the authority. This is not detection of coherent rollback
+of the origin itself, explicitly outside MVP. Old E670 origins lacking this field fail closed;
+no deployed migration is claimed. Local authority component tests cover paired loss/restart,
+pre-store ordering, contradictory state, and a post-replace error (restart retains the busy
+writer fence); real product integration is still absent. Removing the transition caller, the
+started/no-pointer guard and the fresh/pointer guard each killed its targeted test. 361 tests
+passed across readers/publication/views/purposes/admission/backend before the final fault test;
+no C1 or host claim. Guard E657 and all remaining STEP9A custody/collection/projection,
+backup/recovery and integration obligations remain open.
