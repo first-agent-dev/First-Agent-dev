@@ -11,16 +11,17 @@ recovery policy in E683: explicit trusted deletion closes an incarnation and fre
 slug; explicit trusted recovery after seal loss revalidates current inputs and establishes
 a new evidence lineage. No silent coder-triggered reset; old verification/mutation
 results cannot carry over. Coordinated backup/restore remains for exact history and W4.
-E686 selects writable ledger/notes/e2e and narrow custody; Q-V2-WRITE-SCOPE-1 blocks
-reconciling nested coder Q141=C with that policy. E685 hardens canonical seal identity
+E686 selects writable ledger/notes/e2e and narrow custody; E687 resolves
+Q-V2-WRITE-SCOPE-1=A for nested coder, implementation/proof still open. E685 hardens canonical seal identity
 and stale-digest rejection; it does not implement
-incarnation issuance or reset. See [ledger E683–E686](planning-topology-and-executable-contracts-loop/ledger.md) and the
+incarnation issuance or reset. See [ledger E683–E687](planning-topology-and-executable-contracts-loop/ledger.md) and the
 [V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next
 
-1. Resolve Q-V2-WRITE-SCOPE-1 with the operator before implementing nested working-artifact
-   writes; E686 records selective-projection, early-denial, work-recovery and W4 E2E tasks.
+1. Prototype E687 selective projection and source/snapshot continuity; Q-V2-WRITE-SCOPE-1=A
+   authorizes only current-project working surfaces for nested coder, not mutation-oracle widening.
+   E686 records early-denial, safe work-recovery and W4 E2E tasks.
 2. Implement and prove the trusted lifecycle/authorization and distinct evidence lineage;
    an OWNER run grant alone has no role distinction, and deterministic seal hashes alone
    do not distinguish identical inputs after reset. Cover real staged creation, deletion,

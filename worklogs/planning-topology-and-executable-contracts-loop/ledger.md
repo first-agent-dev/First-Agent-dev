@@ -14742,3 +14742,30 @@ fallback, early prevention, recovery/no-loss obligations, C1/C3 and producer/EDG
 and W4 ledger-append plus no-forged-PASS host cases. Q-V2-LEDGER-1 policy is resolved;
 implementation/host witness are not. No runtime, test, mount, Docker or live-host proof
 is claimed. E657 remains active; E683/E674, STEP9A/9B and W4 remain open.
+
+### E687 — operator resolves nested working scope; source audit (2026-11-23)
+
+Operator selected Q-V2-WRITE-SCOPE-1=A: nested coder may additionally write current
+project's ledger.md, notes/ and e2e/; preserve plan/oracle, other project and authority
+boundaries and independently confine actual mutation execution. This amends Q141=C's
+nested coder scope, not E527's historical result. V2 plan, parent and handoff updated;
+no runtime implementation or proof is claimed.
+
+Reviewed CLI stage purpose/grant/ports; WorkspaceAuthority create/materialization,
+project I/O and purpose guard; Docker profile/binding; post-stop snapshot, seal, publish,
+replay and lease lifecycle; existing plan/closure checks and E672 mount diagnostic.
+Findings and exact candidate/edge/test obligations are recorded in the V2 plan E687.
+Notably, WRITE file tools and cell use view/source, and authority snapshots that source:
+mounts visible only in the cell can hide or lose writes on publication unless source and
+projection are correctly reconciled. `RootedViewIO` stages with link/atomic replace, so a
+regular-file bind or cross-filesystem staging can defeat normal editing. Current publish
+manifest reread does not pass purpose to the validator; no exploit is asserted, but amended
+scope must be checked throughout seal/replay/recovery. `finish` on publication error marks
+lease broken; no selective safe salvage guarantee has been shown. Authority store validates
+one PlanRef and closure, not full roadmap binding or transitive closure provenance.
+
+E672 proves ancestor substitution in its kernel namespace, not its frequency in routine
+agent use or its applicability to a future Docker design. No incident rate is known.
+Normal append need not rename an ancestor; scripts, cleanup, refactoring or intentional
+workarounds can. Avoid probabilistic assumptions in a custody boundary. No new mount
+experiment, C1, mutation or host result is claimed; E657 and STEP9A remain open.

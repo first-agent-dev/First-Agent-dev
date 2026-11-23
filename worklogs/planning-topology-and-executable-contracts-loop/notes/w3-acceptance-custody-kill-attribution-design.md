@@ -125,5 +125,7 @@ Broad read-only `worklogs/` fails the working-artifact usability target. Selecti
 is only a candidate until ancestor, alias, ABA, mount, snapshot and production Docker tests
 prove it; immutable-payload fallback remains mandatory when revision-backed custody cannot
 be proven. E657 remains active. Nested MUTATION confinement conflicts with universal working
-writes: Q-V2-WRITE-SCOPE-1 remains open in the [V2 plan](i03-ai-native-workflow-refactor-plan-v2.md),
-which also records acceptance tests, W4 E2E, recovery, and semantic-boundary work.
+writes: Q-V2-WRITE-SCOPE-1=A permits only the current project working surfaces in addition
+to existing nested source roots; mutation oracle confinement remains independent. The
+[V2 plan](i03-ai-native-workflow-refactor-plan-v2.md) E687 records the source audit,
+implementation and proof tasks; the policy is not yet implemented.
