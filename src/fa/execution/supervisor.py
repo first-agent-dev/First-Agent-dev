@@ -256,6 +256,7 @@ AUTHORITY_GATED_OPERATIONS = frozenset(
         Operation.PUBLISH,
         Operation.INSTALL_PROJECT,
         Operation.PREPARE_BUNDLE,
+        Operation.STORE_ACCEPTANCE_SEAL,
         Operation.HANDOFF,
         Operation.RELEASE,
     }
@@ -416,8 +417,15 @@ class SupervisorDispatcher:
             if not isinstance(produced, dict):
                 raise ExecutionContractError
             snapshot = PublicReply.from_result(binding.operation, produced)
-        response = self._reply(binding.request_id, result=snapshot.to_wire_result())
-        decode_reply(encode_json(response), operation=binding.operation, request_id=binding.request_id)
+        response = self._reply(
+            binding.request_id, result=snapshot.to_wire_result(), protocol_version=request["protocol_version"]
+        )
+        decode_reply(
+            encode_json(response),
+            operation=binding.operation,
+            request_id=binding.request_id,
+            protocol_version=request["protocol_version"],
+        )
         if binding.operation is Operation.EXEC:
             if context is None:
                 raise ExecutionContractError
@@ -476,7 +484,9 @@ class SupervisorDispatcher:
                         value = self._execute_reserved(peer, request, binding, context, deadline=deadline)
                     else:
                         value = self._completed(reserved.record, binding, request["capability"])
-                response = self._reply(request["request_id"], result=value)
+                response = self._reply(
+                    request["request_id"], result=value, protocol_version=request["protocol_version"]
+                )
             return decode_reply(
                 encode_json(response),
                 operation=operation,

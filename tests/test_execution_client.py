@@ -886,3 +886,63 @@ def test_private_seal_client_checks_feature_digest_and_scope(tmp_path: Path) -> 
                 NS, grant=grant, project_slug="demo", plan_ref=plan, expected_revision=VIEW_BASE
             )
         assert [entry["op"] for entry in seen[count:]] == ["health"]
+
+
+def test_private_seal_store_client_never_credits_wrong_digest_or_unavailable_feature(tmp_path: Path) -> None:
+    from fa.inner_loop.plan_admission import PlanRef
+    from tests.test_ai_native_acceptance_collection import _PLAN_BYTES, _mint, _tree
+
+    root = _tree(tmp_path / "source")
+    bundle = _mint(root, revision_id=VIEW_BASE)
+    plan = PlanRef("worklogs/demo/increments/increment-01-demo.md", "EXPLICIT", hashlib.sha256(_PLAN_BYTES).hexdigest())
+    grant = GrantReply(Operation.ACQUIRE_WRITER, CAP, None, 1, VIEW_BASE)
+    mode = ["wrong_digest"]
+
+    def handler(req: dict[str, Any]) -> dict[str, Any] | None:
+        if req["op"] == "health":
+            if mode[0] == "lost_health":
+                return None
+            return {
+                "ready": True,
+                "protocol_version": 2,
+                "profile_set_sha256": SHA,
+                "features": [] if mode[0] == "unsupported" else ["store_acceptance_seal"],
+            }
+        assert req["op"] == "store_acceptance_seal" and req["request_id"] == "a" * 32
+        if mode[0] == "lost_store":
+            return None
+        return {"seal_sha256": "f" * 64}
+
+    with endpoint(tmp_path, handler) as (client, seen):
+        with pytest.raises(ExecutionUncertainError) as mismatch:
+            client.store_acceptance_seal(
+                NS, grant=grant, project_slug="demo", plan_ref=plan, bundle=bundle, request_id="a" * 32
+            )
+        assert mismatch.value.code == "DURABILITY_UNKNOWN" and mismatch.value.operation_id == "op-" + "a" * 32
+        assert [item["op"] for item in seen] == ["health", "store_acceptance_seal"]
+        mode[0] = "lost_store"
+        with pytest.raises(ExecutionUncertainError) as lost:
+            client.store_acceptance_seal(
+                NS, grant=grant, project_slug="demo", plan_ref=plan, bundle=bundle, request_id="a" * 32
+            )
+        assert lost.value.operation_id == "op-" + "a" * 32
+        mode[0] = "lost_health"
+        count = len(seen)
+        with pytest.raises(ExecutionUnavailableError):
+            client.store_acceptance_seal(
+                NS, grant=grant, project_slug="demo", plan_ref=plan, bundle=bundle, request_id="a" * 32
+            )
+        assert [item["op"] for item in seen[count:]] == ["health"]
+        mode[0] = "unsupported"
+        count = len(seen)
+        with pytest.raises(ExecutionUnavailableError):
+            client.store_acceptance_seal(
+                NS, grant=grant, project_slug="demo", plan_ref=plan, bundle=bundle, request_id="b" * 32
+            )
+        assert [item["op"] for item in seen[count:]] == ["health"]
+        count = len(seen)
+        with pytest.raises(ExecutionContractError):
+            client.store_acceptance_seal(
+                NS, grant=grant, project_slug="wrong", plan_ref=plan, bundle=bundle, request_id="c" * 32
+            )
+        assert len(seen) == count

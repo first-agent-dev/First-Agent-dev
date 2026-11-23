@@ -360,6 +360,7 @@ def test_identity_and_reply_are_immutable_and_operation_vocabulary_is_closed() -
         "list_projects",
         "inventory_acceptance",
         "read_acceptance_seal",
+        "store_acceptance_seal",
     }
     assert len(GRANT_OPERATIONS) == 4
     with pytest.raises(ValueError):

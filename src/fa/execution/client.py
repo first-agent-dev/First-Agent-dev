@@ -357,6 +357,83 @@ class ExecutionClient:
         )
         return _grant(Operation.PIN_READER, result)
 
+    def store_acceptance_seal(
+        self,
+        namespace: NamespaceRef,
+        *,
+        grant: GrantReply,
+        project_slug: str,
+        plan_ref: PlanRef,
+        bundle: AcceptanceBundle,
+        request_id: str,
+        deadline: float | None = None,
+    ) -> str:
+        """Store one seal; retain request_id to reconcile an uncertain result, never auto-retry."""
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or not isinstance(grant, GrantReply)
+            or grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}
+            or not isinstance(project_slug, str)
+            or not isinstance(plan_ref, PlanRef)
+            or not isinstance(bundle, AcceptanceBundle)
+        ):
+            raise ExecutionContractError
+        _hex_id(request_id, "")
+        try:
+            raw = seal_bytes(bundle)
+            if (
+                load_seal(raw) != bundle
+                or bundle.plan_sha256 != plan_ref.sha256
+                or (bundle.sealed_root != f"worklogs/{project_slug}/acceptance")
+                or bundle.supersedes_sha256 is not None
+            ):
+                raise ExecutionContractError
+        except AcceptanceBundleError:
+            raise ExecutionContractError from None
+        try:
+            health = self.request(
+                Operation.HEALTH,
+                request_id=uuid4().hex,
+                namespace=None,
+                view=None,
+                grant=None,
+                payload={},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except (ExecutionUncertainError, ExecutionRejectedError):
+            # Only a read-only probe was sent; no store has been attempted yet.
+            raise ExecutionUnavailableError from None
+        features = health.get("features")
+        if (
+            health.get("ready") is not True
+            or health.get("protocol_version") != PROTOCOL_V2
+            or not isinstance(features, list)
+            or "store_acceptance_seal" not in features
+            or features != sorted(set(features))
+        ):
+            raise ExecutionUnavailableError
+        try:
+            result = self.request(
+                Operation.STORE_ACCEPTANCE_SEAL,
+                request_id=request_id,
+                namespace=namespace,
+                view=None,
+                grant=grant,
+                payload={"project_slug": project_slug, "plan_ref": _plan_ref_dict(plan_ref), "seal": json.loads(raw)},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        if result["seal_sha256"] != bundle.seal_sha256:
+            raise ExecutionUncertainError("op-" + request_id, code="DURABILITY_UNKNOWN")
+        return bundle.seal_sha256
+
     def read_acceptance_seal(
         self,
         namespace: NamespaceRef,

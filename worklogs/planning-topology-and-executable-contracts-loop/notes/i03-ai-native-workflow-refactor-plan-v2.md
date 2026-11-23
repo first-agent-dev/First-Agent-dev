@@ -1451,3 +1451,8 @@ E676; production custody integration, C1, correction, projection and final gate 
 service and authority, with bounded semantic client validation; see ledger E677 for
 negative proof, compatibility and limitations. No production controller consumes it yet;
 authority mint transport, trusted collection, mode-A and E657 guard remain open.
+
+**E678:** authority-private first-seal storage now has an OWNER-only, journalled V2
+transport with exact request replay and crash uncertainty, plus V2 journalled response
+handling. See ledger E678 for C3/negative/mutation evidence and limits. Controller use,
+trusted collection, correction/reseal, mode A and dispatch readiness remain open.

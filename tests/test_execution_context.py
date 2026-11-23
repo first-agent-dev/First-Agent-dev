@@ -136,6 +136,7 @@ def test_absolute_deadline_accessor_is_readonly_and_does_not_reset_with_elapsed_
             Operation.LIST_PROJECTS,
             Operation.INVENTORY_ACCEPTANCE,
             Operation.READ_ACCEPTANCE_SEAL,
+            Operation.STORE_ACCEPTANCE_SEAL,
         }
     ],
 )

@@ -171,6 +171,7 @@ def _validate_record(record: dict[str, Any]) -> None:
         Operation.REGISTER_WORKSPACE,
         Operation.PREPARE_BUNDLE,
         Operation.INSTALL_PROJECT,
+        Operation.STORE_ACCEPTANCE_SEAL,
     }
     if op is not Operation.RELEASE and (record["view_ref"] is None) != no_view:
         raise ExecutionContractError

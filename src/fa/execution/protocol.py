@@ -168,6 +168,7 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.INSTALL_PROJECT: _object(validated_bundle_id=_id("bundle-"), project_slug=CONFIG_ID),
     Operation.HANDOFF: _object(target_namespace=NAMESPACE),
     Operation.RELEASE: _object(),
+    Operation.STORE_ACCEPTANCE_SEAL: _object(project_slug=CONFIG_ID, plan_ref=PLAN_REF, seal={"type": "object"}),
     Operation.READ_ACCEPTANCE_SEAL: _object(project_slug=CONFIG_ID, plan_ref=PLAN_REF, expected_revision=_id("rev-")),
     Operation.INVENTORY_ACCEPTANCE: _object(project_slug=CONFIG_ID),
     Operation.LIST_PROJECT_ARTIFACTS: _object(project_slug=CONFIG_ID),
@@ -265,6 +266,7 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.INSTALL_PROJECT: _COMMITTED,
     Operation.PREPARE_BUNDLE: _object(validated_bundle_id=_id("bundle-"), bundle_sha256=SHA),
     Operation.RELEASE: _object(released={"type": "boolean", "const": True}),
+    Operation.STORE_ACCEPTANCE_SEAL: _object(seal_sha256=SHA),
     Operation.READ_ACCEPTANCE_SEAL: _object(seal={"type": "object"}),
     Operation.INVENTORY_ACCEPTANCE: _ACCEPTANCE_INVENTORY_REPLY,
     Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
@@ -286,10 +288,12 @@ RESULTS_V2: dict[Operation, dict[str, Any]] = {
                 "list_project_artifacts",
                 "list_projects",
                 "read_acceptance_seal",
+                "store_acceptance_seal",
             ),
             "uniqueItems": True,
         },
     ),
+    Operation.STORE_ACCEPTANCE_SEAL: _object(seal_sha256=SHA),
     Operation.READ_ACCEPTANCE_SEAL: _object(seal={"type": "object"}),
     Operation.INVENTORY_ACCEPTANCE: _ACCEPTANCE_INVENTORY_REPLY,
     Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
@@ -328,6 +332,7 @@ _ENVELOPE = _object(
                 Operation.LIST_PROJECTS,
                 Operation.INVENTORY_ACCEPTANCE,
                 Operation.READ_ACCEPTANCE_SEAL,
+                Operation.STORE_ACCEPTANCE_SEAL,
             }
         )
     ),
@@ -350,6 +355,7 @@ _V2_OPERATIONS = (
     Operation.LIST_PROJECTS,
     Operation.INVENTORY_ACCEPTANCE,
     Operation.READ_ACCEPTANCE_SEAL,
+    Operation.STORE_ACCEPTANCE_SEAL,
 )
 _ENVELOPE_V2 = _object(
     protocol_version={"type": "integer", "const": PROTOCOL_V2},
@@ -532,6 +538,7 @@ def decode_request(raw: bytes) -> dict[str, Any]:
                 Operation.LIST_PROJECTS,
                 Operation.INVENTORY_ACCEPTANCE,
                 Operation.READ_ACCEPTANCE_SEAL,
+                Operation.STORE_ACCEPTANCE_SEAL,
             }:
                 raise ExecutionContractError
         elif version == PROTOCOL_V2:
@@ -564,6 +571,7 @@ def _request_bindings(record: dict[str, Any], op: Operation) -> None:
         Operation.INSTALL_PROJECT,
         Operation.HANDOFF,
         Operation.READ_ACCEPTANCE_SEAL,
+        Operation.STORE_ACCEPTANCE_SEAL,
     }
     if op is not Operation.RELEASE and (record["view_ref"] is None) != owner:
         raise ExecutionContractError
@@ -672,6 +680,7 @@ def _validate_reply_body(
             Operation.LIST_PROJECTS,
             Operation.INVENTORY_ACCEPTANCE,
             Operation.READ_ACCEPTANCE_SEAL,
+            Operation.STORE_ACCEPTANCE_SEAL,
         }:
             raise ExecutionContractError
         result_checks = _RESULT_CHECKS

@@ -244,6 +244,7 @@ def test_v2_health_negotiates_project_artifact_and_revision_diff_features(site: 
                 "list_project_artifacts",
                 "list_projects",
                 "read_acceptance_seal",
+                "store_acceptance_seal",
             ],
         }
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
@@ -1765,3 +1766,291 @@ def test_private_seal_client_over_real_socket_requires_owner_and_never_recreates
             stop.set()
             runner.join(timeout=5)
             assert not runner.is_alive()
+
+
+def test_private_seal_store_client_journal_replay_and_restart(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import _acceptance_store_case, _private_plan, _register_acceptance_fixture
+
+    root, plan_ref = _acceptance_store_case(site)
+    request_id = "d" * 32
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)  # synthetic origin; no BOOTSTRAP claim
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        payload = {
+            "project_slug": "demo",
+            "plan_ref": {
+                "workspace_relative_path": plan_ref.workspace_relative_path,
+                "source_kind": plan_ref.source_kind,
+                "sha256": plan_ref.sha256,
+            },
+            "seal": json.loads(seal_bytes(bundle)),
+        }
+        wrong_id = "a" * 32
+        denied = exchange(
+            service,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            payload,
+            request_id=wrong_id,
+            capability="f" * 64,
+            protocol_version=2,
+        )
+        assert _error(denied) == "UNAUTHORIZED"
+        assert service.authority.journal.lookup("op-" + wrong_id, ACTOR) is None
+        assert not _private_plan(site, ids, plan_ref).exists()
+        client = ExecutionClient(_config(site).socket_path, server_uid=os.getuid(), rpc_timeout_ms=5000)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            assert (
+                client.store_acceptance_seal(
+                    ACTOR,
+                    grant=grant,
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    bundle=bundle,
+                    request_id=request_id,
+                    deadline=until(),
+                )
+                == bundle.seal_sha256
+            )
+            assert (
+                client.store_acceptance_seal(
+                    ACTOR,
+                    grant=grant,
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    bundle=bundle,
+                    request_id=request_id,
+                    deadline=until(),
+                )
+                == bundle.seal_sha256
+            )
+            assert (
+                client.read_acceptance_seal(
+                    ACTOR,
+                    grant=grant,
+                    project_slug="demo",
+                    plan_ref=plan_ref,
+                    expected_revision=ids["revision_id"],
+                    deadline=until(),
+                )
+                == bundle
+            )
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+        record = service.authority.journal.lookup("op-" + request_id, ACTOR)
+        assert (
+            record is not None and record["state"] == "DONE" and record["result"] == {"seal_sha256": bundle.seal_sha256}
+        )
+        assert grant.capability not in json.dumps(record) and "selectors" not in json.dumps(record)
+        pointer = _private_plan(site, ids, plan_ref) / ".fa/seal-current.json"
+        before = pointer.read_bytes()
+        collision = exchange(
+            service,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            {**payload, "project_slug": "seals"},
+            request_id=request_id,
+            capability=grant.capability,
+            protocol_version=2,
+        )
+        assert _error(collision) == "COLLISION" and pointer.read_bytes() == before
+        foreign = exchange(
+            service,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            payload,
+            request_id=request_id,
+            capability="f" * 64,
+            protocol_version=2,
+        )
+        assert _error(foreign) == "UNAUTHORIZED" and pointer.read_bytes() == before
+    with SupervisorService(_config(site)) as restarted:
+        replay = exchange(
+            restarted,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            payload,
+            request_id=request_id,
+            capability=grant.capability,
+            protocol_version=2,
+        )
+        assert _error(replay) == "EXECUTION_UNKNOWN"
+        assert pointer.read_bytes() == before
+
+
+def test_private_seal_store_journal_failure_after_effect_is_never_replayed(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.execution.journal import JournalError
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import _acceptance_store_case, _private_plan, _register_acceptance_fixture
+
+    root, plan_ref = _acceptance_store_case(site)
+    request_id = "e" * 32
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        payload = {
+            "project_slug": "demo",
+            "plan_ref": {
+                "workspace_relative_path": plan_ref.workspace_relative_path,
+                "source_kind": plan_ref.source_kind,
+                "sha256": plan_ref.sha256,
+            },
+            "seal": json.loads(seal_bytes(bundle)),
+        }
+
+        def fail_complete(*args: Any, **kwargs: Any) -> None:
+            raise JournalError("DURABILITY_UNKNOWN")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(service.authority.journal, "complete", fail_complete)
+            result = exchange(
+                service,
+                Operation.STORE_ACCEPTANCE_SEAL,
+                payload,
+                request_id=request_id,
+                capability=grant.capability,
+                protocol_version=2,
+            )
+        assert _error(result) == "DURABILITY_UNKNOWN"
+        pointer = _private_plan(site, ids, plan_ref) / ".fa/seal-current.json"
+        before = pointer.read_bytes()
+        record = service.authority.journal.lookup("op-" + request_id, ACTOR)
+        assert record is not None and record["state"] == "UNKNOWN"
+        replay = exchange(
+            service,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            payload,
+            request_id=request_id,
+            capability=grant.capability,
+            protocol_version=2,
+        )
+        assert _error(replay) == "EXECUTION_UNKNOWN" and pointer.read_bytes() == before
+    with SupervisorService(_config(site)) as restarted:
+        replay = exchange(
+            restarted,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            payload,
+            request_id=request_id,
+            capability=grant.capability,
+            protocol_version=2,
+        )
+        assert _error(replay) == "EXECUTION_UNKNOWN" and pointer.read_bytes() == before
+
+
+def test_private_seal_store_rejects_stale_and_forged_candidates_without_seal_effects(site: Site) -> None:
+    from fa.inner_loop.acceptance_bundle import seal_bytes
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import _acceptance_store_case, _private_plan, _register_acceptance_fixture
+
+    root, plan_ref = _acceptance_store_case(site)
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        good = _mint(root, revision_id=ids["revision_id"])
+        stale = _mint(root, revision_id="rev-" + "f" * 32)
+        payload = {
+            "project_slug": "demo",
+            "plan_ref": {
+                "workspace_relative_path": plan_ref.workspace_relative_path,
+                "source_kind": plan_ref.source_kind,
+                "sha256": plan_ref.sha256,
+            },
+            "seal": json.loads(seal_bytes(stale)),
+        }
+        binding = site.state / "workspaces" / ids["workspace_id"]
+        origin = binding / "acceptance-origin-demo.json"
+        before = origin.read_bytes()
+        result = exchange(
+            service,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            payload,
+            request_id="1" * 32,
+            capability=grant.capability,
+            protocol_version=2,
+        )
+        assert _error(result) == "STALE_REVISION"
+        payload["seal"] = json.loads(seal_bytes(good))
+        payload["seal"]["plan_sha256"] = "a" * 64
+        result = exchange(
+            service,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            payload,
+            request_id="2" * 32,
+            capability=grant.capability,
+            protocol_version=2,
+        )
+        assert _error(result) == "INPUT_POLICY"
+        assert origin.read_bytes() == before and not _private_plan(site, ids, plan_ref).exists()
+
+
+def test_private_seal_store_interrupt_before_pointer_fences_restart(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.inner_loop.acceptance_bundle import AcceptanceBundleError, seal_bytes
+    from fa.inner_loop.acceptance_seal_store import SealStore
+    from tests.test_ai_native_acceptance_collection import _mint
+    from tests.test_execution_readers import (
+        _acceptance_store_case,
+        _plan_entry,
+        _private_plan,
+        _register_acceptance_fixture,
+    )
+
+    root, plan_ref = _acceptance_store_case(site)
+    request_id = "e" * 32
+    with SupervisorService(_config(site)) as service:
+        ids = _register_acceptance_fixture(site, service.authority)
+        grant = _writer_grant(service, ids["workspace_id"], request_id="b" * 32)
+        bundle = _mint(root, revision_id=ids["revision_id"])
+        payload = {
+            "project_slug": "demo",
+            "plan_ref": {
+                "workspace_relative_path": plan_ref.workspace_relative_path,
+                "source_kind": plan_ref.source_kind,
+                "sha256": plan_ref.sha256,
+            },
+            "seal": json.loads(seal_bytes(bundle)),
+        }
+
+        def interrupt(_store: SealStore, _bundle: Any) -> Any:
+            raise AcceptanceBundleError("injected")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(SealStore, "store", interrupt)
+            result = exchange(
+                service,
+                Operation.STORE_ACCEPTANCE_SEAL,
+                payload,
+                request_id=request_id,
+                capability=grant.capability,
+                protocol_version=2,
+            )
+        assert _error(result) == "DURABILITY_UNKNOWN" and not service.authority.ready
+        origin = site.state / "workspaces" / ids["workspace_id"] / "acceptance-origin-demo.json"
+        assert _plan_entry(origin, plan_ref) is not None
+        pointer = _private_plan(site, ids, plan_ref) / ".fa/seal-current.json"
+        assert not pointer.exists()
+        record = service.authority.journal.lookup("op-" + request_id, ACTOR)
+        assert record is not None and record["state"] == "UNKNOWN"
+    with SupervisorService(_config(site)) as restarted:
+        replay = exchange(
+            restarted,
+            Operation.STORE_ACCEPTANCE_SEAL,
+            payload,
+            request_id=request_id,
+            capability=grant.capability,
+            protocol_version=2,
+        )
+        assert _error(replay) == "EXECUTION_UNKNOWN" and not pointer.exists()
+        writer = exchange(
+            restarted, Operation.ACQUIRE_WRITER, {"workspace_id": ids["workspace_id"]}, request_id="f" * 32
+        )
+        assert _error(writer) == "WORKSPACE_BUSY" and not pointer.exists()

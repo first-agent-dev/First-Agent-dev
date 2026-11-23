@@ -14444,3 +14444,45 @@ repository type/mutation gate remains unrun and STEP9A remains open.
 Final broad rerun after those fixture updates: `tests/test_execution_*.py`,
 `tests/test_workspace_publication.py`, `tests/test_workspace_authorize.py` — 1760 passed,
 2 expected Q106 xfailed. A later client oversized-response assertion was run separately.
+
+### E678 — journalled authority seal store transport (2026-11-23)
+
+INV-04/08 CT-3.2/3.3 component slice: V2 OWNER-only `store_acceptance_seal` accepts a
+bounded seal object, and the service canonicalizes and forwards it to the existing
+private authority store. Dispatcher authorizes before a journal reservation, hashes exact
+request inputs, persists EXECUTING before the store, validates the V2 result before DONE,
+and binds its replay cache to the original authenticated principal, namespace, proof and
+request. No full seal or capability is persisted in the operation record. The client
+requires an explicit request ID, does not retry automatically, validates the seal and
+scope before sending, probes capability first, and treats a wrong returned digest as
+DURABILITY_UNKNOWN. Loss during the read-only health probe is unavailable before any
+mutation; loss during store remains uncertain with the caller's operation ID. The
+previous dispatcher encoded all successful journalled replies as V1; both internal result
+validation and final response now preserve the request version, exercised by this first
+journalled V2 operation. After restart even a DONE result without the original in-memory
+reply is EXECUTION_UNKNOWN, not a second store or forged success.
+
+C0 closed V2 payload/result, V1 refusal and OWNER envelope; C3 client endpoint checks
+capability negotiation, wrong digest, preflight vs store transport loss, and no pre-send
+invalid scope. Real client/UDS/dispatcher/authority tests exercise successful store and
+read, same-ID replay, changed-input collision, wrong proof, restart and no persisted raw
+seal/proof. Actual authority negative controls cover stale revision, malformed seal, no
+private effect, fault before pointer with started origin and writer fence across restart,
+and injected journal completion failure after pointer with UNKNOWN/no replay. The origin
+fixture is synthetic; this is not BOOTSTRAP/controller C1. Mutation kills (manual, restored):
+service producer, service raw-seal forwarding EDGE, journal no-view validation, dispatcher
+V2 internal self-check and outer reply, client digest check, wire owner shape. The first
+outer-reply mutation pattern did not match formatted code and was rerun successfully;
+seven mutants killed in total. TEST-EDITS: V1 enum exclusions, closed operation vocabulary,
+health feature list and authority-gated operation expectation updated for the added V2
+operation; no existing behavioral assertion removed. Related 551-test bank passed; broader
+`tests/test_execution_*.py tests/test_workspace_publication.py tests/test_workspace_authorize.py`:
+1766 passed and 2 expected Q106 xfails. Ruff/format and scoped six-module production mypy,
+doc links, planned E2E coverage and environment check pass. These are not full E674 gate.
+
+The transport does not attest collection provenance or disposition authority and no
+production controller uses it yet. Its existence must not be read as custody readiness:
+E657, true read-only mode-A/immutable fallback, TEST-DEFECT correction, managed kill
+attribution, controller C1 and the final full gate remain open. V2's closed health features
+require coordinated client/supervisor update, as in E677; no deployed migration or host run
+is claimed.

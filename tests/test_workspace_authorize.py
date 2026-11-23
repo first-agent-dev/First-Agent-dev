@@ -381,7 +381,16 @@ def test_the_readonly_classification_covers_the_closed_enum() -> None:
     assert READONLY_OPERATIONS <= frozenset(Operation)
     assert not READONLY_OPERATIONS & AUTHORITY_GATED_OPERATIONS
     assert AUTHORITY_GATED_OPERATIONS <= frozenset(Operation)
-    for name in ("stop_view", "seal", "publish", "install_project", "prepare_bundle", "handoff", "release"):
+    for name in (
+        "stop_view",
+        "seal",
+        "publish",
+        "install_project",
+        "prepare_bundle",
+        "store_acceptance_seal",
+        "handoff",
+        "release",
+    ):
         assert Operation(name) in AUTHORITY_GATED_OPERATIONS
     assert READONLY_OPERATIONS == frozenset(
         {
