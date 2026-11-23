@@ -1761,3 +1761,82 @@ scoped Ruff/format and `MYPYPATH=src` mypy pass; environment and diff check pass
 unsupported ABI/architecture or absent `setpriv`, these tests explicitly skip and must not
 count as proof for E674 or W4. TEST-EDITS: extend `tests/test_acceptance_mount_topology.py`;
 existing assertions retained. E657 remains active; STEP9A and W4 remain open.
+
+### E691 — external research: candidate name-based MAC, not a selected dependency
+
+**Research question:** with existing `/workspace/worklogs/<slug>/ledger.md` location, allow
+shell and file-tool atomic ledger edits plus notes/e2e writes, deny nested-coder writes to
+other project paths before publication, preserve the pinned plan/closure and authoritative
+snapshot, resist rename/alias/ABA, and avoid wasted agent turns. Searched for Linux
+name-based rename/create controls, LSM/container integration, FUSE per-operation policy,
+seccomp pointer/TOCTOU and fanotify permission events; compared results to E688–E690.
+
+**Most promising next experiment: AppArmor plus existing protected mounts.** Unlike
+Landlock's hierarchy-FD allow rules, AppArmor's file rules are path-pattern based;
+its manual states directory write permission is not required for creation/rename of
+children, but applicable file-name permissions are. Docker can attach an already-loaded
+custom AppArmor profile per container. Sources: [apparmor.d(5)](https://manpages.debian.org/bullseye/apparmor/apparmor.d.5.en.html),
+[AppArmor policy discussion](https://en.opensuse.org/SDB:AppArmor_geeks),
+[Docker AppArmor guide](https://docs.docker.com/engine/security/apparmor/).
+Hypothesis, not proven: an enforce-mode per-view policy bound by trusted authority to the
+current admitted slug permits the exact ledger and a narrowly designed temporary-write
+strategy, `notes/**`, `e2e/**`, approved `src/scripts`, and denies other project paths;
+mount restrictions protect plan/acceptance as independent defense. Correct source *and*
+destination rules, directory ancestors and aliases matter. Broad denial of a parent path
+may override permits; do not assume an example profile is correct. The allowed temporary
+file names, visibility, cleanup, crash and concurrent collisions must be explicitly tested
+against the approved scope, not treated as free extra project writes or selected silently.
+A path-only allowlist must handle directory rename, symlinks, hardlinks, open FDs, procfd,
+`renameat2` flags, exchange, unlink/recreate, path replacement and child exec/profile
+transitions; it cannot replace custody, complete closure or E683 lineage checks.
+
+**Host feasibility is not proved:** Arena reports no `/sys/module/apparmor/parameters/enabled`
+and neither `apparmor_parser` nor `aa-exec` was found. Current `ExecutionProfile.create_spec`
+renders seccomp and `no-new-privileges` but no explicit AppArmor profile; current authority
+has no checked profile provisioning/identity/lifecycle. Docker documentation describes
+loading profiles and `security-opt`; whether the target host can load/verify immutable
+per-view policy, recover, safely reuse or delete it, and bind actual enforcement to a view
+is unmeasured. Fail closed if enforcement identity/mode cannot be proved; do not silently
+fall back to unconfined or `docker-default`. AppArmor support is a **candidate**, not a
+new mandatory deployment prerequisite. Host profiling is a planned W4/host experiment,
+not permission for early deploy or declaration of W4 PASS.
+
+**Alternatives and limitations:**
+- FUSE can implement mediated `create`, `rename`, `link`, and other filesystem operations
+  ([Linux FUSE documentation](https://docs.kernel.org/filesystems/fuse/fuse.html),
+  [libfuse passthrough reference](https://github.com/libfuse/libfuse/blob/master/example/passthrough.c)).
+  It would introduce a new privileged/trusted filesystem daemon and operational/crash/cache
+  surface: prove descriptor-rooted backing operations, complete syscall coverage, atomic
+  rename, direct-source bypass exclusion, `allow_other`/permission behavior and continuity
+  between actual cell view, file tools and snapshot before treating it as custody. Kernel
+  FUSE docs note `default_permissions` and mount-owner restrictions; merely opening
+  `/dev/fuse` here proves none of that. FUSE is a research fallback, not selected.
+- `seccomp` filters alone cannot inspect pointed-to path strings
+  ([kernel seccomp documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html));
+  the [seccomp user-notification manual](https://man7.org/linux/man-pages/man2/seccomp_unotify.2.html)
+  explicitly warns against using CONTINUE with mutable pointer arguments as a security policy.
+  Do not substitute a userspace string-check/CONTINUE interceptor for the boundary.
+- `fanotify` has notification events and a separate set of permission events; rename
+  notification is not evidence of a synchronous rename permission decision
+  ([fanotify(7)](https://man7.org/linux/man-pages/man7/fanotify.7.html)). It can aid audit,
+  not by itself prove rename prevention. Landlock remains a potential supplementary layer,
+  but E690 is a counterexample to two naive policies, not a general impossibility theorem.
+- A layout change placing ledger under its own writable directory may simplify OS isolation,
+  but the current canonical artifact and user workflow name `ledger.md` at the project root.
+  Do not silently relocate it, use an unverified symlink, or weaken Q-V2-WRITE-SCOPE-1=A.
+
+**Planned discriminating experiment, before any production change:** on an approved or
+representative disposable AppArmor-enabled host, compile and load an enforce profile with a
+fresh project/slug and exact expected profile identity; run an unprivileged Docker cell with
+current mount semantics. Simultaneously assert `(1)` shell appends and atomic ledger edits,
+real `RootedViewIO` write followed by shell edit and fresh authority snapshot, `(2)` writes
+and rename to a different project file and other project denied before effect, `(3)` protected
+plan/acceptance and ancestors resist write, rename/exchange, aliases, hardlink, symlink,
+transient ABA, subprocess inheritance and in-flight profile replacement, `(4)` no
+uncontrolled temp leakage, and `(5)` failure to load/attach/enforce prevents dispatch with a
+structured error, no unconfined fallback. Include concurrent views/slugs, startup cleanup,
+crash/replay and mutation producer/EDGE tests at real composition. Acceptance requires actual
+`STOP_VIEW→SEAL→PUBLISH` and fresh pin, not a filesystem-only probe. Preserve unrelated
+candidate work safely on any late refusal; measure performance and agent-visible denials.
+No host execution or PASS is claimed. Keep E657 and mandatory isolated immutable-payload
+fallback until the full selected strategy is proven. E674 full checks/mutation and W4 remain.

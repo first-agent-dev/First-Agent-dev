@@ -14836,3 +14836,24 @@ TEST-EDITS: extended existing topology diagnostic. Three hand mutants removing f
 project MAKE_REG, or REFER killed/restored. Target bank 281 passed; scoped Ruff/format,
 source-path mypy, environment and diff pass. Unsupported-ABI/platform cases explicitly skip,
 not a passing E674/W4 result. The W4 ledger-append E2E obligation remains planned.
+
+### E691 — online research: AppArmor as a name-based candidate (2026-11-23)
+
+Searched primary kernel, Docker, AppArmor and libfuse sources for file-name-scoped
+atomic rename/create, read-only mount ancestry, syscall mediation and snapshot behavior.
+AppArmor path rules can distinguish file names for create/rename; directory write is not
+required merely to create a child, and Docker accepts a loaded per-container profile. It
+is a plausible complement to protected mounts for nested Q-V2-WRITE-SCOPE-1=A; exact temp
+names/semantics, alias/ancestor controls, profile provisioning/enforcement/identity,
+current-slug binding, recovery, cross-view concurrency and snapshot integration require real
+proof. This environment showed no AppArmor module parameter, `apparmor_parser` or `aa-exec`;
+that is not a claim about the production host. No profile or additional dependency chosen.
+
+FUSE permits user-space filesystem operations including rename, but introduces a daemon,
+mount, cache/security and lifecycle authority; `/dev/fuse` opening is not product proof.
+Kernel seccomp BPF cannot dereference path pointers; seccomp user-notification CONTINUE has
+a documented TOCTOU, so string filtering there is not custody. Fanotify rename notification
+is not a proven synchronous deny. E688–E690 remain narrow local observations; no general
+impossibility claim. Detailed linked sources, falsifiable host experiment, no-effect controls,
+producer/EDGE and W4 plan are in V2 plan E691. No host execution or production change.
+E657, independent oracle/lineage, E674, STEP9A/9B and W4 remain open.

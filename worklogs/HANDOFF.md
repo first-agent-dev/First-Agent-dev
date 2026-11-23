@@ -19,12 +19,14 @@ a real rooted atomic edit leaves later shell append read-only. E689 tests an anc
 writable project: ledger editing works, but shell escapes the nested working-path scope.
 E690 tests two Landlock policies: narrow still permits rename-over-other and breaks later
 ledger append; wide permits direct other-file writes. Neither is selected.
-See [ledger E683–E690](planning-topology-and-executable-contracts-loop/ledger.md) and the
+E691 research identifies AppArmor name-based rules as a promising but unproved candidate;
+Arena has no detected AppArmor tooling/module interface. See [ledger E683–E691](planning-topology-and-executable-contracts-loop/ledger.md) and the
 [V2 implementation matrix](planning-topology-and-executable-contracts-loop/notes/i03-ai-native-workflow-refactor-plan-v2.md).
 
 ### Next
 
-1. Continue E687 selective projection beyond E688–E690: preserve working ledger edits
+1. Evaluate E691 AppArmor candidate and alternatives without introducing an unapproved host
+   prerequisite; continue E687 selective projection beyond E688–E690: preserve ledger edits
    and source continuity without granting nested coder the whole project; Q-V2-WRITE-SCOPE-1=A
    authorizes only current-project working surfaces for nested coder, not mutation-oracle widening.
    E686 records early-denial, safe work-recovery and W4 E2E tasks.
