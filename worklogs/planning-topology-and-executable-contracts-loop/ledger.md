@@ -14857,3 +14857,18 @@ is not a proven synchronous deny. E688–E690 remain narrow local observations; 
 impossibility claim. Detailed linked sources, falsifiable host experiment, no-effect controls,
 producer/EDGE and W4 plan are in V2 plan E691. No host execution or production change.
 E657, independent oracle/lineage, E674, STEP9A/9B and W4 remain open.
+
+### E692 — FUSE local feasibility; stale open descriptor (2026-11-23)
+
+Active LSMs are capability, landlock, selinux; AppArmor and Docker/Podman tools absent here,
+so the E691 AppArmor/Docker host experiment cannot run in this Arena. Actual unprivileged
+FUSE mount using upstream libfuse 3.14.0 passthrough succeeded. See [diagnostic procedure,
+source hashes, scripts and observations](e2e/I03/fuse-passthrough-diagnostic-e692.md).
+A fresh FUSE pathname observed authority `RootedViewIO` atomic ledger replacement; later
+append and atomic rename were reflected in backing. Passthrough has no policy: writing other
+files and direct access to backing also succeeded. In a separate sequence an old FUSE FD
+accepted a write after external replacement, while fresh FUSE/backing reads remained `new`;
+old-FD read returned `old`. A direct non-FUSE control likewise reported successful stale
+write absent from the new path, while its old-FD read included the append. This is a
+continuity warning, not an explanation of caching or proof of a FUSE-specific defect. No denial, Docker isolation, publication or crash proof.
+E657 and STEP9A remain open; all host/deployment conclusions remain untested.

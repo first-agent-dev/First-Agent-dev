@@ -1840,3 +1840,27 @@ crash/replay and mutation producer/EDGE tests at real composition. Acceptance re
 candidate work safely on any late refusal; measure performance and agent-visible denials.
 No host execution or PASS is claimed. Keep E657 and mandatory isolated immutable-payload
 fallback until the full selected strategy is proven. E674 full checks/mutation and W4 remain.
+
+### E692 — local FUSE feasibility and open-descriptor diagnostic
+
+The primary E691 AppArmor experiment is blocked on this host: the active LSM list is
+`capability,landlock,selinux`, with no AppArmor tools, and no Docker or Podman executable.
+No inference about the deployment host follows. An unprivileged upstream libfuse 3.14.0
+passthrough example did mount locally. Full reproducible procedure, source hashes, code,
+results and caveats: [E692 diagnostic](../e2e/I03/fuse-passthrough-diagnostic-e692.md).
+
+With `RootedViewIO` targeting backing storage and the FUSE process accessing the mirror,
+ordinary fresh-path appends and atomic rename after an authority-side replacement worked.
+However, this unmodified example has **no confinement**: other-file writes and direct
+backing access succeed. Separately, an already-open FUSE descriptor accepted a write after
+external atomic replacement, while fresh FUSE and backing reads saw only the new inode's
+contents. Old-descriptor read also returned old bytes; do not infer exact cache or old-inode
+contents from this. Thus fresh-path continuity alone misses a potentially lost successful
+write. Future candidates must specify and verify concurrent open FD behavior, agent-visible
+failure or safe recovery, and snapshot consistency; cannot silently equate a successful
+write on a stale FD with publication. A direct backing-path control reproduced the successful stale write absent from the new
+pathname, with old-FD read showing the append; this is not a FUSE-specific finding. Test
+any selected design against its actual concurrency and safe recovery contract.
+
+This is neither a FUSE security-policy experiment nor Docker/host C3 or C1 evidence.
+No producer or EDGE, production change, dependency decision, or E657/W4 closure is claimed.
