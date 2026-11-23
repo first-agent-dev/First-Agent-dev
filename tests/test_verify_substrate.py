@@ -174,6 +174,9 @@ class _Managed:
         self.current_revision_id = "rev-" + "3" * 32
         self.read_only_profile = profile
 
+    def pin_reader(self, *, revision_id: str, plan_ref: Any, deadline: float | None) -> GrantReply:
+        return self.client.pin_reader(self.binding, revision_id, plan_ref=plan_ref, deadline=deadline)
+
 
 def _profile() -> ExecutionProfile:
     return ExecutionProfile(
@@ -547,3 +550,19 @@ def test_managed_verify_and_kill_check_run_against_pinned_service_revision_not_s
     assert sv.kill_checks[0][1].verdict is SliceVerdict.PROVEN
     assert not (stale_host / ".fa").exists()
     assert cache_dir is not None and ctx.artifact_paths.base_dir in cache_dir.parents
+
+
+def test_verify_uses_managed_pin_fence_before_client(tmp_path: Path) -> None:
+    from fa.execution.client import ExecutionUncertainError
+
+    client = _Client(grant=_grant(view=_view()))
+    managed = _Managed(client, _profile())
+
+    def fenced(**_kwargs: Any) -> GrantReply:
+        raise ExecutionUncertainError("op-pending", code="DURABILITY_UNKNOWN")
+
+    managed.pin_reader = fenced  # type: ignore[method-assign]
+    with pytest.raises(ExecutionUncertainError):
+        with _pinned_verify_substrate(_ctx(tmp_path, managed=managed)):
+            pass
+    assert client.pin_calls == [] and client.stop_calls == []

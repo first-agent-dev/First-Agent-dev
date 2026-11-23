@@ -627,3 +627,18 @@ def test_managed_child_accepts_exact_utf8_byte_limit_before_supervisor_refusal(t
     assert pin.call_count == 1
     assert parent.spawn_count == 1 and parent.active_count == 0
     assert writer.fake_client.stop_calls == []
+
+
+def test_subagent_uses_managed_pin_fence_before_client(tmp_path: Path) -> None:
+    from fa.execution.client import ExecutionUncertainError
+
+    parent, writer = _parent(tmp_path)
+    tool = _build_tool(tmp_path, parent, writer)
+    with (
+        patch.object(managed_subagent, "get_current_session", return_value=parent),
+        patch.object(writer, "_require_handoff_resolved", side_effect=ExecutionUncertainError("op-pending")),
+    ):
+        result = tool.handler({"task": "read"})
+    assert result.error is not None and result.error.code == "subagent_terminality_unconfirmed"
+    assert writer.fake_client.pin_calls == []
+    assert parent.active_count == 1  # conservative: an ambiguous pin is not presumed terminal

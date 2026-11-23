@@ -479,12 +479,21 @@ class ManagedExecution:
         *,
         revision_id: str | None = None,
         plan_ref: PlanRef | None = None,
+        child_binding: ExecutionBinding | None = None,
         deadline: float | None = None,
     ) -> GrantReply:
-        """Pin an immutable READ/PROJECT view at ``revision_id`` or current revision."""
+        """Pin a READ/PROJECT view for this run or its direct child."""
         self._require_handoff_resolved()
+        binding = self.binding if child_binding is None else child_binding
+        if child_binding is not None and (
+            not isinstance(child_binding, ExecutionBinding)
+            or child_binding.workspace_id != self.binding.workspace_id
+            or child_binding.namespace.session_id != self.binding.namespace.session_id
+            or child_binding.namespace.parent_run_id != self.binding.namespace.run_id
+        ):
+            raise ExecutionContractError
         target_revision = self.current_revision_id if revision_id is None else revision_id
-        return self.client.pin_reader(self.binding, target_revision, plan_ref=plan_ref, deadline=deadline)
+        return self.client.pin_reader(binding, target_revision, plan_ref=plan_ref, deadline=deadline)
 
     def stop_view(self, grant: GrantReply, *, deadline: float | None = None) -> bool:
         """End the view ``grant`` opened; ``False`` when its end was not proved.

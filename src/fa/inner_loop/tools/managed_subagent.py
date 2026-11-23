@@ -322,8 +322,8 @@ def build_managed_subagent_tool(  # noqa: C901
                 session_id=parent_state.session_id,
             )
             pin_attempted = True
-            grant = managed.client.pin_reader(
-                child_binding,
+            grant = managed.pin_reader(
+                child_binding=child_binding,
                 revision_id=managed.current_revision_id,
                 plan_ref=plan_ref,
                 deadline=time.monotonic() + 30.0,

@@ -1479,3 +1479,9 @@ loss/restart/no-remint and producer/EDGE tests before replacing E679's diagnosti
 controller store/read. Existing deployments and origin formats need an explicit safe
 recovery story; no automatic adoption based only on an absent current path. Preserve E657,
 trusted-collection work, mode A/fallback and the E674 full gate.
+
+**E681:** known verify/acquisition/child READ pin edges now route through the managed seal
+fence, with child binding constrained to the same workspace/session and direct parent.
+See ledger for real-service producer test, three caller-edge tests and five killed mutants.
+This is not a universal or concurrency-safe custody proof: audit remaining direct client
+calls, candidate-publication interactions and controller-loss recovery before integration.

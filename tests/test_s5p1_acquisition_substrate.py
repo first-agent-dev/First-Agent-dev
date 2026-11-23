@@ -120,6 +120,9 @@ class _Managed:
         self.current_revision_id = REVISION
         self.read_only_profile = object()
 
+    def pin_reader(self, *, revision_id: str, plan_ref: Any, deadline: float | None) -> GrantReply:
+        return self.client.pin_reader(self.binding, revision_id, plan_ref=plan_ref, deadline=deadline)
+
 
 def _grant(
     *,
@@ -377,3 +380,18 @@ def _installed_project_files() -> dict[str, bytes]:
         created="2026-11-20",
     )
     return {path: body for path, body in files.items() if path.endswith(".md")}
+
+
+def test_acquisition_uses_managed_pin_fence_before_client(tmp_path: Any) -> None:
+    from fa.execution.client import ExecutionUncertainError
+
+    client = _Client(grant=_grant())
+    managed = _Managed(client)
+
+    def fenced(**_kwargs: Any) -> GrantReply:
+        raise ExecutionUncertainError("op-pending", code="DURABILITY_UNKNOWN")
+
+    managed.pin_reader = fenced  # type: ignore[method-assign]
+    with _pinned_acquisition_substrate(_ctx(tmp_path, managed)) as substrate:
+        assert substrate is None
+    assert client.operations == [] and client.stops == []

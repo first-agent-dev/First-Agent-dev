@@ -538,8 +538,7 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
     # candidate changes the plan's bytes, and the authority proves the pinned ref
     # against THIS revision.
     plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
-    grant = managed.client.pin_reader(
-        managed.binding,
+    grant = managed.pin_reader(
         revision_id=managed.current_revision_id,
         plan_ref=plan_ref,
         deadline=deadline,
@@ -3090,8 +3089,7 @@ def _pinned_acquisition_substrate(ctx: WorkflowContext) -> Iterator[AcquisitionS
         return
     deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
     try:
-        grant = managed.client.pin_reader(
-            managed.binding,
+        grant = managed.pin_reader(
             revision_id=managed.current_revision_id,
             plan_ref=None,
             deadline=deadline,

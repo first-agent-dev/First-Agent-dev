@@ -4184,6 +4184,9 @@ def test_managed_seal_lost_reply_fences_writer_until_exact_replay(site: Site, mo
             managed = ManagedExecution(client, ExecutionBinding(ACTOR, ids["workspace_id"]), grant)
             bundle = _mint(root, revision_id=ids["revision_id"])
             reader = managed.pin_reader()
+            other = ExecutionBinding(NamespaceRef(ACTOR.session_id, "other-child", "other-parent"), ids["workspace_id"])
+            with pytest.raises(ExecutionContractError):
+                managed.pin_reader(child_binding=other)
             original_request = client.request
             sent: list[str] = []
 
@@ -4207,6 +4210,11 @@ def test_managed_seal_lost_reply_fences_writer_until_exact_replay(site: Site, mo
             assert managed.acceptance_seal_pending
             with pytest.raises(ExecutionUncertainError):
                 managed.handoff_to(NamespaceRef(ACTOR.session_id, "child-run", ACTOR.run_id))
+            child = ExecutionBinding(NamespaceRef(ACTOR.session_id, "child-run", ACTOR.run_id), ids["workspace_id"])
+            with pytest.raises(ExecutionUncertainError):
+                managed.pin_reader(child_binding=child)
+            with pytest.raises(ExecutionUncertainError):
+                managed.pin_reader()
             with pytest.raises(ExecutionUncertainError):
                 managed.open_view(access=Access.WRITE, purpose=ViewPurpose.PROJECT, base_revision=ids["revision_id"])
             with pytest.raises(ExecutionUncertainError):

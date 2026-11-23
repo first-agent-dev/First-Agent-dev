@@ -14540,3 +14540,32 @@ before the final cleanup change; targeted 3 passed afterward. Ruff/format and sc
 composition mypy/environment check passed. No controller custody, trusted collection,
 mode A, full gate or host PASS claimed; E657 and STEP9A remain open.
 Final rerun of that same 7-module bank after the cleanup change: 663 passed.
+
+### E681 — route known READ pin callers through managed seal fence (2026-11-23)
+
+`_pinned_verify_substrate`, `_pinned_acquisition_substrate`, and the managed child tool
+previously called `managed.client.pin_reader` directly, bypassing E680's unresolved seal
+fence. They now call `ManagedExecution.pin_reader`; it supports a direct child's binding
+only when workspace, session and parent-run match the managed owner. Existing child
+STOP_VIEW still uses the child namespace and remains cleanup. Verify propagates the fence;
+acquisition returns no substrate and does not fall back to host. The child conservatively
+retains its active slot on an uncertain pin, even when the uncertainty actually came from
+the pre-send managed fence: safe but may require recovery and is not a liveness proof.
+
+C3 real authority/service/UDS lost-store-response test now proves parent and child pin
+methods refuse while pending and rejects a wrong-parent child binding; the known caller
+edges are independently tested with a failing managed pin guard and zero client pin.
+The child edge uses the production tool lifecycle with a fake client, not a live cell.
+Five manual mutants killed/restored: pin producer guard, child parent binding validation,
+and each of the three production caller edges. TEST-EDITS: existing managed composition,
+verify, acquisition and child tests extended; existing assertions retained. Initial
+acquisition test used an invalid positional fixture argument (1 failure), corrected before
+final bank. Final ten-module bank 713 passed, Ruff/format and composition-only mypy pass;
+`arena-env-build.sh --check` passes after rebuilding absent `.venv` with the documented
+frozen environment script. This is not the E674 full gate or a production mode-A proof.
+
+Scope remains limited: other direct `managed.client` calls (including cleanup and executor
+operations), concurrent invocation ordering, pending candidate-publication interactions,
+and durable state across controller loss need separate audit; this does not establish a
+universal atomic fence. Origin/fresh-project, independent collection and custody blockers
+remain as E679/E680; keep E657 closed to V2 coder stages.
